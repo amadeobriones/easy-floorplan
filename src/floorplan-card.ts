@@ -1,12 +1,13 @@
 import { LitElement, html, css, svg, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, FloorplanCardConfig, FloorItem, FloorText } from "./types";
+import type { HomeAssistant, FloorplanCardConfig, FloorItem, FloorText, Floor } from "./types";
 import {
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
   DEFAULT_ITEM_SIZE,
   DEFAULT_TEXT_SIZE,
   DEFAULT_RIPPLE_SIZE,
+  getFloors,
 } from "./types";
 import { WALL_THICKNESS, renderOpening, renderRipple, renderFurniture, defaultIcon } from "./render";
 
@@ -16,6 +17,8 @@ const ACTIVE_DOMAINS = new Set(["light", "switch", "cover", "fan", "input_boolea
 export class FloorplanCard extends LitElement {
   @property({ attribute: false }) public hass?: HomeAssistant;
   @state() private _config?: FloorplanCardConfig;
+  /** View-state: which floor is shown. Never persisted to config. */
+  @state() private _activeFloorId?: string;
 
   public setConfig(config: FloorplanCardConfig): void {
     if (!config) throw new Error("Invalid configuration");
@@ -49,11 +52,20 @@ export class FloorplanCard extends LitElement {
     return st === "on" || st === "open" || st === "home" || st === "playing";
   }
 
-  private _stateText(item: FloorItem): string {
-    const stateObj = this.hass?.states[item.entity];
+  /** Formatted "state unit" for a single entity, or "—" when unavailable. */
+  private _entityStateText(entityId?: string): string {
+    if (!entityId) return "—";
+    const stateObj = this.hass?.states[entityId];
     if (!stateObj) return "—";
     const unit = stateObj.attributes?.unit_of_measurement;
     return unit ? `${stateObj.state} ${unit}` : stateObj.state;
+  }
+
+  /** State text for the item: primary entity, plus secondary (e.g. humidity) when set. */
+  private _stateText(item: FloorItem): string {
+    const primary = this._entityStateText(item.entity);
+    if (!item.secondaryEntity) return primary;
+    return `${primary} · ${this._entityStateText(item.secondaryEntity)}`;
   }
 
   private _itemIcon(item: FloorItem): string {
@@ -148,6 +160,11 @@ export class FloorplanCard extends LitElement {
   protected render(): TemplateResult {
     if (!this._config) return html`${nothing}`;
     const c = this._config;
+    const floors = getFloors(c);
+    const active =
+      floors.find((f) => f.id === this._activeFloorId) ??
+      floors.find((f) => f.id === c.defaultFloor) ??
+      floors[0];
     return html`
       <ha-card .header=${c.title ?? nothing}>
         <div
@@ -156,22 +173,43 @@ export class FloorplanCard extends LitElement {
           "var(--card-background-color, #fff)"};"
         >
           <svg viewBox="0 0 ${c.width} ${c.height}" preserveAspectRatio="none">
-            ${(c.furniture ?? []).map((f) => renderFurniture(f))}
-            ${c.walls.map(
+            ${active.furniture.map((f) => renderFurniture(f))}
+            ${active.walls.map(
               (w) => svg`
                 <line x1=${w.x1} y1=${w.y1} x2=${w.x2} y2=${w.y2}
                       class="wall" stroke-width=${WALL_THICKNESS} stroke-linecap="round" />`
             )}
-            ${c.openings.map((o) =>
+            ${active.openings.map((o) =>
               renderOpening(o, "var(--primary-text-color)", "var(--card-background-color, #fff)")
             )}
           </svg>
           <div class="items">
-            ${(c.texts ?? []).map((t) => this._renderText(t, c))}
-            ${c.items.map((it) => this._renderItem(it, c))}
+            ${active.texts.map((t) => this._renderText(t, c))}
+            ${active.items.map((it) => this._renderItem(it, c))}
           </div>
+          ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
         </div>
       </ha-card>
+    `;
+  }
+
+  private _renderFloorSwitcher(floors: Floor[], active: Floor): TemplateResult {
+    return html`
+      <div class="floor-switcher">
+        ${floors.map(
+          (f) => html`
+            <button
+              class=${f.id === active.id ? "active" : ""}
+              title=${f.name}
+              @click=${() => {
+                this._activeFloorId = f.id;
+              }}
+            >
+              ${f.name}
+            </button>
+          `
+        )}
+      </div>
     `;
   }
 
@@ -185,6 +223,36 @@ export class FloorplanCard extends LitElement {
       position: relative;
       width: 100%;
       padding: 0;
+    }
+    .floor-switcher {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      pointer-events: auto;
+      z-index: 1;
+    }
+    .floor-switcher button {
+      cursor: pointer;
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      line-height: 1;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .floor-switcher button.active {
+      background: var(--primary-color, #03a9f4);
+      color: #fff;
+      border-color: var(--primary-color, #03a9f4);
     }
     svg {
       position: absolute;

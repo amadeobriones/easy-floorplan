@@ -34,6 +34,12 @@ export type ItemKind = "light" | "switch" | "sensor" | "binary_sensor" | "climat
 export interface FloorItem {
   id: string;
   entity: string;
+  /**
+   * Optional second entity (e.g. a humidity sensor paired with a temperature
+   * entity). When set and the state is shown, both values are displayed in the
+   * same element. The primary `entity` drives on/off state and click actions.
+   */
+  secondaryEntity?: string;
   x: number;
   y: number;
   kind: ItemKind;
@@ -129,6 +135,20 @@ export const FURNITURE_DEFAULT_SIZE: Record<FurnitureType, { w: number; h: numbe
   tv: { w: 110, h: 18 },
 };
 
+/**
+ * A single floor/level. Each floor owns its own set of elements. The canvas
+ * size, grid and background are shared across floors (config-level).
+ */
+export interface Floor {
+  id: string;
+  name: string;
+  walls: Wall[];
+  openings: Opening[];
+  items: FloorItem[];
+  texts: FloorText[];
+  furniture: Furniture[];
+}
+
 export interface FloorplanCardConfig extends LovelaceCardConfig {
   type: string;
   title?: string;
@@ -139,6 +159,14 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   grid?: number;
   /** Canvas background color (CSS / hex). Falls back to the card background. */
   background?: string;
+  /**
+   * Multi-floor data. When present and non-empty this is the source of truth.
+   * When absent, the legacy flat arrays below describe a single implicit floor
+   * (kept for backward compatibility with hand-written configs).
+   */
+  floors?: Floor[];
+  /** Id of the floor shown first. Falls back to the first floor. */
+  defaultFloor?: string;
   walls: Wall[];
   openings: Opening[];
   items: FloorItem[];
@@ -166,4 +194,29 @@ export function emptyConfig(type: string): FloorplanCardConfig {
 
 export function uid(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** A fresh, empty floor (optionally seeded with walls). */
+export function makeFloor(name: string, walls: Wall[] = []): Floor {
+  return { id: uid("floor"), name, walls, openings: [], items: [], texts: [], furniture: [] };
+}
+
+/**
+ * Normalize a config into a list of floors. If `floors` is present and non-empty
+ * it is returned as-is; otherwise the legacy flat arrays are wrapped into a
+ * single floor so old single-floor configs keep rendering unchanged.
+ */
+export function getFloors(c: FloorplanCardConfig): Floor[] {
+  if (c.floors && c.floors.length) return c.floors;
+  return [
+    {
+      id: "floor_main",
+      name: "Floor 1",
+      walls: c.walls ?? [],
+      openings: c.openings ?? [],
+      items: c.items ?? [],
+      texts: c.texts ?? [],
+      furniture: c.furniture ?? [],
+    },
+  ];
 }

@@ -3,6 +3,7 @@ import { customElement, property, state, query } from "lit/decorators.js";
 import type {
   HomeAssistant,
   FloorplanCardConfig,
+  Floor,
   Wall,
   Opening,
   OpeningType,
@@ -22,6 +23,8 @@ import {
   DEFAULT_RIPPLE_SIZE,
   FURNITURE_DEFAULT_SIZE,
   emptyConfig,
+  getFloors,
+  makeFloor,
   uid,
 } from "./types";
 import {
@@ -72,21 +75,40 @@ const FURNITURE_LABELS: Record<FurnitureType, string> = {
 };
 
 type Tool = "select" | "wall" | "door" | "window";
-type Selection =
-  | { kind: "wall"; id: string }
-  | { kind: "opening"; id: string }
-  | { kind: "item"; id: string }
-  | { kind: "text"; id: string }
-  | { kind: "furniture"; id: string }
-  | null;
-
+type SelKind = "wall" | "opening" | "item" | "text" | "furniture";
+type Sel = { kind: SelKind; id: string };
 type OverlaySel = { kind: "item" | "text"; id: string };
 
+/** Snapshot of an element's position at drag start, for group translation. */
+type OrigPos =
+  | { kind: "wall"; x1: number; y1: number; x2: number; y2: number }
+  | { kind: "pt"; x: number; y: number };
+
 interface Drag {
-  selection: Exclude<Selection, null>;
-  dx: number;
-  dy: number;
+  /** The element under the pointer (drives snapping); the whole selection moves with it. */
+  primary: Sel;
+  /** Pointer position (unsnapped, virtual coords) when the drag started. */
+  start: { x: number; y: number };
+  /** Original positions of every selected element, keyed `${kind}:${id}`. */
+  orig: Map<string, OrigPos>;
+  /** Set when dragging a single wall endpoint handle. */
   endpoint?: 1 | 2;
+}
+
+interface Marquee {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** Elements copied to the in-memory clipboard (not part of the config). */
+interface Clipboard {
+  walls: Wall[];
+  openings: Opening[];
+  items: FloorItem[];
+  texts: FloorText[];
+  furniture: Furniture[];
 }
 
 /** Snap distance (virtual units) for openings onto walls / wall endpoints onto each other. */
@@ -99,8 +121,10 @@ export class FloorplanCardEditor extends LitElement {
   @property({ attribute: false }) public hass?: HomeAssistant;
   @state() private _config!: FloorplanCardConfig;
   @state() private _tool: Tool = "select";
-  @state() private _selection: Selection = null;
+  @state() private _selection: Sel[] = [];
+  @state() private _activeFloorId!: string;
   @state() private _draft: { x1: number; y1: number; x2: number; y2: number } | null = null;
+  @state() private _marquee: Marquee | null = null;
   @state() private _history: FloorplanCardConfig[] = [];
   @state() private _future: FloorplanCardConfig[] = [];
   @state() private _zoom = 1;
@@ -108,6 +132,9 @@ export class FloorplanCardEditor extends LitElement {
   @query("svg") private _svg?: SVGSVGElement;
 
   private _drag: Drag | null = null;
+  /** True when the active marquee should add to (rather than replace) the selection. */
+  private _marqueeAdd = false;
+  private _clipboard: Clipboard | null = null;
   private _onKeyDown = (ev: KeyboardEvent) => this._handleKeyDown(ev);
 
   public connectedCallback(): void {
@@ -122,7 +149,48 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   public setConfig(config: FloorplanCardConfig): void {
-    this._config = { ...emptyConfig(config.type || "custom:easy-floorplan-card"), ...config };
+    const base = { ...emptyConfig(config.type || "custom:easy-floorplan-card"), ...config };
+    // Normalize to the floors model (migrating legacy single-floor configs) and
+    // clear the legacy flat arrays so `floors` is the single source of truth.
+    const floors = getFloors(base).map((f) => structuredClone(f));
+    this._config = {
+      ...base,
+      floors,
+      walls: [],
+      openings: [],
+      items: [],
+      texts: [],
+      furniture: [],
+    };
+    if (!this._activeFloorId || !floors.some((f) => f.id === this._activeFloorId)) {
+      this._activeFloorId =
+        base.defaultFloor && floors.some((f) => f.id === base.defaultFloor)
+          ? base.defaultFloor
+          : floors[0].id;
+    }
+  }
+
+  // ---- active floor access -----------------------------------------------
+
+  private _floor(): Floor {
+    const floors = this._config.floors ?? [];
+    return floors.find((f) => f.id === this._activeFloorId) ?? floors[0];
+  }
+
+  /** Discrete change to the active floor's elements (snapshots for undo). */
+  private _commitFloor(partial: Partial<Floor>): void {
+    this._commit({ ...this._config, floors: this._patchFloors(partial) });
+  }
+
+  /** Live change to the active floor's elements (no history snapshot — for dragging). */
+  private _emitFloor(partial: Partial<Floor>): void {
+    this._emit({ ...this._config, floors: this._patchFloors(partial) });
+  }
+
+  private _patchFloors(partial: Partial<Floor>): Floor[] {
+    return (this._config.floors ?? []).map((f) =>
+      f.id === this._activeFloorId ? { ...f, ...partial } : f
+    );
   }
 
   protected firstUpdated(): void {
@@ -164,7 +232,7 @@ export class FloorplanCardEditor extends LitElement {
   private _snapWallPoint(rawX: number, rawY: number): { x: number; y: number } {
     let best: { x: number; y: number } | null = null;
     let bestDist = ENDPOINT_SNAP;
-    for (const w of this._config.walls) {
+    for (const w of this._floor().walls) {
       for (const e of [
         { x: w.x1, y: w.y1 },
         { x: w.x2, y: w.y2 },
@@ -204,7 +272,7 @@ export class FloorplanCardEditor extends LitElement {
     this._future = [structuredClone(this._config), ...this._future];
     const prev = this._history[this._history.length - 1];
     this._history = this._history.slice(0, -1);
-    this._selection = null;
+    this._selection = [];
     this._emit(prev);
   }
 
@@ -213,15 +281,54 @@ export class FloorplanCardEditor extends LitElement {
     this._history = [...this._history, structuredClone(this._config)];
     const next = this._future[0];
     this._future = this._future.slice(1);
-    this._selection = null;
+    this._selection = [];
     this._emit(next);
+  }
+
+  // ---- selection ----------------------------------------------------------
+
+  /** The element whose properties show in the panel (the most recent selection). */
+  private _primary(): Sel | null {
+    return this._selection[this._selection.length - 1] ?? null;
+  }
+
+  private _selectOne(sel: Sel): void {
+    this._selection = [sel];
+  }
+
+  private _toggleSel(sel: Sel): void {
+    this._selection = this._isSel(sel.kind, sel.id)
+      ? this._selection.filter((s) => !(s.kind === sel.kind && s.id === sel.id))
+      : [...this._selection, sel];
+  }
+
+  private _clearSel(): void {
+    this._selection = [];
+  }
+
+  /** Pointer-driven selection: modifier toggles; plain click selects unless already in the set. */
+  private _selectForPointer(ev: PointerEvent, sel: Sel): void {
+    if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+      this._toggleSel(sel);
+      return;
+    }
+    if (!this._isSel(sel.kind, sel.id)) this._selectOne(sel);
+  }
+
+  private _idsOfKind(kind: SelKind): Set<string> {
+    return new Set(this._selection.filter((s) => s.kind === kind).map((s) => s.id));
+  }
+
+  private _mergeSel(a: Sel[], b: Sel[]): Sel[] {
+    const out = [...a];
+    for (const s of b) if (!out.some((x) => x.kind === s.kind && x.id === s.id)) out.push(s);
+    return out;
   }
 
   // ---- keyboard nudging ---------------------------------------------------
 
   private _handleKeyDown(ev: KeyboardEvent): void {
-    if (!this._selection) return;
-    // Don't hijack arrows while typing in a field / picker.
+    // Don't hijack keys while typing in a field / picker.
     const path = ev.composedPath();
     if (
       path.some((el) => {
@@ -237,6 +344,36 @@ export class FloorplanCardEditor extends LitElement {
     )
       return;
 
+    const mod = ev.ctrlKey || ev.metaKey;
+    const key = ev.key.toLowerCase();
+    if (mod && key === "c") {
+      if (this._selection.length) {
+        ev.preventDefault();
+        this._copy();
+      }
+      return;
+    }
+    if (mod && key === "v") {
+      if (this._clipboard) {
+        ev.preventDefault();
+        this._paste();
+      }
+      return;
+    }
+    if (mod && key === "d") {
+      if (this._selection.length) {
+        ev.preventDefault();
+        this._duplicate();
+      }
+      return;
+    }
+    if ((ev.key === "Delete" || ev.key === "Backspace") && this._selection.length) {
+      ev.preventDefault();
+      this._deleteSelected();
+      return;
+    }
+
+    if (!this._selection.length) return;
     const deltas: Record<string, [number, number]> = {
       ArrowLeft: [-1, 0],
       ArrowRight: [1, 0],
@@ -251,44 +388,24 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   private _nudge(dx: number, dy: number): void {
-    const sel = this._selection;
-    if (!sel) return;
-    if (sel.kind === "wall") {
-      this._commit({
-        ...this._config,
-        walls: this._config.walls.map((w) =>
-          w.id === sel.id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w
-        ),
-      });
-    } else if (sel.kind === "opening") {
-      this._commit({
-        ...this._config,
-        openings: this._config.openings.map((o) =>
-          o.id === sel.id ? { ...o, x: o.x + dx, y: o.y + dy } : o
-        ),
-      });
-    } else if (sel.kind === "item") {
-      this._commit({
-        ...this._config,
-        items: this._config.items.map((it) =>
-          it.id === sel.id ? { ...it, x: it.x + dx, y: it.y + dy } : it
-        ),
-      });
-    } else if (sel.kind === "text") {
-      this._commit({
-        ...this._config,
-        texts: (this._config.texts ?? []).map((t) =>
-          t.id === sel.id ? { ...t, x: t.x + dx, y: t.y + dy } : t
-        ),
-      });
-    } else {
-      this._commit({
-        ...this._config,
-        furniture: (this._config.furniture ?? []).map((f) =>
-          f.id === sel.id ? { ...f, x: f.x + dx, y: f.y + dy } : f
-        ),
-      });
-    }
+    if (!this._selection.length) return;
+    const f = this._floor();
+    const wIds = this._idsOfKind("wall");
+    const oIds = this._idsOfKind("opening");
+    const iIds = this._idsOfKind("item");
+    const tIds = this._idsOfKind("text");
+    const fIds = this._idsOfKind("furniture");
+    this._commitFloor({
+      walls: f.walls.map((w) =>
+        wIds.has(w.id) ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w
+      ),
+      openings: f.openings.map((o) => (oIds.has(o.id) ? { ...o, x: o.x + dx, y: o.y + dy } : o)),
+      items: f.items.map((it) => (iIds.has(it.id) ? { ...it, x: it.x + dx, y: it.y + dy } : it)),
+      texts: f.texts.map((t) => (tIds.has(t.id) ? { ...t, x: t.x + dx, y: t.y + dy } : t)),
+      furniture: f.furniture.map((fu) =>
+        fIds.has(fu.id) ? { ...fu, x: fu.x + dx, y: fu.y + dy } : fu
+      ),
+    });
   }
 
   // ---- canvas (SVG) pointer handling: drawing walls/openings -------------
@@ -307,7 +424,10 @@ export class FloorplanCardEditor extends LitElement {
       this._addOpening(this._tool, this._snap(raw.x), this._snap(raw.y));
       return;
     }
-    this._selection = null;
+    // Select tool, empty canvas: start a marquee (rubber-band) selection.
+    this._marqueeAdd = ev.shiftKey || ev.ctrlKey || ev.metaKey;
+    this._marquee = { x0: raw.x, y0: raw.y, x1: raw.x, y1: raw.y };
+    (ev.target as Element).setPointerCapture?.(ev.pointerId);
   }
 
   private _onCanvasMove(ev: PointerEvent): void {
@@ -315,6 +435,11 @@ export class FloorplanCardEditor extends LitElement {
       const raw = this._toVirtual(ev, false);
       const s = this._snapWallPoint(raw.x, raw.y);
       this._draft = { ...this._draft, x2: s.x, y2: s.y };
+      return;
+    }
+    if (this._marquee) {
+      const raw = this._toVirtual(ev, false);
+      this._marquee = { ...this._marquee, x1: raw.x, y1: raw.y };
       return;
     }
     if (this._drag) this._applyDrag(ev);
@@ -326,9 +451,23 @@ export class FloorplanCardEditor extends LitElement {
       this._draft = null;
       if (d.x1 !== d.x2 || d.y1 !== d.y2) {
         const wall: Wall = { id: uid("wall"), ...d };
-        this._commit({ ...this._config, walls: [...this._config.walls, wall] });
-        this._selection = { kind: "wall", id: wall.id };
+        this._commitFloor({ walls: [...this._floor().walls, wall] });
+        this._selection = [{ kind: "wall", id: wall.id }];
       }
+      return;
+    }
+    if (this._marquee) {
+      const m = this._marquee;
+      this._marquee = null;
+      (ev.target as Element).releasePointerCapture?.(ev.pointerId);
+      const moved = Math.hypot(m.x1 - m.x0, m.y1 - m.y0) > 4;
+      if (!moved) {
+        // A plain click on empty canvas clears the selection.
+        if (!this._marqueeAdd) this._clearSel();
+        return;
+      }
+      const hits = this._elementsInRect(m);
+      this._selection = this._marqueeAdd ? this._mergeSel(this._selection, hits) : hits;
       return;
     }
     if (this._drag) {
@@ -337,95 +476,162 @@ export class FloorplanCardEditor extends LitElement {
     }
   }
 
+  /** All active-floor elements whose center lies inside the marquee rect. */
+  private _elementsInRect(m: Marquee): Sel[] {
+    const minX = Math.min(m.x0, m.x1);
+    const maxX = Math.max(m.x0, m.x1);
+    const minY = Math.min(m.y0, m.y1);
+    const maxY = Math.max(m.y0, m.y1);
+    const inside = (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY;
+    const f = this._floor();
+    const out: Sel[] = [];
+    for (const w of f.walls)
+      if (inside((w.x1 + w.x2) / 2, (w.y1 + w.y2) / 2)) out.push({ kind: "wall", id: w.id });
+    for (const o of f.openings) if (inside(o.x, o.y)) out.push({ kind: "opening", id: o.id });
+    for (const it of f.items) if (inside(it.x, it.y)) out.push({ kind: "item", id: it.id });
+    for (const t of f.texts) if (inside(t.x, t.y)) out.push({ kind: "text", id: t.id });
+    for (const fu of f.furniture) if (inside(fu.x, fu.y)) out.push({ kind: "furniture", id: fu.id });
+    return out;
+  }
+
   // ---- dragging existing elements ----------------------------------------
 
-  private _startDrag(ev: PointerEvent, selection: Exclude<Selection, null>, endpoint?: 1 | 2): void {
+  private _startDrag(ev: PointerEvent, sel: Sel, endpoint?: 1 | 2): void {
     if (this._tool !== "select") return;
     ev.stopPropagation();
-    this._selection = selection;
-    const p = this._toVirtual(ev, false);
-    let ax = 0;
-    let ay = 0;
-    if (selection.kind === "wall") {
-      const w = this._config.walls.find((x) => x.id === selection.id)!;
-      ax = endpoint === 2 ? w.x2 : w.x1;
-      ay = endpoint === 2 ? w.y2 : w.y1;
-    } else if (selection.kind === "opening") {
-      const o = this._config.openings.find((x) => x.id === selection.id)!;
-      ax = o.x;
-      ay = o.y;
-    } else if (selection.kind === "furniture") {
-      const f = (this._config.furniture ?? []).find((x) => x.id === selection.id)!;
-      ax = f.x;
-      ay = f.y;
-    } else {
-      const it = this._config.items.find((x) => x.id === selection.id)!;
-      ax = it.x;
-      ay = it.y;
-    }
-    this._drag = { selection, dx: p.x - ax, dy: p.y - ay, endpoint };
+    // Endpoint handles always operate on that single wall.
+    if (endpoint) this._selectOne(sel);
+    else this._selectForPointer(ev, sel);
+    this._drag = {
+      primary: sel,
+      start: this._toVirtual(ev, false),
+      orig: this._snapshotSelection(),
+      endpoint,
+    };
     this._pushHistory();
     (ev.target as Element).setPointerCapture?.(ev.pointerId);
+  }
+
+  /** Capture the start positions of every selected element on the active floor. */
+  private _snapshotSelection(): Map<string, OrigPos> {
+    const f = this._floor();
+    const m = new Map<string, OrigPos>();
+    for (const s of this._selection) {
+      if (s.kind === "wall") {
+        const w = f.walls.find((x) => x.id === s.id);
+        if (w) m.set(`wall:${w.id}`, { kind: "wall", x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 });
+      } else if (s.kind === "opening") {
+        const o = f.openings.find((x) => x.id === s.id);
+        if (o) m.set(`opening:${o.id}`, { kind: "pt", x: o.x, y: o.y });
+      } else if (s.kind === "item") {
+        const it = f.items.find((x) => x.id === s.id);
+        if (it) m.set(`item:${it.id}`, { kind: "pt", x: it.x, y: it.y });
+      } else if (s.kind === "text") {
+        const t = f.texts.find((x) => x.id === s.id);
+        if (t) m.set(`text:${t.id}`, { kind: "pt", x: t.x, y: t.y });
+      } else {
+        const fu = f.furniture.find((x) => x.id === s.id);
+        if (fu) m.set(`furniture:${fu.id}`, { kind: "pt", x: fu.x, y: fu.y });
+      }
+    }
+    return m;
   }
 
   private _applyDrag(ev: PointerEvent): void {
     const drag = this._drag!;
     const p = this._toVirtual(ev, false);
-    const x = this._snap(p.x - drag.dx);
-    const y = this._snap(p.y - drag.dy);
+    const f = this._floor();
 
-    if (drag.selection.kind === "wall") {
-      const target = this._snapWallPoint(p.x - drag.dx, p.y - drag.dy);
-      const walls = this._config.walls.map((w) => {
-        if (w.id !== drag.selection.id) return w;
-        if (drag.endpoint === 1) return { ...w, x1: target.x, y1: target.y };
-        if (drag.endpoint === 2) return { ...w, x2: target.x, y2: target.y };
-        const ddx = x - w.x1;
-        const ddy = y - w.y1;
-        return { ...w, x1: x, y1: y, x2: w.x2 + ddx, y2: w.y2 + ddy };
+    // Single wall endpoint handle: snaps to nearby wall corners.
+    if (drag.endpoint) {
+      const target = this._snapWallPoint(p.x, p.y);
+      const walls = f.walls.map((w) => {
+        if (w.id !== drag.primary.id) return w;
+        return drag.endpoint === 1
+          ? { ...w, x1: target.x, y1: target.y }
+          : { ...w, x2: target.x, y2: target.y };
       });
-      this._emit({ ...this._config, walls });
-    } else if (drag.selection.kind === "opening") {
-      const snap = snapToWall(p.x - drag.dx, p.y - drag.dy, this._config.walls, WALL_SNAP);
-      const openings = this._config.openings.map((o) => {
-        if (o.id !== drag.selection.id) return o;
-        return snap ? { ...o, x: snap.x, y: snap.y, angle: snap.angle } : { ...o, x, y };
-      });
-      this._emit({ ...this._config, openings });
-    } else if (drag.selection.kind === "furniture") {
-      const furniture = (this._config.furniture ?? []).map((f) =>
-        f.id === drag.selection.id ? { ...f, x, y } : f
-      );
-      this._emit({ ...this._config, furniture });
-    } else if (drag.selection.kind === "item") {
-      const items = this._config.items.map((it) =>
-        it.id === drag.selection.id ? { ...it, x, y } : it
-      );
-      this._emit({ ...this._config, items });
-    } else {
-      const texts = (this._config.texts ?? []).map((t) =>
-        t.id === drag.selection.id ? { ...t, x, y } : t
-      );
-      this._emit({ ...this._config, texts });
+      this._emitFloor({ walls });
+      return;
     }
+
+    // Single opening: keep the wall-snapping (and angle alignment) behavior.
+    if (this._selection.length === 1 && drag.primary.kind === "opening") {
+      const orig = drag.orig.get(`opening:${drag.primary.id}`);
+      if (orig && orig.kind === "pt") {
+        const rawX = orig.x + (p.x - drag.start.x);
+        const rawY = orig.y + (p.y - drag.start.y);
+        const snap = snapToWall(rawX, rawY, f.walls, WALL_SNAP);
+        const openings = f.openings.map((o) =>
+          o.id === drag.primary.id
+            ? snap
+              ? { ...o, x: snap.x, y: snap.y, angle: snap.angle }
+              : { ...o, x: this._snap(rawX), y: this._snap(rawY) }
+            : o
+        );
+        this._emitFloor({ openings });
+        return;
+      }
+    }
+
+    // Everything else (single or group): translate all selected by a grid-snapped delta
+    // derived from the primary element's reference point.
+    const ref = drag.orig.get(`${drag.primary.kind}:${drag.primary.id}`);
+    if (!ref) return;
+    const refX = ref.kind === "wall" ? ref.x1 : ref.x;
+    const refY = ref.kind === "wall" ? ref.y1 : ref.y;
+    const dx = this._snap(refX + (p.x - drag.start.x)) - refX;
+    const dy = this._snap(refY + (p.y - drag.start.y)) - refY;
+    this._emitFloor(this._applyDelta(dx, dy, drag.orig));
+  }
+
+  /** Translate every snapshotted element by (dx, dy). */
+  private _applyDelta(dx: number, dy: number, orig: Map<string, OrigPos>): Partial<Floor> {
+    const f = this._floor();
+    return {
+      walls: f.walls.map((w) => {
+        const o = orig.get(`wall:${w.id}`);
+        return o && o.kind === "wall"
+          ? { ...w, x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy }
+          : w;
+      }),
+      openings: f.openings.map((el) => {
+        const o = orig.get(`opening:${el.id}`);
+        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
+      }),
+      items: f.items.map((el) => {
+        const o = orig.get(`item:${el.id}`);
+        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
+      }),
+      texts: f.texts.map((el) => {
+        const o = orig.get(`text:${el.id}`);
+        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
+      }),
+      furniture: f.furniture.map((el) => {
+        const o = orig.get(`furniture:${el.id}`);
+        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
+      }),
+    };
   }
 
   // ---- overlay drag for items & texts (HTML, not SVG) --------------------
 
-  private _onOverlayDown(ev: PointerEvent, sel: OverlaySel, ax: number, ay: number): void {
+  private _onOverlayDown(ev: PointerEvent, sel: OverlaySel): void {
     if (this._tool !== "select") return;
     ev.stopPropagation();
     ev.preventDefault();
-    this._selection = sel;
-    const p = this._toVirtual(ev, false);
-    this._drag = { selection: sel, dx: p.x - ax, dy: p.y - ay };
+    this._selectForPointer(ev, sel);
+    this._drag = {
+      primary: sel,
+      start: this._toVirtual(ev, false),
+      orig: this._snapshotSelection(),
+    };
     this._pushHistory();
     (ev.currentTarget as Element).setPointerCapture?.(ev.pointerId);
   }
 
   private _onOverlayMove(ev: PointerEvent): void {
-    const k = this._drag?.selection.kind;
-    if (k === "item" || k === "text") this._applyDrag(ev);
+    if (this._drag) this._applyDrag(ev);
   }
 
   private _onOverlayUp(ev: PointerEvent): void {
@@ -438,7 +644,8 @@ export class FloorplanCardEditor extends LitElement {
   // ---- element creation / mutation ---------------------------------------
 
   private _addOpening(type: OpeningType, x: number, y: number): void {
-    const snap = snapToWall(x, y, this._config.walls, WALL_SNAP);
+    const f = this._floor();
+    const snap = snapToWall(x, y, f.walls, WALL_SNAP);
     const o: Opening = {
       id: uid(type),
       type,
@@ -447,8 +654,8 @@ export class FloorplanCardEditor extends LitElement {
       length: 60,
       angle: snap?.angle ?? 0,
     };
-    this._commit({ ...this._config, openings: [...this._config.openings, o] });
-    this._selection = { kind: "opening", id: o.id };
+    this._commitFloor({ openings: [...f.openings, o] });
+    this._selection = [{ kind: "opening", id: o.id }];
     this._tool = "select";
   }
 
@@ -463,8 +670,8 @@ export class FloorplanCardEditor extends LitElement {
       showIcon: true,
       size: DEFAULT_ITEM_SIZE,
     };
-    this._commit({ ...this._config, items: [...this._config.items, it] });
-    this._selection = { kind: "item", id: it.id };
+    this._commitFloor({ items: [...this._floor().items, it] });
+    this._selection = [{ kind: "item", id: it.id }];
     this._tool = "select";
   }
 
@@ -479,8 +686,8 @@ export class FloorplanCardEditor extends LitElement {
       h: size.h,
       angle: 0,
     };
-    this._commit({ ...this._config, furniture: [...(this._config.furniture ?? []), f] });
-    this._selection = { kind: "furniture", id: f.id };
+    this._commitFloor({ furniture: [...this._floor().furniture, f] });
+    this._selection = [{ kind: "furniture", id: f.id }];
     this._tool = "select";
   }
 
@@ -492,63 +699,164 @@ export class FloorplanCardEditor extends LitElement {
       text: "Label",
       size: DEFAULT_TEXT_SIZE,
     };
-    this._commit({ ...this._config, texts: [...(this._config.texts ?? []), t] });
-    this._selection = { kind: "text", id: t.id };
+    this._commitFloor({ texts: [...this._floor().texts, t] });
+    this._selection = [{ kind: "text", id: t.id }];
     this._tool = "select";
   }
 
   private _deleteSelected(): void {
-    const sel = this._selection;
-    if (!sel) return;
-    if (sel.kind === "wall")
-      this._commit({ ...this._config, walls: this._config.walls.filter((w) => w.id !== sel.id) });
-    else if (sel.kind === "opening")
-      this._commit({
-        ...this._config,
-        openings: this._config.openings.filter((o) => o.id !== sel.id),
-      });
-    else if (sel.kind === "item")
-      this._commit({ ...this._config, items: this._config.items.filter((i) => i.id !== sel.id) });
-    else if (sel.kind === "furniture")
-      this._commit({
-        ...this._config,
-        furniture: (this._config.furniture ?? []).filter((f) => f.id !== sel.id),
-      });
-    else
-      this._commit({
-        ...this._config,
-        texts: (this._config.texts ?? []).filter((t) => t.id !== sel.id),
-      });
-    this._selection = null;
+    if (!this._selection.length) return;
+    const f = this._floor();
+    const wIds = this._idsOfKind("wall");
+    const oIds = this._idsOfKind("opening");
+    const iIds = this._idsOfKind("item");
+    const tIds = this._idsOfKind("text");
+    const fIds = this._idsOfKind("furniture");
+    this._commitFloor({
+      walls: f.walls.filter((w) => !wIds.has(w.id)),
+      openings: f.openings.filter((o) => !oIds.has(o.id)),
+      items: f.items.filter((i) => !iIds.has(i.id)),
+      texts: f.texts.filter((t) => !tIds.has(t.id)),
+      furniture: f.furniture.filter((fu) => !fIds.has(fu.id)),
+    });
+    this._clearSel();
+  }
+
+  // ---- clipboard (copy / paste / duplicate) ------------------------------
+
+  private _copy(): void {
+    if (!this._selection.length) return;
+    const f = this._floor();
+    const wIds = this._idsOfKind("wall");
+    const oIds = this._idsOfKind("opening");
+    const iIds = this._idsOfKind("item");
+    const tIds = this._idsOfKind("text");
+    const fIds = this._idsOfKind("furniture");
+    this._clipboard = structuredClone({
+      walls: f.walls.filter((w) => wIds.has(w.id)),
+      openings: f.openings.filter((o) => oIds.has(o.id)),
+      items: f.items.filter((it) => iIds.has(it.id)),
+      texts: f.texts.filter((t) => tIds.has(t.id)),
+      furniture: f.furniture.filter((fu) => fIds.has(fu.id)),
+    });
+  }
+
+  /** Paste the clipboard onto the active floor, offset by one grid step, with fresh ids. */
+  private _paste(): void {
+    if (!this._clipboard) return;
+    const cb = structuredClone(this._clipboard);
+    const off = this.grid;
+    const f = this._floor();
+    const newWalls: Wall[] = cb.walls.map((w) => ({
+      ...w,
+      id: uid("wall"),
+      x1: w.x1 + off,
+      y1: w.y1 + off,
+      x2: w.x2 + off,
+      y2: w.y2 + off,
+    }));
+    const newOpenings: Opening[] = cb.openings.map((o) => ({
+      ...o,
+      id: uid(o.type),
+      x: o.x + off,
+      y: o.y + off,
+    }));
+    const newItems: FloorItem[] = cb.items.map((it) => ({
+      ...it,
+      id: uid("item"),
+      x: it.x + off,
+      y: it.y + off,
+    }));
+    const newTexts: FloorText[] = cb.texts.map((t) => ({
+      ...t,
+      id: uid("text"),
+      x: t.x + off,
+      y: t.y + off,
+    }));
+    const newFurn: Furniture[] = cb.furniture.map((fu) => ({
+      ...fu,
+      id: uid("furn"),
+      x: fu.x + off,
+      y: fu.y + off,
+    }));
+    this._commitFloor({
+      walls: [...f.walls, ...newWalls],
+      openings: [...f.openings, ...newOpenings],
+      items: [...f.items, ...newItems],
+      texts: [...f.texts, ...newTexts],
+      furniture: [...f.furniture, ...newFurn],
+    });
+    this._selection = [
+      ...newWalls.map((w) => ({ kind: "wall" as const, id: w.id })),
+      ...newOpenings.map((o) => ({ kind: "opening" as const, id: o.id })),
+      ...newItems.map((it) => ({ kind: "item" as const, id: it.id })),
+      ...newTexts.map((t) => ({ kind: "text" as const, id: t.id })),
+      ...newFurn.map((fu) => ({ kind: "furniture" as const, id: fu.id })),
+    ];
+    this._tool = "select";
+  }
+
+  private _duplicate(): void {
+    this._copy();
+    this._paste();
+  }
+
+  // ---- floors -------------------------------------------------------------
+
+  /** Add a floor that reuses the current floor's walls (fresh ids) and nothing else. */
+  private _addFloor(): void {
+    const walls = this._floor().walls.map((w) => ({ ...w, id: uid("wall") }));
+    const n = (this._config.floors?.length ?? 1) + 1;
+    const floor = makeFloor(`Floor ${n}`, walls);
+    this._commit({ ...this._config, floors: [...(this._config.floors ?? []), floor] });
+    this._activeFloorId = floor.id;
+    this._clearSel();
+  }
+
+  private _switchFloor(id: string): void {
+    if (id === this._activeFloorId) return;
+    this._activeFloorId = id;
+    this._clearSel();
+  }
+
+  private _renameFloor(id: string, name: string): void {
+    this._commit({
+      ...this._config,
+      floors: (this._config.floors ?? []).map((f) => (f.id === id ? { ...f, name } : f)),
+    });
+  }
+
+  private _deleteFloor(): void {
+    const floors = this._config.floors ?? [];
+    if (floors.length <= 1) return;
+    const idx = floors.findIndex((f) => f.id === this._activeFloorId);
+    const remaining = floors.filter((f) => f.id !== this._activeFloorId);
+    this._commit({ ...this._config, floors: remaining });
+    this._activeFloorId = remaining[Math.max(0, idx - 1)].id;
+    this._clearSel();
   }
 
   private _updateOpening(id: string, partial: Partial<Opening>): void {
-    this._commit({
-      ...this._config,
-      openings: this._config.openings.map((o) => (o.id === id ? { ...o, ...partial } : o)),
+    this._commitFloor({
+      openings: this._floor().openings.map((o) => (o.id === id ? { ...o, ...partial } : o)),
     });
   }
 
   private _updateItem(id: string, partial: Partial<FloorItem>): void {
-    this._commit({
-      ...this._config,
-      items: this._config.items.map((it) => (it.id === id ? { ...it, ...partial } : it)),
+    this._commitFloor({
+      items: this._floor().items.map((it) => (it.id === id ? { ...it, ...partial } : it)),
     });
   }
 
   private _updateText(id: string, partial: Partial<FloorText>): void {
-    this._commit({
-      ...this._config,
-      texts: (this._config.texts ?? []).map((t) => (t.id === id ? { ...t, ...partial } : t)),
+    this._commitFloor({
+      texts: this._floor().texts.map((t) => (t.id === id ? { ...t, ...partial } : t)),
     });
   }
 
   private _updateFurniture(id: string, partial: Partial<Furniture>): void {
-    this._commit({
-      ...this._config,
-      furniture: (this._config.furniture ?? []).map((f) =>
-        f.id === id ? { ...f, ...partial } : f
-      ),
+    this._commitFloor({
+      furniture: this._floor().furniture.map((f) => (f.id === id ? { ...f, ...partial } : f)),
     });
   }
 
@@ -570,12 +878,14 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   private _isSel(kind: string, id: string): boolean {
-    return this._selection?.kind === kind && this._selection.id === id;
+    return this._selection.some((s) => s.kind === kind && s.id === id);
   }
 
   protected render(): TemplateResult {
     if (!this._config) return html`${nothing}`;
     const c = this._config;
+    const floor = this._floor();
+    const floors = c.floors ?? [];
     return html`
       <div class="editor">
         <div class="toolbar">
@@ -607,9 +917,37 @@ export class FloorplanCardEditor extends LitElement {
             <option value="">+ furniture…</option>
             ${FURNITURE_TYPES.map((t) => html`<option value=${t}>${FURNITURE_LABELS[t]}</option>`)}
           </select>
-          <button class="danger" ?disabled=${!this._selection} @click=${this._deleteSelected}>
+          <button class="danger" ?disabled=${!this._selection.length} @click=${this._deleteSelected}>
             delete
           </button>
+          <span class="floors">
+            <label>floor</label>
+            <select
+              .value=${this._activeFloorId}
+              @change=${(e: Event) => this._switchFloor((e.target as HTMLSelectElement).value)}
+            >
+              ${floors.map((f) => html`<option value=${f.id}>${f.name}</option>`)}
+            </select>
+            <input
+              class="floor-name"
+              type="text"
+              title="Rename floor"
+              .value=${floor?.name ?? ""}
+              @change=${(e: Event) =>
+                this._renameFloor(this._activeFloorId, (e.target as HTMLInputElement).value)}
+            />
+            <button title="Add a floor (copies the current walls)" @click=${this._addFloor}>
+              + floor
+            </button>
+            <button
+              class="danger"
+              title="Delete the current floor"
+              ?disabled=${floors.length <= 1}
+              @click=${this._deleteFloor}
+            >
+              − floor
+            </button>
+          </span>
           <span class="zoom">
             <label>zoom</label>
             <input
@@ -644,9 +982,9 @@ export class FloorplanCardEditor extends LitElement {
                 fill=${c.background ?? "var(--card-background-color, #fff)"}
               />
               ${this._renderGrid()}
-              ${(c.furniture ?? []).map((f) => this._renderFurnitureSel(f))}
-              ${c.walls.map((w) => this._renderWall(w))}
-              ${c.openings.map((o) => this._renderOpeningSel(o))}
+              ${floor.furniture.map((f) => this._renderFurnitureSel(f))}
+              ${floor.walls.map((w) => this._renderWall(w))}
+              ${floor.openings.map((o) => this._renderOpeningSel(o))}
               ${
                 this._draft
                   ? svg`<line x1=${this._draft.x1} y1=${this._draft.y1}
@@ -654,10 +992,19 @@ export class FloorplanCardEditor extends LitElement {
                               class="wall draft" stroke-width=${WALL_THICKNESS} />`
                   : nothing
               }
+              ${
+                this._marquee
+                  ? svg`<rect x=${Math.min(this._marquee.x0, this._marquee.x1)}
+                              y=${Math.min(this._marquee.y0, this._marquee.y1)}
+                              width=${Math.abs(this._marquee.x1 - this._marquee.x0)}
+                              height=${Math.abs(this._marquee.y1 - this._marquee.y0)}
+                              class="marquee" />`
+                  : nothing
+              }
             </svg>
             <div class="items">
-              ${(c.texts ?? []).map((t) => this._renderTextOverlay(t, c))}
-              ${c.items.map((it) => this._renderItemOverlay(it, c))}
+              ${floor.texts.map((t) => this._renderTextOverlay(t, c))}
+              ${floor.items.map((it) => this._renderItemOverlay(it, c))}
             </div>
           </div>
         </div>
@@ -755,7 +1102,7 @@ export class FloorplanCardEditor extends LitElement {
       <div
         class="edit-item ${selected ? "selected" : ""}"
         style="left:${(it.x / c.width) * 100}%; top:${(it.y / c.height) * 100}%;"
-        @pointerdown=${(e: PointerEvent) => this._onOverlayDown(e, { kind: "item", id: it.id }, it.x, it.y)}
+        @pointerdown=${(e: PointerEvent) => this._onOverlayDown(e, { kind: "item", id: it.id })}
         @pointermove=${this._onOverlayMove}
         @pointerup=${this._onOverlayUp}
       >
@@ -774,7 +1121,7 @@ export class FloorplanCardEditor extends LitElement {
                font-size:${t.size ?? DEFAULT_TEXT_SIZE}px;
                color:${t.color ?? "var(--primary-text-color)"};
                transform:translate(-50%,-50%) rotate(${t.angle ?? 0}deg);"
-        @pointerdown=${(e: PointerEvent) => this._onOverlayDown(e, { kind: "text", id: t.id }, t.x, t.y)}
+        @pointerdown=${(e: PointerEvent) => this._onOverlayDown(e, { kind: "text", id: t.id })}
         @pointermove=${this._onOverlayMove}
         @pointerup=${this._onOverlayUp}
       >
@@ -847,12 +1194,21 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   private _renderSelectionProps(): TemplateResult {
-    const sel = this._selection;
+    if (this._selection.length > 1)
+      return html`<p class="hint">
+        <b>${this._selection.length} elements selected.</b> Drag any of them to move the group, use
+        <b>arrow keys</b> to nudge, <b>Ctrl/Cmd+C</b> then <b>Ctrl/Cmd+V</b> to copy/paste (paste lands
+        on the current floor), <b>Ctrl/Cmd+D</b> to duplicate, or <b>Delete</b> to remove them.
+      </p>`;
+
+    const sel = this._primary();
     if (!sel)
       return html`<p class="hint">
         Pick a tool to draw. Wall ends snap to nearby wall corners — start a new wall on an existing
-        corner to continue the perimeter. Switch to <b>select</b> to move or delete things. With
-        something selected, <b>arrow keys</b> nudge it (hold <b>Shift</b> for 1-unit steps).
+        corner to continue the perimeter. Switch to <b>select</b> to move or delete things. Drag a box
+        on empty canvas to select many; <b>Shift</b>/<b>Ctrl</b>-click adds to the selection. With
+        something selected, <b>arrow keys</b> nudge it (hold <b>Shift</b> for 1-unit steps), and
+        <b>Ctrl/Cmd+C/V/D</b> copy / paste / duplicate.
       </p>`;
 
     if (sel.kind === "opening") {
@@ -921,6 +1277,18 @@ export class FloorplanCardEditor extends LitElement {
               const entity = e.detail.value as string;
               this._updateItem(it.id, { entity, kind: kindFromEntity(entity) });
             }}
+          ></ha-entity-picker>
+        </div>
+        <div class="row">
+          <label>2nd entity</label>
+          <ha-entity-picker
+            .hass=${this.hass}
+            .value=${it.secondaryEntity ?? ""}
+            allow-custom-entity
+            @value-changed=${(e: CustomEvent) =>
+              this._updateItem(it.id, {
+                secondaryEntity: (e.detail.value as string) || undefined,
+              })}
           ></ha-entity-picker>
         </div>
         <div class="row">
@@ -1364,6 +1732,34 @@ export class FloorplanCardEditor extends LitElement {
       border-radius: 6px;
       padding: 6px 8px;
       cursor: pointer;
+    }
+    .floors {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .floors label {
+      font-size: 12px;
+      color: var(--secondary-text-color);
+    }
+    .floors select,
+    .floors .floor-name {
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      border-radius: 6px;
+      padding: 6px 8px;
+    }
+    .floors .floor-name {
+      width: 90px;
+    }
+    .marquee {
+      fill: var(--primary-color, #03a9f4);
+      fill-opacity: 0.1;
+      stroke: var(--primary-color, #03a9f4);
+      stroke-width: 1;
+      stroke-dasharray: 4 3;
+      pointer-events: none;
     }
     .handle {
       fill: var(--primary-color, #03a9f4);
