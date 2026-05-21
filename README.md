@@ -98,6 +98,9 @@ You can set the **ripple color** and **ripple size** per device, so e.g. a calm 
 ring in the living room and a warmer one by the entrance. It works with any entity that
 reports an on/off-like state, not just presence sensors.
 
+<img width="1080" height="608" alt="ripple_demo_gif" src="https://github.com/user-attachments/assets/e43949cf-13a2-48f8-804d-73738299475f" />
+
+
 ## Configuration reference
 
 The editor writes this config for you; manual editing is optional.
