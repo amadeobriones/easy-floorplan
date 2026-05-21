@@ -151,7 +151,7 @@ openings:
   - { id: d1, type: door, x: 300, y: 500, length: 80, angle: 0 }
   - { id: win1, type: window, x: 600, y: 100, length: 140, angle: 0 }
 items:
-  - { id: i1, entity: light.tv_area_lights, x: 240, y: 200, kind: light }
+  - { id: i1, entity: light.living_room, x: 240, y: 200, kind: light }
   - id: i2
     entity: binary_sensor.presence
     x: 380

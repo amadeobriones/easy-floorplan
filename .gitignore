@@ -3,8 +3,8 @@ dist/
 *.log
 .DS_Store
 .claude/
-# personal dev deploy script — targets a private HA host
+# personal dev deploy script
 deploy.sh
-# never commit secrets — deploy password lives at ~/.ha_floorplan_deploy_secret
+# never commit secrets
 *.secret
 .env
