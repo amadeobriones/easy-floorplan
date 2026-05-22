@@ -116,6 +116,8 @@ interface Clipboard {
 const WALL_SNAP = 35;
 const ENDPOINT_SNAP = 26;
 const HISTORY_MAX = 60;
+/** Angle (degrees) within which a drawn wall is snapped flat to horizontal/vertical. */
+const WALL_AXIS_SNAP_DEG = 10;
 
 @customElement("easy-floorplan-card-editor")
 export class FloorplanCardEditor extends LitElement {
@@ -125,6 +127,8 @@ export class FloorplanCardEditor extends LitElement {
   @state() private _selection: Sel[] = [];
   @state() private _activeFloorId!: string;
   @state() private _draft: { x1: number; y1: number; x2: number; y2: number } | null = null;
+  /** When true, walls are drawn freely (no horizontal/vertical or corner gravity). */
+  @state() private _freeWalls = false;
   @state() private _marquee: Marquee | null = null;
   @state() private _history: FloorplanCardConfig[] = [];
   @state() private _future: FloorplanCardConfig[] = [];
@@ -234,8 +238,8 @@ export class FloorplanCardEditor extends LitElement {
     return snap ? { x: this._snap(pt.x), y: this._snap(pt.y) } : { x: pt.x, y: pt.y };
   }
 
-  /** Snap a raw point to a nearby existing wall endpoint, else to the grid. */
-  private _snapWallPoint(rawX: number, rawY: number): { x: number; y: number } {
+  /** Nearest existing wall endpoint within ENDPOINT_SNAP, or null. */
+  private _nearestCorner(rawX: number, rawY: number): { x: number; y: number } | null {
     let best: { x: number; y: number } | null = null;
     let bestDist = ENDPOINT_SNAP;
     for (const w of this._floor().walls) {
@@ -246,11 +250,38 @@ export class FloorplanCardEditor extends LitElement {
         const d = Math.hypot(rawX - e.x, rawY - e.y);
         if (d < bestDist) {
           bestDist = d;
-          best = e;
+          best = { x: e.x, y: e.y };
         }
       }
     }
-    return best ?? { x: this._snap(rawX), y: this._snap(rawY) };
+    return best;
+  }
+
+  /** Snap a raw point to a nearby existing wall endpoint, else honor the snap step. */
+  private _snapWallPoint(rawX: number, rawY: number): { x: number; y: number } {
+    return this._nearestCorner(rawX, rawY) ?? { x: this._snap(rawX), y: this._snap(rawY) };
+  }
+
+  /**
+   * Snap a wall's moving endpoint while drawing. Existing corners win (so rooms
+   * close/continue); otherwise, unless free-draw is on, apply "gravity" toward
+   * horizontal/vertical relative to the start point.
+   */
+  private _snapWallEnd(
+    x1: number,
+    y1: number,
+    rawX: number,
+    rawY: number
+  ): { x: number; y: number } {
+    if (this._freeWalls) return { x: this._snap(rawX), y: this._snap(rawY) };
+    const corner = this._nearestCorner(rawX, rawY);
+    if (corner) return corner;
+    const dx = rawX - x1;
+    const dy = rawY - y1;
+    const t = Math.tan((WALL_AXIS_SNAP_DEG * Math.PI) / 180);
+    if (Math.abs(dy) <= Math.abs(dx) * t) return { x: this._snap(rawX), y: y1 }; // horizontal
+    if (Math.abs(dx) <= Math.abs(dy) * t) return { x: x1, y: this._snap(rawY) }; // vertical
+    return { x: this._snap(rawX), y: this._snap(rawY) };
   }
 
   // ---- config mutation + history ----------------------------------------
@@ -422,7 +453,9 @@ export class FloorplanCardEditor extends LitElement {
     const raw = this._toVirtual(ev, false);
 
     if (this._tool === "wall") {
-      const s = this._snapWallPoint(raw.x, raw.y);
+      const s = this._freeWalls
+        ? { x: this._snap(raw.x), y: this._snap(raw.y) }
+        : this._snapWallPoint(raw.x, raw.y);
       this._draft = { x1: s.x, y1: s.y, x2: s.x, y2: s.y };
       (ev.target as Element).setPointerCapture?.(ev.pointerId);
       return;
@@ -440,7 +473,7 @@ export class FloorplanCardEditor extends LitElement {
   private _onCanvasMove(ev: PointerEvent): void {
     if (this._tool === "wall" && this._draft) {
       const raw = this._toVirtual(ev, false);
-      const s = this._snapWallPoint(raw.x, raw.y);
+      const s = this._snapWallEnd(this._draft.x1, this._draft.y1, raw.x, raw.y);
       this._draft = { ...this._draft, x2: s.x, y2: s.y };
       return;
     }
@@ -911,6 +944,17 @@ export class FloorplanCardEditor extends LitElement {
                 ${t}
               </button>`
           )}
+          ${this._tool === "wall"
+            ? html`<button
+                class=${this._freeWalls ? "" : "active"}
+                title="Snap walls to horizontal/vertical and existing corners (off = draw freely)"
+                @click=${() => {
+                  this._freeWalls = !this._freeWalls;
+                }}
+              >
+                straighten
+              </button>`
+            : nothing}
           <span class="spacer"></span>
           <button title="Undo" ?disabled=${!this._history.length} @click=${this._undo}>↶ undo</button>
           <button title="Redo" ?disabled=${!this._future.length} @click=${this._redo}>↷ redo</button>
