@@ -165,8 +165,13 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   /** Virtual canvas size; the SVG viewBox uses these. Drawing is resolution-independent. */
   width: number;
   height: number;
-  /** Editor grid spacing in virtual units. */
+  /** Visible editor grid spacing in virtual units (purely a visual guide). */
   grid?: number;
+  /**
+   * Placement snap step in virtual units. When 0 or unset, elements are placed
+   * freely (no snapping); when > 0, placement/drag/nudge round to this step.
+   */
+  snap?: number;
   /** Canvas background color (CSS / hex). Falls back to the card background. */
   background?: string;
   /**

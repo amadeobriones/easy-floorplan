@@ -216,9 +216,14 @@ export class FloorplanCardEditor extends LitElement {
     return this._config.grid ?? DEFAULT_GRID;
   }
 
+  /** Placement snap step; 0 means free placement (no snapping). */
+  private get snapStep(): number {
+    return this._config.snap ?? 0;
+  }
+
   private _snap(v: number): number {
-    const g = this.grid;
-    return Math.round(v / g) * g;
+    const s = this.snapStep;
+    return s > 0 ? Math.round(v / s) * s : v;
   }
 
   private _toVirtual(ev: PointerEvent, snap = true): { x: number; y: number } {
@@ -384,7 +389,8 @@ export class FloorplanCardEditor extends LitElement {
     const d = deltas[ev.key];
     if (!d) return;
     ev.preventDefault();
-    const step = ev.shiftKey ? 1 : this.grid;
+    // Default nudge is fine (snap step, or 1 unit when free); Shift jumps a grid cell.
+    const step = ev.shiftKey ? this.grid : this.snapStep || 1;
     this._nudge(d[0] * step, d[1] * step);
   }
 
@@ -1180,6 +1186,20 @@ export class FloorplanCardEditor extends LitElement {
                 grid: Number((e.target as HTMLInputElement).value) || DEFAULT_GRID,
               })}
           />
+        </div>
+        <div class="row">
+          <label>Snap</label>
+          <input
+            class="num"
+            type="number"
+            min="0"
+            .value=${String(this.snapStep)}
+            @change=${(e: Event) =>
+              this._patchConfig({
+                snap: Number((e.target as HTMLInputElement).value) || undefined,
+              })}
+          />
+          <span class="hint">0 = free placement</span>
         </div>
         <div class="row">
           <label>Background</label>
