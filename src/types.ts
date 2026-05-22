@@ -26,6 +26,14 @@ export interface Opening {
   length: number;
   /** Rotation in degrees, 0 = horizontal. */
   angle: number;
+  /**
+   * Optional entity (e.g. a contact `binary_sensor` or a `cover`) whose state
+   * drives whether the opening is drawn open or closed. When unset, doors are
+   * drawn open (swing symbol) and windows closed, matching a static floor plan.
+   */
+  entity?: string;
+  /** Flip the open/closed interpretation of `entity` (for inverted sensors). */
+  invert?: boolean;
 }
 
 export type ItemKind = "light" | "switch" | "sensor" | "binary_sensor" | "climate" | "cover" | "generic";

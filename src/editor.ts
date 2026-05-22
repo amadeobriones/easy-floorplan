@@ -30,6 +30,7 @@ import {
 import {
   WALL_THICKNESS,
   renderOpening,
+  openingDefaultOpen,
   renderRipple,
   renderFurniture,
   defaultIcon,
@@ -1053,7 +1054,8 @@ export class FloorplanCardEditor extends LitElement {
         ${renderOpening(
           o,
           selected ? "var(--primary-color, #03a9f4)" : "var(--primary-text-color)",
-          "var(--card-background-color, #fff)"
+          "var(--card-background-color, #fff)",
+          openingDefaultOpen(o)
         )}
       </g>`;
   }
@@ -1244,6 +1246,30 @@ export class FloorplanCardEditor extends LitElement {
               this._updateOpening(o.id, { length: Number((e.target as HTMLInputElement).value) })}
           />
         </div>
+        <div class="row">
+          <label>Sensor</label>
+          <ha-entity-picker
+            .hass=${this.hass}
+            .value=${o.entity ?? ""}
+            .includeDomains=${["binary_sensor", "cover"]}
+            allow-custom-entity
+            @value-changed=${(e: CustomEvent) =>
+              this._updateOpening(o.id, { entity: (e.detail.value as string) || undefined })}
+          ></ha-entity-picker>
+        </div>
+        ${o.entity
+          ? html`<div class="row">
+              <label>Invert</label>
+              <input
+                type="checkbox"
+                .checked=${o.invert ?? false}
+                @change=${(e: Event) =>
+                  this._updateOpening(o.id, {
+                    invert: (e.target as HTMLInputElement).checked || undefined,
+                  })}
+              />
+            </div>`
+          : nothing}
         <div class="row">
           <label>Angle</label>
           <input
@@ -1696,6 +1722,14 @@ export class FloorplanCardEditor extends LitElement {
     .wall.draft {
       opacity: 0.5;
       pointer-events: none;
+    }
+    .fp-door-leaf {
+      transform-box: fill-box;
+      transform-origin: left center;
+      transition: transform 0.5s ease;
+    }
+    .fp-window-sash {
+      transition: transform 0.5s ease;
     }
     .wall-hit {
       stroke: transparent;

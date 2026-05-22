@@ -9,7 +9,15 @@ import {
   DEFAULT_RIPPLE_SIZE,
   getFloors,
 } from "./types";
-import { WALL_THICKNESS, renderOpening, renderRipple, renderFurniture, defaultIcon } from "./render";
+import {
+  WALL_THICKNESS,
+  renderOpening,
+  openingDefaultOpen,
+  renderRipple,
+  renderFurniture,
+  defaultIcon,
+} from "./render";
+import type { Opening } from "./types";
 
 const ACTIVE_DOMAINS = new Set(["light", "switch", "cover", "fan", "input_boolean"]);
 
@@ -50,6 +58,16 @@ export class FloorplanCard extends LitElement {
   private _isOn(item: FloorItem): boolean {
     const st = this.hass?.states[item.entity]?.state;
     return st === "on" || st === "open" || st === "home" || st === "playing";
+  }
+
+  /** Whether an opening should be drawn open, from its entity state (or the default). */
+  private _openingIsOpen(o: Opening): boolean {
+    if (!o.entity) return openingDefaultOpen(o);
+    const st = this.hass?.states[o.entity]?.state;
+    if (st === undefined) return openingDefaultOpen(o);
+    // A contact sensor / cover is "open" when on/open; everything else is closed.
+    const open = st === "on" || st === "open";
+    return o.invert ? !open : open;
   }
 
   /** Formatted "state unit" for a single entity, or "—" when unavailable. */
@@ -180,7 +198,12 @@ export class FloorplanCard extends LitElement {
                       class="wall" stroke-width=${WALL_THICKNESS} stroke-linecap="round" />`
             )}
             ${active.openings.map((o) =>
-              renderOpening(o, "var(--primary-text-color)", "var(--card-background-color, #fff)")
+              renderOpening(
+                o,
+                "var(--primary-text-color)",
+                "var(--card-background-color, #fff)",
+                this._openingIsOpen(o)
+              )
             )}
           </svg>
           <div class="items">
@@ -263,6 +286,14 @@ export class FloorplanCard extends LitElement {
     }
     .wall {
       stroke: var(--primary-text-color);
+    }
+    .fp-door-leaf {
+      transform-box: fill-box;
+      transform-origin: left center;
+      transition: transform 0.5s ease;
+    }
+    .fp-window-sash {
+      transition: transform 0.5s ease;
     }
     .items {
       position: absolute;

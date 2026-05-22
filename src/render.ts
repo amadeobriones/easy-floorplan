@@ -41,40 +41,73 @@ export function kindFromEntity(entity: string): ItemKind {
 }
 
 /**
+ * Default open/closed state for an opening with no associated entity: doors are
+ * drawn open (the familiar swing symbol), windows closed (intact glass). This
+ * preserves the look of a static floor plan.
+ */
+export function openingDefaultOpen(o: Opening): boolean {
+  return o.type === "door";
+}
+
+/**
  * Render a door or window as an SVG group centered at the origin, then translated
  * and rotated into place. A background-colored "cut" masks the wall so the opening
  * reads as a gap, then the symbol (window panes / door swing) is drawn on top.
  *
- * @param bg  Color used to mask the wall behind the opening (the card background).
+ * The moving parts (door leaf, window sash) carry CSS classes so the host
+ * component's styles can transition them smoothly between open and closed.
+ *
+ * @param bg    Color used to mask the wall behind the opening (the card background).
+ * @param open  Whether the opening is currently open.
  */
-export function renderOpening(o: Opening, color: string, bg: string): SVGTemplateResult {
+export function renderOpening(
+  o: Opening,
+  color: string,
+  bg: string,
+  open = true
+): SVGTemplateResult {
   const half = o.length / 2;
   const cutH = WALL_THICKNESS + 4;
   // Mask out the wall segment behind the opening.
   const cut = svg`<rect x=${-half} y=${-cutH / 2} width=${o.length} height=${cutH} fill=${bg} />`;
 
-  const body =
-    o.type === "window"
-      ? svg`
-          ${cut}
-          <!-- jambs -->
-          <line x1=${-half} y1=${-cutH / 2} x2=${-half} y2=${cutH / 2}
-                stroke=${color} stroke-width="2" />
-          <line x1=${half} y1=${-cutH / 2} x2=${half} y2=${cutH / 2}
-                stroke=${color} stroke-width="2" />
-          <!-- glass (double line) -->
-          <line x1=${-half} y1="-2.5" x2=${half} y2="-2.5" stroke=${color} stroke-width="1.5" />
-          <line x1=${-half} y1="2.5" x2=${half} y2="2.5" stroke=${color} stroke-width="1.5" />
-        `
-      : svg`
-          ${cut}
-          <!-- door leaf, hinged at left jamb -->
-          <line x1=${-half} y1="0" x2=${-half} y2=${-o.length}
-                stroke=${color} stroke-width="2.5" />
-          <!-- swing arc -->
-          <path d="M ${-half} ${-o.length} A ${o.length} ${o.length} 0 0 1 ${half} 0"
-                fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />
-        `;
+  let body: SVGTemplateResult;
+  if (o.type === "window") {
+    // A sliding sash: the right pane slides left over the fixed left pane when open.
+    const slide = open ? -half : 0;
+    body = svg`
+        ${cut}
+        <!-- jambs -->
+        <line x1=${-half} y1=${-cutH / 2} x2=${-half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <line x1=${half} y1=${-cutH / 2} x2=${half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <!-- fixed pane (left half) -->
+        <line x1=${-half} y1="-2.5" x2="0" y2="-2.5" stroke=${color} stroke-width="1.5" />
+        <line x1=${-half} y1="2.5" x2="0" y2="2.5" stroke=${color} stroke-width="1.5" />
+        <!-- sliding sash (right half) -->
+        <g class="fp-window-sash" style="transform:translateX(${slide}px);">
+          <line x1="0" y1="-2.5" x2=${half} y2="-2.5" stroke=${color} stroke-width="2.5" />
+          <line x1="0" y1="2.5" x2=${half} y2="2.5" stroke=${color} stroke-width="2.5" />
+        </g>
+      `;
+  } else {
+    // Door leaf hinged at the left jamb: lies along the wall when closed,
+    // swings up (−90°) when open. The leaf is drawn closed and rotated via CSS.
+    const angle = open ? -90 : 0;
+    body = svg`
+        ${cut}
+        <!-- swing arc (static guide) -->
+        <path d="M ${-half} ${-o.length} A ${o.length} ${o.length} 0 0 1 ${half} 0"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.35" />
+        <!-- door leaf, hinged at left jamb -->
+        <g transform="translate(${-half} 0)">
+          <g class="fp-door-leaf" style="transform:rotate(${angle}deg);">
+            <rect x="0" y="-1.25" width=${o.length} height="2.5" fill=${color} />
+          </g>
+        </g>
+      `;
+  }
   return svg`<g transform="translate(${o.x} ${o.y}) rotate(${o.angle})">${body}</g>`;
 }
 
