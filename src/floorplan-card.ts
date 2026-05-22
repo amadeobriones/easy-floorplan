@@ -197,14 +197,16 @@ export class FloorplanCard extends LitElement {
                 <line x1=${w.x1} y1=${w.y1} x2=${w.x2} y2=${w.y2}
                       class="wall" stroke-width=${WALL_THICKNESS} stroke-linecap="round" />`
             )}
-            ${active.openings.map((o) =>
-              renderOpening(
+            ${active.openings.map((o) => {
+              const isOpen = this._openingIsOpen(o);
+              return renderOpening(
                 o,
                 "var(--primary-text-color)",
                 "var(--card-background-color, #fff)",
-                this._openingIsOpen(o)
-              )
-            )}
+                isOpen,
+                !!o.entity && isOpen
+              );
+            })}
           </svg>
           <div class="items">
             ${active.texts.map((t) => this._renderText(t, c))}
@@ -292,8 +294,14 @@ export class FloorplanCard extends LitElement {
       transform-origin: left center;
       transition: transform 0.5s ease;
     }
+    .fp-door-leaf rect {
+      transition: fill 0.5s ease;
+    }
+    .fp-door-arc {
+      transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
+    }
     .fp-window-sash {
-      transition: transform 0.5s ease;
+      transition: transform 0.5s ease, stroke 0.5s ease;
     }
     .items {
       position: absolute;

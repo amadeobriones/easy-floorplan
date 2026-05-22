@@ -64,12 +64,16 @@ export function renderOpening(
   o: Opening,
   color: string,
   bg: string,
-  open = true
+  open = true,
+  active = false,
+  accent = "var(--primary-color, #03a9f4)"
 ): SVGTemplateResult {
   const half = o.length / 2;
   const cutH = WALL_THICKNESS + 4;
   // Mask out the wall segment behind the opening.
   const cut = svg`<rect x=${-half} y=${-cutH / 2} width=${o.length} height=${cutH} fill=${bg} />`;
+  // The moving parts take the accent color when actively open (sensor-driven).
+  const tone = active ? accent : color;
 
   let body: SVGTemplateResult;
   if (o.type === "window") {
@@ -85,25 +89,31 @@ export function renderOpening(
         <!-- fixed pane (left half) -->
         <line x1=${-half} y1="-2.5" x2="0" y2="-2.5" stroke=${color} stroke-width="1.5" />
         <line x1=${-half} y1="2.5" x2="0" y2="2.5" stroke=${color} stroke-width="1.5" />
-        <!-- sliding sash (right half) -->
-        <g class="fp-window-sash" style="transform:translateX(${slide}px);">
-          <line x1="0" y1="-2.5" x2=${half} y2="-2.5" stroke=${color} stroke-width="2.5" />
-          <line x1="0" y1="2.5" x2=${half} y2="2.5" stroke=${color} stroke-width="2.5" />
+        <!-- sliding sash (right half); inherits stroke so it can transition color -->
+        <g class="fp-window-sash" style="transform:translateX(${slide}px);stroke:${tone};">
+          <line x1="0" y1="-2.5" x2=${half} y2="-2.5" stroke-width="2.5" />
+          <line x1="0" y1="2.5" x2=${half} y2="2.5" stroke-width="2.5" />
         </g>
       `;
   } else {
     // Door leaf hinged at the left jamb: lies along the wall when closed,
     // swings up (−90°) when open. The leaf is drawn closed and rotated via CSS.
     const angle = open ? -90 : 0;
+    // Swing arc revealed via stroke-dashoffset so it "draws on" as the door opens.
+    // Path runs from the closed-leaf tip toward the open-leaf tip, so it traces
+    // the door edge. arcLen is the quarter-circle length (radius = o.length).
+    const arcLen = (Math.PI / 2) * o.length;
     body = svg`
         ${cut}
-        <!-- swing arc (static guide) -->
-        <path d="M ${-half} ${-o.length} A ${o.length} ${o.length} 0 0 1 ${half} 0"
-              fill="none" stroke=${color} stroke-width="1.5" opacity="0.35" />
+        <!-- swing arc: hidden when closed, drawn as it opens -->
+        <path class="fp-door-arc"
+              d="M ${half} 0 A ${o.length} ${o.length} 0 0 0 ${-half} ${-o.length}"
+              fill="none" stroke-width="1.5" stroke-dasharray=${arcLen}
+              style="stroke:${tone};stroke-dashoffset:${open ? 0 : arcLen};" />
         <!-- door leaf, hinged at left jamb -->
         <g transform="translate(${-half} 0)">
           <g class="fp-door-leaf" style="transform:rotate(${angle}deg);">
-            <rect x="0" y="-1.25" width=${o.length} height="2.5" fill=${color} />
+            <rect x="0" y="-1.25" width=${o.length} height="2.5" style="fill:${tone};" />
           </g>
         </g>
       `;

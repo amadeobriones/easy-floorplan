@@ -1728,8 +1728,14 @@ export class FloorplanCardEditor extends LitElement {
       transform-origin: left center;
       transition: transform 0.5s ease;
     }
+    .fp-door-leaf rect {
+      transition: fill 0.5s ease;
+    }
+    .fp-door-arc {
+      transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
+    }
     .fp-window-sash {
-      transition: transform 0.5s ease;
+      transition: transform 0.5s ease, stroke 0.5s ease;
     }
     .wall-hit {
       stroke: transparent;
