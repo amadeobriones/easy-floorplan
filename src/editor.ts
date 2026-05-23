@@ -121,6 +121,10 @@ const WALL_AXIS_SNAP_DEG = 10;
 
 @customElement("easy-floorplan-card-editor")
 export class FloorplanCardEditor extends LitElement {
+  private static _nextWallMaskId = 0;
+  /** Unique mask id so multiple editor instances don't collide. */
+  private readonly _wallMaskId = `fp-edit-wall-mask-${FloorplanCardEditor._nextWallMaskId++}`;
+
   @property({ attribute: false }) public hass?: HomeAssistant;
   @state() private _config!: FloorplanCardConfig;
   @state() private _tool: Tool = "select";
@@ -1046,15 +1050,32 @@ export class FloorplanCardEditor extends LitElement {
                 height=${c.height}
                 fill=${c.background ?? "var(--card-background-color, #fff)"}
               />
+              ${floor.image
+                ? svg`<image href=${floor.image} x="0" y="0" width=${c.width} height=${c.height}
+                            preserveAspectRatio="none" opacity=${floor.imageOpacity ?? 1} />`
+                : nothing}
               ${this._renderGrid()}
               ${floor.furniture.map((f) => this._renderFurnitureSel(f))}
+              <defs>
+                <mask id=${this._wallMaskId} maskUnits="userSpaceOnUse">
+                  <rect x="0" y="0" width=${c.width} height=${c.height} fill="white" />
+                  ${floor.openings.map((o) => {
+                    const cutH = WALL_THICKNESS + 4;
+                    const half = o.length / 2;
+                    return svg`<rect x=${o.x - half} y=${o.y - cutH / 2}
+                                     width=${o.length} height=${cutH} fill="black"
+                                     transform="rotate(${o.angle} ${o.x} ${o.y})" />`;
+                  })}
+                </mask>
+              </defs>
               ${floor.walls.map((w) => this._renderWall(w))}
               ${floor.openings.map((o) => this._renderOpeningSel(o))}
               ${
                 this._draft
                   ? svg`<line x1=${this._draft.x1} y1=${this._draft.y1}
                               x2=${this._draft.x2} y2=${this._draft.y2}
-                              class="wall draft" stroke-width=${WALL_THICKNESS} />`
+                              class="wall draft" mask=${`url(#${this._wallMaskId})`}
+                              stroke-width=${WALL_THICKNESS} />`
                   : nothing
               }
               ${
@@ -1088,6 +1109,7 @@ export class FloorplanCardEditor extends LitElement {
               @pointerdown=${(e: PointerEvent) => this._startDrag(e, { kind: "wall", id: w.id })} />
         <line x1=${w.x1} y1=${w.y1} x2=${w.x2} y2=${w.y2}
               class="wall ${selected ? "selected" : ""}"
+              mask=${`url(#${this._wallMaskId})`}
               stroke-width=${WALL_THICKNESS} stroke-linecap="round" />
         ${
           selected
@@ -1112,7 +1134,10 @@ export class FloorplanCardEditor extends LitElement {
           o,
           selected ? "var(--primary-color, #03a9f4)" : "var(--primary-text-color)",
           "var(--card-background-color, #fff)",
-          openingDefaultOpen(o)
+          openingDefaultOpen(o),
+          false,
+          undefined,
+          false
         )}
       </g>`;
   }
@@ -1267,6 +1292,32 @@ export class FloorplanCardEditor extends LitElement {
               this._patchConfig({ background: (e.target as HTMLInputElement).value || undefined })}
           />
         </div>
+        <div class="row">
+          <label>Bg image</label>
+          <input
+            type="text"
+            placeholder="/local/floorplan.png or URL"
+            .value=${this._floor()?.image ?? ""}
+            @change=${(e: Event) =>
+              this._commitFloor({ image: (e.target as HTMLInputElement).value || undefined })}
+          />
+        </div>
+        ${this._floor()?.image
+          ? html`<div class="row">
+              <label>Image opacity</label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                .value=${String(this._floor()?.imageOpacity ?? 1)}
+                @input=${(e: Event) =>
+                  this._commitFloor({
+                    imageOpacity: Number((e.target as HTMLInputElement).value),
+                  })}
+              />
+            </div>`
+          : nothing}
         <hr />
         ${this._renderSelectionProps()}
       </div>
