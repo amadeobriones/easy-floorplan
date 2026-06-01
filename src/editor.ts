@@ -15,6 +15,7 @@ import type {
   ItemDisplay,
 } from "./types";
 import {
+  DEFAULT_CUSTOM_PERCENT,
   DEFAULT_GRID,
   DEFAULT_HEIGHT,
   DEFAULT_WIDTH,
@@ -24,7 +25,10 @@ import {
   FURNITURE_DEFAULT_SIZE,
   emptyConfig,
   getFloors,
+  gridPercentToSnap,
   makeFloor,
+  resolveSnap,
+  snapToGridPercent,
   uid,
 } from "./types";
 import {
@@ -228,19 +232,50 @@ export class FloorplanCardEditor extends LitElement {
     return this._config.grid ?? DEFAULT_GRID;
   }
 
-  /** Round to the visible grid (used for wall-drawing gravity, independent of `snap`). */
-  private _snapToGrid(v: number): number {
-    const g = this.grid;
-    return Math.round(v / g) * g;
+  /**
+   * Resolved placement snap step. `snap` is tri-state in the config: unset
+   * means "follow the grid" (the default behaviour), `0` is free placement,
+   * any other number is a custom step. See {@link resolveSnap}.
+   */
+  private get _resolvedSnap(): number {
+    return resolveSnap(this._config.snap, this.grid);
   }
 
-  /** Placement snap step; 0 means free placement (no snapping). */
-  private get snapStep(): number {
-    return this._config.snap ?? 0;
+  /** Which radio option the panel's "Snap to" control shows as active. */
+  private get _snapMode(): "grid" | "off" | "custom" {
+    const s = this._config.snap;
+    if (s == null) return "grid";
+    if (s === 0) return "off";
+    return "custom";
+  }
+
+  private _setSnapMode(mode: "grid" | "off" | "custom"): void {
+    if (mode === "grid") {
+      this._patchConfig({ snap: undefined });
+    } else if (mode === "off") {
+      this._patchConfig({ snap: 0 });
+    } else {
+      // Keep an existing custom value; otherwise seed with the default percent
+      // of the current grid (stored as an absolute step).
+      const cur = this._config.snap;
+      this._patchConfig({
+        snap: cur && cur > 0 ? cur : gridPercentToSnap(DEFAULT_CUSTOM_PERCENT, this.grid),
+      });
+    }
+  }
+
+  /** Update the grid; rescale a custom snap so its percentage of the grid is preserved. */
+  private _setGrid(newGrid: number): void {
+    const patch: Partial<FloorplanCardConfig> = { grid: newGrid };
+    if (this._snapMode === "custom") {
+      const pct = snapToGridPercent(this._config.snap as number, this.grid);
+      patch.snap = gridPercentToSnap(pct, newGrid);
+    }
+    this._patchConfig(patch);
   }
 
   private _snap(v: number): number {
-    const s = this.snapStep;
+    const s = this._resolvedSnap;
     return s > 0 ? Math.round(v / s) * s : v;
   }
 
@@ -271,15 +306,17 @@ export class FloorplanCardEditor extends LitElement {
     return best;
   }
 
-  /** Snap a raw point to a nearby existing wall endpoint, else to the visible grid. */
+  /** Snap a raw point to a nearby existing wall endpoint, else to the snap step. */
   private _snapWallPoint(rawX: number, rawY: number): { x: number; y: number } {
-    return this._nearestCorner(rawX, rawY) ?? { x: this._snapToGrid(rawX), y: this._snapToGrid(rawY) };
+    return this._nearestCorner(rawX, rawY) ?? { x: this._snap(rawX), y: this._snap(rawY) };
   }
 
   /**
    * Snap a wall's moving endpoint while drawing. Existing corners win (so rooms
    * close/continue); otherwise, unless free-draw is on, apply "gravity" toward
-   * horizontal/vertical relative to the start point.
+   * horizontal/vertical relative to the start point. The position itself snaps
+   * to the configured snap step (which is the grid by default, or nothing when
+   * Snap is Off) — "straighten" only governs the H/V alignment, not snapping.
    */
   private _snapWallEnd(
     x1: number,
@@ -293,10 +330,10 @@ export class FloorplanCardEditor extends LitElement {
     const dx = rawX - x1;
     const dy = rawY - y1;
     const t = Math.tan((WALL_AXIS_SNAP_DEG * Math.PI) / 180);
-    // Sticky: align flat to an axis when close, and pull the free coordinate to the grid.
-    if (Math.abs(dy) <= Math.abs(dx) * t) return { x: this._snapToGrid(rawX), y: y1 }; // horizontal
-    if (Math.abs(dx) <= Math.abs(dy) * t) return { x: x1, y: this._snapToGrid(rawY) }; // vertical
-    return { x: this._snapToGrid(rawX), y: this._snapToGrid(rawY) };
+    // Sticky: align flat to an axis when close; the free coordinate snaps to step.
+    if (Math.abs(dy) <= Math.abs(dx) * t) return { x: this._snap(rawX), y: y1 }; // horizontal
+    if (Math.abs(dx) <= Math.abs(dy) * t) return { x: x1, y: this._snap(rawY) }; // vertical
+    return { x: this._snap(rawX), y: this._snap(rawY) };
   }
 
   // ---- config mutation + history ----------------------------------------
@@ -442,7 +479,9 @@ export class FloorplanCardEditor extends LitElement {
     if (!d) return;
     ev.preventDefault();
     // Default nudge is fine (snap step, or 1 unit when free); Shift jumps a grid cell.
-    const step = ev.shiftKey ? this.grid : this.snapStep || 1;
+    // Default nudge follows the resolved snap (= the grid when unset, or the
+    // explicit custom step). Shift always jumps a full grid cell.
+    const step = ev.shiftKey ? this.grid : this._resolvedSnap || 1;
     this._nudge(d[0] * step, d[1] * step);
   }
 
@@ -802,11 +841,13 @@ export class FloorplanCardEditor extends LitElement {
     });
   }
 
-  /** Paste the clipboard onto the active floor, offset by one grid step, with fresh ids. */
+  /** Paste the clipboard onto the active floor, offset by one snap step, with fresh ids. */
   private _paste(): void {
     if (!this._clipboard) return;
     const cb = structuredClone(this._clipboard);
-    const off = this.grid;
+    // Offset by the resolved snap so paste lands on the same step as drag.
+    // Fall back to the grid when snap is explicitly off (`0`) to avoid overlap.
+    const off = this._resolvedSnap || this.grid;
     const f = this._floor();
     const newWalls: Wall[] = cb.walls.map((w) => ({
       ...w,
@@ -1278,6 +1319,63 @@ export class FloorplanCardEditor extends LitElement {
     `;
   }
 
+  /**
+   * The panel's "Snap to" row: a three-option segmented control over the
+   * tri-state `snap` config. **Grid** (unset) follows the visible grid;
+   * **Off** (`0`) is truly free placement; **Custom** (`> 0`) exposes a number
+   * input for a bespoke step.
+   */
+  private _renderSnapRow(): TemplateResult {
+    const mode = this._snapMode;
+    const opts: { id: "grid" | "off" | "custom"; label: string }[] = [
+      { id: "grid", label: "Grid" },
+      { id: "off", label: "Off" },
+      { id: "custom", label: "Custom" },
+    ];
+    const customPercent = snapToGridPercent(this._config.snap as number, this.grid);
+    const hint =
+      mode === "grid"
+        ? `Walls and elements snap to the ${this.grid}-unit grid above.`
+        : mode === "off"
+          ? "No snapping — place walls and elements freely at any position."
+          : // % of grid: 100% = the grid; 50% = half a grid cell; 200% = two cells.
+            `Snap to ${customPercent}% of the grid (= ${this._resolvedSnap} units). ` +
+            `Below 100% snaps finer than the grid, above 100% coarser.`;
+    return html`
+      <div class="row">
+        <label>Snap to</label>
+        <div class="seg" role="group" aria-label="Snap mode">
+          ${opts.map(
+            (o) => html`
+              <button
+                class=${mode === o.id ? "active" : ""}
+                aria-pressed=${mode === o.id}
+                @click=${() => this._setSnapMode(o.id)}
+              >
+                ${o.label}
+              </button>
+            `
+          )}
+        </div>
+        ${mode === "custom"
+          ? html`<input
+                class="num"
+                type="number"
+                min="1"
+                step="5"
+                .value=${String(customPercent)}
+                @change=${(e: Event) => {
+                  const pct = Math.max(1, Number((e.target as HTMLInputElement).value) || DEFAULT_CUSTOM_PERCENT);
+                  this._patchConfig({ snap: gridPercentToSnap(pct, this.grid) });
+                }}
+              />
+              <span class="hint">% of grid</span>`
+          : nothing}
+        <span class="hint">${hint}</span>
+      </div>
+    `;
+  }
+
   private _renderPanel(): TemplateResult {
     return html`
       <div class="panel">
@@ -1312,30 +1410,20 @@ export class FloorplanCardEditor extends LitElement {
           />
         </div>
         <div class="row">
-          <label>Grid</label>
+          <label>Grid size</label>
           <input
             type="number"
+            min="1"
             .value=${String(this.grid)}
             @change=${(e: Event) =>
-              this._patchConfig({
-                grid: Number((e.target as HTMLInputElement).value) || DEFAULT_GRID,
-              })}
+              this._setGrid(Math.max(1, Number((e.target as HTMLInputElement).value) || DEFAULT_GRID))}
           />
+          <span class="hint">
+            Gap between grid lines, in canvas units (canvas is ${this._config.width}×${this._config
+              .height}). Smaller = finer grid, more lines.
+          </span>
         </div>
-        <div class="row">
-          <label>Snap</label>
-          <input
-            class="num"
-            type="number"
-            min="0"
-            .value=${String(this.snapStep)}
-            @change=${(e: Event) =>
-              this._patchConfig({
-                snap: Number((e.target as HTMLInputElement).value) || undefined,
-              })}
-          />
-          <span class="hint">0 = free placement</span>
-        </div>
+        ${this._renderSnapRow()}
         <div class="row">
           <label>Background</label>
           <input
@@ -1976,16 +2064,34 @@ export class FloorplanCardEditor extends LitElement {
       cursor: crosshair;
     }
     .grid {
-      stroke: var(--divider-color, #e0e0e0);
-      stroke-width: 0.5;
+      /* Theme text colour at low opacity so the grid stays visible over a
+         background image (and on both light and dark themes); non-scaling-stroke
+         keeps the lines a crisp ~1px at any canvas size / zoom. Editor-only —
+         the live card never draws a grid. */
+      stroke: var(--primary-text-color, #212121);
+      stroke-opacity: 0.25;
+      stroke-width: 1;
+      vector-effect: non-scaling-stroke;
+      /* Purely decorative — must never intercept pointers, or a press that lands
+         on a grid line would capture the pointer there and break wall drawing. */
+      pointer-events: none;
     }
-    .wall {
+    /* Scoped to <line> so the rule doesn't accidentally match the <svg>,
+       which carries the active-tool class (e.g. "wall") on the canvas. A
+       bare ".wall" selector matched the SVG too, and because pointer-events
+       is inherited in SVG, setting it to none disabled the entire canvas
+       — so no pointerdown reached the wall-draw handler. */
+    line.wall {
       stroke: var(--primary-text-color);
+      /* The wide transparent .wall-hit line beneath handles selection/drag.
+         Without this, the visible line (painted on top) swallows clicks on the
+         wall body, so you could only grab it just *outside* the body. */
+      pointer-events: none;
     }
-    .wall.selected {
+    line.wall.selected {
       stroke: var(--primary-color, #03a9f4);
     }
-    .wall.draft {
+    line.wall.draft {
       opacity: 0.5;
       pointer-events: none;
     }

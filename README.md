@@ -33,8 +33,8 @@ automatically to the card and screen size.
   the top-right (in both the editor and the live card).
 - **Multi-select & copy/paste** — shift/ctrl-click or drag a box to select many; move,
   duplicate (Ctrl/Cmd+D), copy/paste (Ctrl/Cmd+C/V) or delete them together.
-- **Free placement** — elements aren't locked to the visible grid, so you can center them
-  precisely; an optional **Snap** setting re-enables grid snapping at any granularity.
+- **Snapping** — by default walls and elements snap to the visible grid; switch **Snap to**
+  to **Off** for free placement, or **Custom** to snap to your own step.
 - **Auto-scaling** — a virtual coordinate space + SVG means the plan rescales to any
   card or screen size with no reflow.
 
@@ -161,10 +161,10 @@ The editor writes this config for you; manual editing is optional.
 | ------------ | -------- | ------------------ | -------------------------------------------- |
 | `type`       | string   | —                  | `custom:easy-floorplan-card`                 |
 | `title`      | string   | —                  | Optional card header.                        |
-| `width`      | number   | `1000`             | Virtual canvas width.                        |
-| `height`     | number   | `600`              | Virtual canvas height.                       |
-| `grid`       | number   | `20`               | Visible grid spacing (a visual guide).       |
-| `snap`       | number   | `0`                | Placement snap step; `0` = free placement.   |
+| `width`      | number   | `1000`             | Virtual canvas width, in canvas units.       |
+| `height`     | number   | `600`              | Virtual canvas height, in canvas units.      |
+| `grid`       | number   | `20`               | Gap between grid lines, in canvas units (so on a 1000-wide canvas, `20` ≈ 50 columns). A **smaller** number means a **finer** grid with more lines. |
+| `snap`       | number   | follows `grid`     | Snap step for placement / drag / nudge / wall drawing, in canvas units. Omit to snap to the visible grid; set `0` for free placement; set any other number for a custom step. The editor shows a custom step as a **percentage of the grid** (e.g. `50` % of a `20` grid is stored here as `10`), but the value here is always absolute. |
 | `background` | string   | card background    | Canvas background color (CSS / hex).         |
 | `floors`     | Floor[]  | —                  | Per-floor element groups (see **Floors**).   |
 | `defaultFloor`| string  | first floor        | Id of the floor shown first.                 |
