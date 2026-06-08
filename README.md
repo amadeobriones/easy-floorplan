@@ -419,10 +419,50 @@ trackers:
 npm install
 npm run build      # bundles to dist/easy-floorplan-card.js
 npm run watch      # rebuild on change
+npm run typecheck  # tsc --noEmit
+npm test           # vitest (pure-logic tests; no browser)
 ```
 
 Releases are built and attached automatically by GitHub Actions when a GitHub release
 is published.
+
+### Browser dev harness
+
+Iterating on the editor / card without a Home Assistant instance:
+
+```bash
+npm run serve      # opens /dev/ on the Vite dev server with HMR
+```
+
+This mounts the **real** `easy-floorplan-card-editor` and `easy-floorplan-card`
+side-by-side in a plain HTML page with:
+
+- a minimal `hass` mock + tiny `<ha-card>` and `<ha-icon>` stubs so the card
+  renders outside HA — the entity / icon pickers are already feature-detected
+  inside the editor and fall back to plain inputs;
+- a `config-changed` round-trip between the editor and the live preview, so
+  edits in the editor instantly update the card (matching how HA wires it);
+- a **Tracker emulator** panel that appears whenever the current config has
+  at least one tracker — per-axis sliders write straight into the mock
+  `hass.states[entity].state`, and an **Auto-orbit** toggle drives them on
+  `requestAnimationFrame` so the pulsating triangle / line animations can be
+  observed without HA;
+- vite HMR — saving any `src/*.ts` reloads the page (the harness invalidates
+  itself on hot updates so duplicate custom-element registrations don't
+  happen).
+
+The harness lives entirely under `dev/` (`dev.ts`, `index.html`) and is **not**
+included in the production build — `vite build` only entry-points
+`src/index.ts`.
+
+Useful flags inside `dev/dev.ts`:
+
+- `START_WITH_DEMO` — flip to `true` to start with a sample room (walls, door,
+  window over a background image) instead of a blank floor. Handy for testing
+  rendering changes without drawing from scratch.
+
+Pair this with `./deploy-dev.sh <branch>` (a personal, gitignored helper) when
+you also want to smoke-test against a real HA install.
 
 ## License
 

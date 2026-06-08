@@ -1,0 +1,335 @@
+/**
+ * Local dev harness — mounts the real editor + live card side by side with a
+ * sample config and a minimal mock `hass`, so you can iterate on rendering
+ * (walls, openings, background image, furniture…) in a normal browser with
+ * Vite hot-reload. No Home Assistant and no service-worker caching.
+ *
+ * Run with: `npm run serve` (opens /dev/ on the Vite dev server).
+ *
+ * Only two HA-provided custom elements are needed at runtime: <ha-card> and
+ * <ha-icon>. The entity/icon pickers are already guarded behind
+ * `customElements.get(...)` in the editor and fall back to plain inputs, so we
+ * don't stub them here.
+ */
+import type { FloorplanCardConfig, Tracker, TrackerSensor } from "../src/types";
+
+// ---- minimal HA element stubs ---------------------------------------------
+if (!customElements.get("ha-card")) {
+  class HaCardStub extends HTMLElement {
+    private _header?: string;
+    set header(v: string | undefined) {
+      this._header = v;
+      this._render();
+    }
+    connectedCallback() {
+      this._render();
+    }
+    private _render() {
+      if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+      this.shadowRoot!.innerHTML = `
+        <style>
+          :host { display:block; border:1px solid #e0e0e0; border-radius:8px;
+                  overflow:hidden; background:var(--card-background-color,#fff); }
+          h3 { margin:0; padding:8px 12px; font:600 14px system-ui; border-bottom:1px solid #eee; }
+        </style>
+        ${this._header ? `<h3>${this._header}</h3>` : ""}
+        <slot></slot>`;
+    }
+  }
+  customElements.define("ha-card", HaCardStub);
+}
+
+if (!customElements.get("ha-icon")) {
+  // Render the mdi name as a tiny placeholder dot+label so icons are visible
+  // without pulling in the real mdi icon set.
+  class HaIconStub extends HTMLElement {
+    static observedAttributes = ["icon"];
+    private _icon = "";
+    set icon(v: string) {
+      this._icon = v;
+      this._render();
+    }
+    attributeChangedCallback(_n: string, _o: string, v: string) {
+      this._icon = v;
+      this._render();
+    }
+    connectedCallback() {
+      this._render();
+    }
+    private _render() {
+      if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+      this.shadowRoot!.innerHTML = `
+        <style>:host{display:inline-flex;align-items:center;justify-content:center;
+          width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px);}
+          i{display:block;width:62%;height:62%;border-radius:50%;
+            background:currentColor;opacity:0.85;}</style>
+        <i title="${this._icon}"></i>`;
+    }
+  }
+  customElements.define("ha-icon", HaIconStub);
+}
+
+// ---- register the real card + editor --------------------------------------
+import "../src/index";
+
+// ---- a minimal mock hass ---------------------------------------------------
+const hass = {
+  states: {
+    "binary_sensor.front_door": { state: "off", attributes: { friendly_name: "Front Door" } },
+    "light.living_room": { state: "on", attributes: { friendly_name: "Living Room" } },
+  },
+  locale: { language: "en" },
+  themes: { darkMode: false },
+  callService: (...args: unknown[]) => console.log("[mock hass] callService", ...args),
+  formatEntityState: (s: { state: string }) => s.state,
+  localize: (k: string) => k,
+} as unknown;
+
+// ---- a sample floorplan (one floor, with a bg image, a door + a window) ----
+// Diagonal-gradient SVG data URI so you can clearly see the image showing
+// through door/window gaps in the walls.
+const bgImage =
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='1000' height='600'>
+       <defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+         <stop offset='0' stop-color='#ffd54f'/><stop offset='1' stop-color='#4fc3f7'/>
+       </linearGradient></defs>
+       <rect width='1000' height='600' fill='url(#g)'/>
+       <g stroke='#000' stroke-opacity='0.18'>
+         ${Array.from({ length: 11 }, (_, i) => `<line x1='${i * 100}' y1='0' x2='${i * 100}' y2='600'/>`).join("")}
+         ${Array.from({ length: 7 }, (_, i) => `<line x1='0' y1='${i * 100}' x2='1000' y2='${i * 100}'/>`).join("")}
+       </g>
+     </svg>`
+  );
+
+// Start with a blank floor so you can draw a perimeter from scratch. Flip
+// START_WITH_DEMO to true to instead load a sample room (walls + door + window
+// over the background image) — handy for testing rendering of existing plans.
+const START_WITH_DEMO = false;
+
+const demoFloor = {
+  id: "f1",
+  name: "Floor 1",
+  image: bgImage,
+  imageOpacity: 1,
+  walls: [
+    { id: "w1", x1: 100, y1: 100, x2: 900, y2: 100 },
+    { id: "w2", x1: 900, y1: 100, x2: 900, y2: 500 },
+    { id: "w3", x1: 900, y1: 500, x2: 100, y2: 500 },
+    { id: "w4", x1: 100, y1: 500, x2: 100, y2: 100 },
+  ],
+  openings: [
+    { id: "o1", type: "window" as const, x: 500, y: 100, length: 140, angle: 0 },
+    { id: "o2", type: "door" as const, x: 500, y: 500, length: 90, angle: 0 },
+  ],
+  items: [],
+  texts: [],
+  furniture: [],
+  trackers: [],
+};
+
+const emptyFloor = {
+  id: "f1",
+  name: "Floor 1",
+  walls: [],
+  openings: [],
+  items: [],
+  texts: [],
+  furniture: [],
+  trackers: [],
+};
+
+const config: FloorplanCardConfig = {
+  type: "easy-floorplan-card",
+  title: "Dev floorplan",
+  width: 1000,
+  height: 600,
+  grid: 20,
+  snap: 0,
+  background: "#ffffff",
+  walls: [],
+  openings: [],
+  items: [],
+  texts: [],
+  furniture: [],
+  defaultFloor: "f1",
+  floors: [START_WITH_DEMO ? demoFloor : emptyFloor],
+};
+
+// ---- mount -----------------------------------------------------------------
+const editor = document.createElement("easy-floorplan-card-editor") as HTMLElement & {
+  hass: unknown;
+  setConfig: (c: FloorplanCardConfig) => void;
+};
+const card = document.createElement("easy-floorplan-card") as HTMLElement & {
+  hass: unknown;
+  setConfig: (c: FloorplanCardConfig) => void;
+};
+
+editor.hass = hass;
+card.hass = hass;
+editor.setConfig(config);
+card.setConfig(config);
+
+// Editing in the editor fires `config-changed`; mirror HA by feeding the new
+// config back into both the editor (round-trip) and the live preview.
+editor.addEventListener("config-changed", (e: Event) => {
+  const next = (e as CustomEvent).detail.config as FloorplanCardConfig;
+  card.setConfig(next);
+  editor.setConfig(next);
+  refreshTrackerEmu(next);
+});
+
+// ---- tracker emulator -------------------------------------------------------
+// Mock distance sensors so the Tracker animations can be exercised without HA.
+// For every tracker found in the config we expose a slider per configured
+// sensor (X / Y); an Auto-orbit toggle drives both sliders with a slow
+// Lissajous curve via rAF so the pulsating triangle / line continually moves.
+//
+// Sensor values are written into `hass.states[entity].state` and `hass` is
+// reassigned to a fresh object so Lit's @property hass triggers a re-render.
+
+type MockStates = Record<string, { state: string; attributes?: Record<string, unknown> }>;
+const baseStates = hass.states as MockStates;
+
+function setHassState(entity: string, value: number) {
+  baseStates[entity] = { state: String(value) };
+  // Re-assign hass with a *new* states object reference so Lit picks up the
+  // change (Lit treats hass as opaque and re-renders on identity change).
+  const nextHass = { ...hass, states: { ...baseStates } };
+  card.hass = nextHass;
+  editor.hass = nextHass;
+}
+
+const orbitState = new Map<string, { rafId: number | null }>();
+
+function refreshTrackerEmu(cfg: FloorplanCardConfig) {
+  const host = document.getElementById("tracker-emu")!;
+  const pane = document.getElementById("tracker-emu-pane")!;
+  const trackers: Tracker[] = (cfg.floors ?? []).flatMap((f) => f.trackers ?? []);
+  if (!trackers.length) {
+    pane.style.display = "none";
+    host.replaceChildren();
+    // Cancel any pending orbit raf when the last tracker is removed.
+    for (const [, st] of orbitState) if (st.rafId != null) cancelAnimationFrame(st.rafId);
+    orbitState.clear();
+    return;
+  }
+  pane.style.display = "block";
+
+  const frag = document.createDocumentFragment();
+  for (const tr of trackers) {
+    const panel = document.createElement("div");
+    panel.className = "tracker-panel";
+    const xs = tr.xSensor;
+    const ys = tr.ySensor;
+    const head = document.createElement("header");
+    head.innerHTML = `<strong>Tracker ${tr.id.slice(0, 10)}</strong>`;
+
+    // Auto-orbit only makes sense when at least one sensor is configured.
+    const orbitLabel = document.createElement("label");
+    orbitLabel.className = "orbit";
+    const orbitChk = document.createElement("input");
+    orbitChk.type = "checkbox";
+    orbitChk.disabled = !xs && !ys;
+    orbitLabel.append(orbitChk, document.createTextNode("Auto-orbit"));
+    head.appendChild(orbitLabel);
+    panel.appendChild(head);
+
+    panel.appendChild(buildAxisRow("X", xs));
+    panel.appendChild(buildAxisRow("Y", ys));
+    frag.appendChild(panel);
+
+    // Wire orbit AFTER sliders exist so we can drive them.
+    const st = orbitState.get(tr.id) ?? { rafId: null as number | null };
+    orbitState.set(tr.id, st);
+    if (st.rafId != null) {
+      cancelAnimationFrame(st.rafId);
+      st.rafId = null;
+    }
+    orbitChk.addEventListener("change", () => {
+      if (!orbitChk.checked) {
+        if (st.rafId != null) cancelAnimationFrame(st.rafId);
+        st.rafId = null;
+        return;
+      }
+      const t0 = performance.now();
+      const tick = (now: number) => {
+        const t = (now - t0) / 1000;
+        if (xs) {
+          const v = xs.min + ((Math.sin(t * 0.9) + 1) / 2) * (xs.max - xs.min);
+          setHassState(xs.entity, round2(v));
+          const slider = panel.querySelector<HTMLInputElement>(`input[data-axis="X"]`);
+          if (slider) slider.value = String(v);
+        }
+        if (ys) {
+          const v = ys.min + ((Math.sin(t * 1.3 + Math.PI / 3) + 1) / 2) * (ys.max - ys.min);
+          setHassState(ys.entity, round2(v));
+          const slider = panel.querySelector<HTMLInputElement>(`input[data-axis="Y"]`);
+          if (slider) slider.value = String(v);
+        }
+        st.rafId = requestAnimationFrame(tick);
+      };
+      st.rafId = requestAnimationFrame(tick);
+    });
+  }
+  host.replaceChildren(frag);
+}
+
+function buildAxisRow(axis: "X" | "Y", s: TrackerSensor | undefined): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "axis-row";
+  if (!s) {
+    row.innerHTML = `<span class="ent">${axis} sensor</span><span class="ent" style="grid-column:2/4;opacity:.6;">(not configured)</span>`;
+    return row;
+  }
+  // Initialize state so the dot has a starting position even before the user
+  // moves the slider (otherwise the entity reads NaN and we'd render stale).
+  const start = baseStates[s.entity]?.state;
+  const initial = Number.isFinite(Number(start)) ? Number(start) : (s.min + s.max) / 2;
+  if (start == null) setHassState(s.entity, initial);
+
+  const ent = document.createElement("span");
+  ent.className = "ent";
+  ent.textContent = `${axis}: ${s.entity}`;
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.dataset.axis = axis;
+  slider.min = String(s.min);
+  slider.max = String(s.max);
+  slider.step = String(Math.max(0.01, (s.max - s.min) / 200));
+  slider.value = String(initial);
+  const val = document.createElement("span");
+  val.className = "ent";
+  val.style.textAlign = "right";
+  val.textContent = String(initial);
+  slider.addEventListener("input", () => {
+    const v = Number(slider.value);
+    val.textContent = String(v);
+    setHassState(s.entity, v);
+  });
+  row.append(ent, slider, val);
+  return row;
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+// Initial render — covers the case where the starter config already has trackers.
+refreshTrackerEmu(config);
+
+// Clear the hosts before mounting so re-running this module (HMR, etc.) can
+// never stack a second editor/card on top of the first — duplicate mounts make
+// edits in one instance look like they "disappear" in the other.
+const editorHost = document.getElementById("editor-host")!;
+const cardHost = document.getElementById("card-host")!;
+editorHost.replaceChildren(editor);
+cardHost.replaceChildren(card);
+
+// If this module is hot-reloaded, do a full page reload instead of re-executing
+// the top-level side effects (which would re-define elements and re-mount).
+if (import.meta.hot) {
+  import.meta.hot.accept(() => import.meta.hot!.invalidate());
+}
