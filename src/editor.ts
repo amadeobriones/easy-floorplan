@@ -181,6 +181,13 @@ export class FloorplanCardEditor extends LitElement {
   @state() private _addMenuOpen = false;
   /** Project section expanded? Collapsed by default — page settings are touched rarely. */
   @state() private _projectOpen = false;
+  /**
+   * Expanded (fullscreen) editing. HA renders the card config editor in a
+   * narrow dialog (~480–560px), which is cramped for a visual canvas editor.
+   * When true the `.editor` root is lifted to a fixed full-viewport overlay so
+   * the canvas gets real room and the element/project sections dock beside it.
+   */
+  @state() private _fullscreen = false;
 
   @query("svg") private _svg?: SVGSVGElement;
   @query(".canvas-wrap") private _canvasWrap?: HTMLElement;
@@ -538,6 +545,12 @@ export class FloorplanCardEditor extends LitElement {
         ev.preventDefault();
         ev.stopPropagation();
         this._clearSel();
+      } else if (this._fullscreen) {
+        // Nothing left to cancel — collapse the full-screen workspace before
+        // letting a further Escape reach (and close) HA's edit dialog.
+        ev.preventDefault();
+        ev.stopPropagation();
+        this._fullscreen = false;
       }
       return;
     }
@@ -1422,7 +1435,7 @@ export class FloorplanCardEditor extends LitElement {
       !floor.furniture.length &&
       !(floor.trackers ?? []).length;
     return html`
-      <div class="editor">
+      <div class="editor ${this._fullscreen ? "fullscreen" : ""}">
         ${this._floorMenuOpen || this._addMenuOpen
           ? html`<div
               class="pop-backdrop"
@@ -1451,6 +1464,21 @@ export class FloorplanCardEditor extends LitElement {
                 </button>`
             )}
           </div>
+
+          <span class="divider"></span>
+
+          <!-- Expand: break out of HA's narrow config dialog into a full-screen
+               workspace. Kept next to the tools so it's reachable even when the
+               toolbar wraps at dialog width. -->
+          <button
+            class=${this._fullscreen ? "active expand-toggle" : "expand-toggle"}
+            aria-pressed=${this._fullscreen}
+            title=${this._fullscreen ? "Exit full screen (Esc)" : "Edit full screen — more room for the canvas"}
+            @click=${() => this._toggleFullscreen()}
+          >
+            <ha-icon icon=${this._fullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}></ha-icon>
+            ${this._fullscreen ? "Exit" : "Expand"}
+          </button>
 
           <span class="divider"></span>
 
@@ -1534,6 +1562,7 @@ export class FloorplanCardEditor extends LitElement {
 
         ${this._renderContextBar()}
 
+        <div class="workspace">
         <div class="canvas-outer">
         <div class="canvas-wrap" @wheel=${this._onCanvasWheel}>
           <div class="stage" style="aspect-ratio: ${c.width} / ${c.height}; width:${this._zoom * 100}%;">
@@ -1620,10 +1649,21 @@ export class FloorplanCardEditor extends LitElement {
         </div>
         </div>
 
-        ${this._renderElementEdit()}
-        ${this._renderPanel()}
+        <div class="side">
+          ${this._renderElementEdit()}
+          ${this._renderPanel()}
+        </div>
+        </div>
       </div>
     `;
+  }
+
+  /** Toggle the full-screen workspace. */
+  private _toggleFullscreen(): void {
+    this._fullscreen = !this._fullscreen;
+    // Any open toolbar popover would be orphaned by the layout change.
+    this._floorMenuOpen = false;
+    this._addMenuOpen = false;
   }
 
   /** The "+ Add" popover: device, text, then every furniture type as its real glyph. */
@@ -2754,6 +2794,78 @@ export class FloorplanCardEditor extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 8px;
+    }
+    /* Full-screen workspace. Fixed positioning lifts the editor out of HA's
+       narrow config dialog and pins it to the viewport, so the canvas finally
+       gets real room. z-index sits above the edit dialog (its scrim is ~8). */
+    .editor.fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      margin: 0;
+      padding: 12px;
+      box-sizing: border-box;
+      background: var(--card-background-color, #fff);
+      overflow: hidden;
+    }
+    /* Toolbar-icon button (Expand/Exit) — match the gear button's icon+label
+       alignment so it reads as part of the toolbar. */
+    .expand-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    /* Below the two toolbars: the canvas and the element/project sections.
+       Stacked at dialog width; split into canvas + docked side panel when
+       expanded so the extra width isn't wasted. */
+    .workspace {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+    .side {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+    .editor.fullscreen .workspace {
+      flex-direction: row;
+      align-items: stretch;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .editor.fullscreen .canvas-outer {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .editor.fullscreen .canvas-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+      height: auto;
+      resize: none;
+    }
+    /* Docked inspector — fixed, scrollable column beside the canvas. */
+    .editor.fullscreen .side {
+      flex: 0 0 340px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 2px;
+    }
+    /* At real dialog width the side panel can drop below instead of squeezing
+       the canvas to nothing. */
+    @media (max-width: 900px) {
+      .editor.fullscreen .workspace {
+        flex-direction: column;
+      }
+      .editor.fullscreen .side {
+        flex: 0 0 auto;
+        max-height: 40vh;
+      }
     }
     .toolbar {
       display: flex;
