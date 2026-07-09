@@ -1,4 +1,4 @@
-import { LitElement, html, css, svg, nothing, type TemplateResult } from "lit";
+import { LitElement, html, css, svg, nothing, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type {
   HomeAssistant,
@@ -184,11 +184,12 @@ export class FloorplanCardEditor extends LitElement {
   /**
    * Expanded (fullscreen) editing. HA renders the card config editor in a
    * narrow dialog (~480–560px), which is cramped for a visual canvas editor.
-   * When true the `.editor` root is lifted to a fixed full-viewport overlay so
-   * the canvas gets real room and the element/project sections dock beside it.
+   * When true the `.editor` root is promoted to the top layer so the canvas
+   * gets real room and the element/project sections dock beside it.
    */
   @state() private _fullscreen = false;
 
+  @query(".editor") private _editorEl?: HTMLElement;
   @query("svg") private _svg?: SVGSVGElement;
   @query(".canvas-wrap") private _canvasWrap?: HTMLElement;
 
@@ -260,6 +261,28 @@ export class FloorplanCardEditor extends LitElement {
 
   protected firstUpdated(): void {
     void this._ensurePickers();
+  }
+
+  /**
+   * Promote the expanded editor into the top layer. `position: fixed` alone is
+   * not enough: HA's edit dialog puts a `transform` on its surface to offset
+   * the safe areas, and any transform makes that surface the containing block
+   * for fixed descendants — so a "full-viewport" overlay would fill the narrow
+   * dialog instead. A popover escapes it. Collapsing drops the attribute, which
+   * hides the popover on its own. Browsers without the API keep the fixed
+   * fallback, which is already correct on the mobile dialog (transform: none).
+   */
+  protected updated(changed: PropertyValues): void {
+    if (!changed.has("_fullscreen") || !this._fullscreen) return;
+    const el = this._editorEl;
+    if (!el?.isConnected || typeof el.showPopover !== "function") return;
+    if (!el.matches(":popover-open")) {
+      try {
+        el.showPopover();
+      } catch {
+        // Top layer unavailable — the fixed-position styles still apply.
+      }
+    }
   }
 
   /**
@@ -1435,7 +1458,10 @@ export class FloorplanCardEditor extends LitElement {
       !floor.furniture.length &&
       !(floor.trackers ?? []).length;
     return html`
-      <div class="editor ${this._fullscreen ? "fullscreen" : ""}">
+      <div
+        class="editor ${this._fullscreen ? "fullscreen" : ""}"
+        popover=${this._fullscreen ? "manual" : nothing}
+      >
         ${this._floorMenuOpen || this._addMenuOpen
           ? html`<div
               class="pop-backdrop"
@@ -2795,18 +2821,29 @@ export class FloorplanCardEditor extends LitElement {
       flex-direction: column;
       gap: 8px;
     }
-    /* Full-screen workspace. Fixed positioning lifts the editor out of HA's
-       narrow config dialog and pins it to the viewport, so the canvas finally
-       gets real room. z-index sits above the edit dialog (its scrim is ~8). */
+    /* Full-screen workspace, shown as a popover so the top layer lifts it clear
+       of HA's edit dialog (whose surface is transformed — see updated()). The
+       resets undo the UA popover defaults: fit-content size, auto margins, a
+       solid border and padding. z-index and the fixed position only matter to
+       the fallback path, where the dialog sets --dialog-z-index: 6. */
     .editor.fullscreen {
       position: fixed;
       inset: 0;
       z-index: 100;
+      width: auto;
+      height: auto;
+      max-width: none;
+      max-height: none;
       margin: 0;
+      border: none;
       padding: 12px;
       box-sizing: border-box;
+      color: inherit;
       background: var(--card-background-color, #fff);
       overflow: hidden;
+    }
+    .editor.fullscreen::backdrop {
+      background: rgba(0, 0, 0, 0.6);
     }
     /* Toolbar-icon button (Expand/Exit) — match the gear button's icon+label
        alignment so it reads as part of the toolbar. */
