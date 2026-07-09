@@ -19,6 +19,11 @@ env:
 
 jobs:
   validate-hacs:
+    # Validates the head repo, not the diff — and a fork has no release asset
+    # for it to find, so it can only ever fail there. `build` still runs.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: HACS validation
