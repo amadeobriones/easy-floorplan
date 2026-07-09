@@ -112,15 +112,63 @@ if (!customElements.get("ha-entity-picker")) {
 import "../src/index";
 
 // ---- a minimal mock hass ---------------------------------------------------
+// The two sensors below carry full-precision states (two decimals) while their
+// registry entries ask for one, mirroring a typical MQTT device. Keep it that
+// way: a mock that pre-rounds, or a `formatEntityState` that returns the raw
+// state, hides display bugs here that users would hit in HA.
+const SENSOR_TEMPERATURE = "sensor.living_area_temperature";
+const SENSOR_HUMIDITY = "sensor.living_area_humidity";
+
+/** Stand-in for HA's entity registry — the only place display precision lives. */
+const entityRegistry: Record<string, { entity_id: string; display_precision?: number }> = {
+  [SENSOR_TEMPERATURE]: { entity_id: SENSOR_TEMPERATURE, display_precision: 1 },
+  [SENSOR_HUMIDITY]: { entity_id: SENSOR_HUMIDITY, display_precision: 1 },
+};
+
+/** Approximates HA's own formatter: registry precision, then HA's unit spacing. */
+function mockFormatEntityState(s: {
+  entity_id?: string;
+  state: string;
+  attributes?: Record<string, unknown>;
+}): string {
+  if (s.state === "unavailable") return "Unavailable";
+  if (s.state === "unknown") return "Unknown";
+  const precision = s.entity_id ? entityRegistry[s.entity_id]?.display_precision : undefined;
+  const num = Number(s.state);
+  const body = precision != null && Number.isFinite(num) ? num.toFixed(precision) : s.state;
+  const unit = s.attributes?.unit_of_measurement as string | undefined;
+  if (!unit) return body;
+  return unit === "%" || unit === "°" ? `${body}${unit}` : `${body} ${unit}`;
+}
+
 const hass = {
   states: {
-    "binary_sensor.front_door": { state: "off", attributes: { friendly_name: "Front Door" } },
-    "light.living_room": { state: "on", attributes: { friendly_name: "Living Room" } },
+    "binary_sensor.front_door": {
+      entity_id: "binary_sensor.front_door",
+      state: "off",
+      attributes: { friendly_name: "Front Door" },
+    },
+    "light.living_room": {
+      entity_id: "light.living_room",
+      state: "on",
+      attributes: { friendly_name: "Living Room" },
+    },
+    [SENSOR_TEMPERATURE]: {
+      entity_id: SENSOR_TEMPERATURE,
+      state: "17.94",
+      attributes: { friendly_name: "Living Area Temperature", unit_of_measurement: "°C" },
+    },
+    [SENSOR_HUMIDITY]: {
+      entity_id: SENSOR_HUMIDITY,
+      state: "49.31",
+      attributes: { friendly_name: "Living Area Humidity", unit_of_measurement: "%" },
+    },
   },
+  entities: entityRegistry,
   locale: { language: "en" },
   themes: { darkMode: false },
   callService: (...args: unknown[]) => console.log("[mock hass] callService", ...args),
-  formatEntityState: (s: { state: string }) => s.state,
+  formatEntityState: mockFormatEntityState,
   localize: (k: string) => k,
 } as unknown;
 
@@ -162,7 +210,18 @@ const demoFloor = {
     { id: "o1", type: "window" as const, x: 500, y: 100, length: 140, angle: 0 },
     { id: "o2", type: "door" as const, x: 500, y: 500, length: 90, angle: 0 },
   ],
-  items: [],
+  // A temperature reading paired with humidity — both stored at two decimals but
+  // configured to display one, so the badge should read "17.9 °C · 49.3%".
+  items: [
+    {
+      id: "i1",
+      entity: SENSOR_TEMPERATURE,
+      secondaryEntity: SENSOR_HUMIDITY,
+      x: 500,
+      y: 300,
+      kind: "sensor" as const,
+    },
+  ],
   texts: [],
   furniture: [],
   trackers: [],

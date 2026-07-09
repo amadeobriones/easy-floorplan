@@ -21,6 +21,8 @@ import {
   renderTracker,
   trackerSensorReading,
   defaultIcon,
+  itemStateText,
+  hassRenderInputsChanged,
 } from "./render";
 import type { Opening } from "./types";
 
@@ -74,19 +76,14 @@ export class FloorplanCard extends LitElement {
 
   /**
    * HA pushes a fresh `hass` on every state change anywhere in the instance —
-   * for most updates nothing on this plan moved. Skip those renders entirely:
-   * HA replaces an entity's state object whenever it changes, so a reference
-   * compare per watched entity is enough to detect a relevant update.
+   * for most updates nothing on this plan moved. Skip those renders entirely.
    */
   protected shouldUpdate(changed: PropertyValues): boolean {
     // Anything but a pure hass tick (config change, floor switch, first render).
     if (!(changed.size === 1 && changed.has("hass"))) return true;
     const prev = changed.get("hass") as HomeAssistant | undefined;
     if (!prev || !this.hass) return true;
-    for (const id of this._watchedEntities) {
-      if (prev.states[id] !== this.hass.states[id]) return true;
-    }
-    return false;
+    return hassRenderInputsChanged(prev, this.hass, this._watchedEntities);
   }
 
   public getCardSize(): number {
@@ -111,22 +108,6 @@ export class FloorplanCard extends LitElement {
   private _openingAmount(o: Opening): number {
     const state = o.entity ? this.hass?.states[o.entity] : undefined;
     return resolveOpeningAmount(o, state);
-  }
-
-  /** Formatted "state unit" for a single entity, or "—" when unavailable. */
-  private _entityStateText(entityId?: string): string {
-    if (!entityId) return "—";
-    const stateObj = this.hass?.states[entityId];
-    if (!stateObj) return "—";
-    const unit = stateObj.attributes?.unit_of_measurement;
-    return unit ? `${stateObj.state} ${unit}` : stateObj.state;
-  }
-
-  /** State text for the item: primary entity, plus secondary (e.g. humidity) when set. */
-  private _stateText(item: FloorItem): string {
-    const primary = this._entityStateText(item.entity);
-    if (!item.secondaryEntity) return primary;
-    return `${primary} · ${this._entityStateText(item.secondaryEntity)}`;
   }
 
   private _itemIcon(item: FloorItem): string {
@@ -220,7 +201,7 @@ export class FloorplanCard extends LitElement {
         @click=${() => this._onItemClick(item)}
       >
         ${visual}
-        ${showState ? html`<span class="label">${this._stateText(item)}</span>` : nothing}
+        ${showState ? html`<span class="label">${itemStateText(this.hass, item)}</span>` : nothing}
       </div>
     `;
   }
