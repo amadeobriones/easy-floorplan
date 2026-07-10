@@ -1,0 +1,17 @@
+{
+  "type": "custom:floorplan-card",
+  "title": "Example floor",
+  "width": 1000,
+  "height": 600,
+  "floors": [
+    {
+      "id": "floor_main",
+      "name": "Main",
+      "rotation": 0,
+      "walls": [{ "id": "w1", "x1": 100, "y1": 100, "x2": 900, "y2": 100 }],
+      "rooms": [{ "id": "r1", "name": "Living", "points": [[100, 100], [900, 100], [900, 500], [100, 500]], "areaId": "living_room", "fill": "#e3f2fd" }],
+      "items": [{ "id": "i1", "x": 500, "y": 300, "kind": "light", "entity": "light.living_room" }],
+      "texts": [{ "id": "t1", "x": 200, "y": 200, "text": "Living Room" }]
+    }
+  ]
+}

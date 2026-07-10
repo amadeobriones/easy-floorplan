@@ -1,5 +1,7 @@
 import { isTypingTarget, pathTags } from "./editor-keys";
 import { clampZoom, zoomAnchoredScroll } from "./editor-zoom";
+import { parseAndValidate, configToText } from "./validate";
+import example from "../schema/example.json";
 import { detectRooms, centroid, pointInPolygon } from "./rooms-from-walls";
 import {
   dragWallWelded,
@@ -195,6 +197,8 @@ export class FloorplanCardEditor extends LitElement {
   @state() private _addMenuOpen = false;
   /** Project section expanded? Collapsed by default — page settings are touched rarely. */
   @state() private _projectOpen = false;
+  @state() private _importText = "";
+  @state() private _importErrors: string[] = [];
   /**
    * Expanded (fullscreen) editing. HA renders the card config editor in a
    * narrow dialog (~480–560px), which is cramped for a visual canvas editor.
@@ -492,6 +496,26 @@ export class FloorplanCardEditor extends LitElement {
   private _commit(config: FloorplanCardConfig): void {
     this._pushHistory();
     this._emit(config);
+  }
+
+  private _importConfig(): void {
+    const r = parseAndValidate(this._importText);
+    if (!r.ok) {
+      this._importErrors = r.errors;
+      return; // refuse: change nothing
+    }
+    this._importErrors = [];
+    this._commit(r.config);
+  }
+
+  private _exportConfig(): void {
+    this._importText = configToText(this._config);
+    this._importErrors = [];
+  }
+
+  private _loadExample(): void {
+    this._importText = configToText(example as never);
+    this._importErrors = [];
   }
 
   private _undo(): void {
@@ -2688,6 +2712,25 @@ export class FloorplanCardEditor extends LitElement {
           if (live) this._patchFloorLive(patch as Partial<Floor>);
           else this._commitFloor(patch as Partial<Floor>);
         })}
+        <div class="row wide import-export">
+          <label>Import / Export</label>
+          <textarea
+            rows="8"
+            placeholder="Paste a card config (JSON or YAML) and press Import"
+            .value=${this._importText}
+            @input=${(e: Event) => (this._importText = (e.target as HTMLTextAreaElement).value)}
+          ></textarea>
+          <div class="ie-buttons">
+            <button @click=${() => this._importConfig()}>Import</button>
+            <button @click=${() => this._exportConfig()}>Export</button>
+            <button @click=${() => this._loadExample()}>Load example</button>
+          </div>
+          ${this._importErrors.length
+            ? html`<ul class="import-errors">
+                ${this._importErrors.map((x) => html`<li>${x}</li>`)}
+              </ul>`
+            : nothing}
+        </div>
       </div>
     `;
   }
@@ -3915,6 +3958,36 @@ export class FloorplanCardEditor extends LitElement {
     }
     .row input.num {
       flex: 0 0 64px;
+    }
+    /* The Import/Export row stacks its label, textarea, buttons, and error
+       list vertically instead of the usual horizontal .row layout, so the
+       textarea can take the full panel width. */
+    .row.import-export {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+    .row.import-export textarea {
+      width: 100%;
+      box-sizing: border-box;
+      font-family: monospace;
+      font-size: 12px;
+      resize: vertical;
+      padding: 4px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+    }
+    .ie-buttons {
+      display: flex;
+      gap: 8px;
+    }
+    .import-errors {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--error-color, #db4437);
+      font-size: 12px;
     }
     /* Compact inline checkbox+label used inside a .row that already has its
        primary <label> on the left (e.g. the Tracker sensor "invert" toggle). */

@@ -1,0 +1,740 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+        "ActionConfig": {
+            "additionalProperties": {},
+            "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched.",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "confirmation": {
+                    "anyOf": [
+                        {
+                            "properties": {
+                                "text": {
+                                    "type": "string"
+                                }
+                            },
+                            "type": "object"
+                        },
+                        {
+                            "type": "boolean"
+                        }
+                    ]
+                },
+                "data": {
+                    "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+                },
+                "entity": {
+                    "type": "string"
+                },
+                "navigation_path": {
+                    "type": "string"
+                },
+                "perform_action": {
+                    "type": "string"
+                },
+                "service": {
+                    "type": "string"
+                },
+                "service_data": {
+                    "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+                },
+                "target": {
+                    "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+                },
+                "url_path": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "action"
+            ],
+            "type": "object"
+        },
+        "Floor": {
+            "description": "A single floor/level. Each floor owns its own set of elements. The canvas\nsize, grid and background are shared across floors (config-level).",
+            "properties": {
+                "furniture": {
+                    "items": {
+                        "$ref": "#/definitions/Furniture"
+                    },
+                    "type": "array"
+                },
+                "haFloor": {
+                    "description": "Optional link to a Home Assistant floor (its registry `floor_id`).\nSelecting one in the editor names this floor after it; the id is kept so\nfuture features (e.g. area filtering, per-floor entity defaults) can use\nthe association. Purely additive — nothing renders differently today.",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "image": {
+                    "description": "Optional background image URL (e.g. `/local/floorplan.png` or an external\nURL) drawn behind the elements — handy for tracing over a real floor plan.\nIt fills the virtual canvas, so match the canvas width/height to the image\naspect ratio to avoid distortion.",
+                    "type": "string"
+                },
+                "imageOpacity": {
+                    "description": "Background image opacity, 0–1. Default 1.",
+                    "type": "number"
+                },
+                "items": {
+                    "items": {
+                        "$ref": "#/definitions/FloorItem"
+                    },
+                    "type": "array"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "openings": {
+                    "items": {
+                        "$ref": "#/definitions/Opening"
+                    },
+                    "type": "array"
+                },
+                "rooms": {
+                    "description": "Room polygons, drawn beneath the walls. Optional: older configs have none.",
+                    "items": {
+                        "$ref": "#/definitions/Room"
+                    },
+                    "type": "array"
+                },
+                "texts": {
+                    "items": {
+                        "$ref": "#/definitions/FloorText"
+                    },
+                    "type": "array"
+                },
+                "trackers": {
+                    "items": {
+                        "$ref": "#/definitions/Tracker"
+                    },
+                    "type": "array"
+                },
+                "walls": {
+                    "items": {
+                        "$ref": "#/definitions/Wall"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "furniture",
+                "id",
+                "items",
+                "name",
+                "openings",
+                "texts",
+                "trackers",
+                "walls"
+            ],
+            "type": "object"
+        },
+        "FloorItem": {
+            "properties": {
+                "angle": {
+                    "description": "Icon rotation in degrees. Default 0.",
+                    "type": "number"
+                },
+                "display": {
+                    "description": "How the device is drawn. Default \"badge\".",
+                    "enum": [
+                        "badge",
+                        "iconRipple",
+                        "ripple"
+                    ],
+                    "type": "string"
+                },
+                "double_tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
+                "entity": {
+                    "description": "The entity this item reflects. Optional: a device with no entity in Home\nAssistant still belongs on the plan as a static marker — it draws its icon,\nshows no state, and performs no action.",
+                    "type": "string"
+                },
+                "hold_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
+                "icon": {
+                    "description": "Optional override icon (mdi:...). Falls back to the entity's icon.",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "$ref": "#/definitions/ItemKind"
+                },
+                "name": {
+                    "description": "Optional label override. Falls back to the entity's friendly name.",
+                    "type": "string"
+                },
+                "rippleColor": {
+                    "description": "Ripple ring color (CSS/hex). Falls back to the primary color.",
+                    "type": "string"
+                },
+                "rippleSize": {
+                    "description": "Max ripple ring diameter in pixels. Default 80.",
+                    "type": "number"
+                },
+                "secondaryEntity": {
+                    "description": "Optional second entity (e.g. a humidity sensor paired with a temperature\nentity). When set and the state is shown, both values are displayed in the\nsame element. The primary `entity` drives on/off state and click actions.",
+                    "type": "string"
+                },
+                "showIcon": {
+                    "description": "Show the icon badge. When false only the state/label shows. Default true.",
+                    "type": "boolean"
+                },
+                "showState": {
+                    "description": "Show the entity state next to the icon.",
+                    "type": "boolean"
+                },
+                "size": {
+                    "description": "Badge diameter in pixels. Default 34.",
+                    "type": "number"
+                },
+                "stateStyles": {
+                    "description": "Conditional styling, first match wins. Rules do not stack: a cascade of\npartial styles is how every conditional-formatting system becomes\nunexplainable.",
+                    "items": {
+                        "$ref": "#/definitions/StateStyle"
+                    },
+                    "type": "array"
+                },
+                "tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "Lovelace actions. Defaults: tap = toggle (controllable domains) or more-info; hold/double = none."
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "id",
+                "kind",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "FloorText": {
+            "description": "A free text label placed on the plan.",
+            "properties": {
+                "angle": {
+                    "description": "Rotation in degrees. Default 0.",
+                    "type": "number"
+                },
+                "color": {
+                    "description": "Text color (CSS color / hex). Falls back to the theme text color.",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "size": {
+                    "description": "Font size in pixels. Default 16.",
+                    "type": "number"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "id",
+                "text",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "Furniture": {
+            "description": "A gray furniture/fixture diagram placed on the plan.",
+            "properties": {
+                "angle": {
+                    "description": "Rotation in degrees. Default 0.",
+                    "type": "number"
+                },
+                "color": {
+                    "description": "Stroke/fill color. Defaults to gray so it reads differently from walls.",
+                    "type": "string"
+                },
+                "h": {
+                    "type": "number"
+                },
+                "hand": {
+                    "description": "L-shaped sectional only: which side the chaise extends on. Default `right`.",
+                    "enum": [
+                        "left",
+                        "right"
+                    ],
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/FurnitureType"
+                },
+                "w": {
+                    "description": "Width / height in virtual units.",
+                    "type": "number"
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "h",
+                "id",
+                "type",
+                "w",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "FurnitureType": {
+            "enum": [
+                "airHandler",
+                "bathtub",
+                "bed",
+                "chair",
+                "desk",
+                "dishwasher",
+                "dryer",
+                "fridge",
+                "plant",
+                "roundTable",
+                "rug",
+                "sectional",
+                "sink",
+                "sofa",
+                "stairs",
+                "stove",
+                "table",
+                "toilet",
+                "tv",
+                "vanity",
+                "wardrobe",
+                "washer",
+                "waterHeater"
+            ],
+            "type": "string"
+        },
+        "ItemKind": {
+            "enum": [
+                "binary_sensor",
+                "camera",
+                "climate",
+                "cover",
+                "fan",
+                "generic",
+                "humidifier",
+                "light",
+                "lock",
+                "media_player",
+                "sensor",
+                "switch",
+                "vacuum"
+            ],
+            "type": "string"
+        },
+        "Opening": {
+            "description": "A door or window. Positioned by its center point and rotation so it can be\ndropped onto (and aligned with) a wall, but it is stored independently.",
+            "properties": {
+                "activeColor": {
+                    "description": "Color of the leaf/sash and swing arc while actively open. Falls back to the primary color.",
+                    "type": "string"
+                },
+                "angle": {
+                    "description": "Rotation in degrees, 0 = horizontal.",
+                    "type": "number"
+                },
+                "entity": {
+                    "description": "Optional entity (e.g. a contact `binary_sensor` or a `cover`) whose state\ndrives whether the opening is drawn open or closed. When unset, doors are\ndrawn open (swing symbol) and windows closed, matching a static floor plan.",
+                    "type": "string"
+                },
+                "flipH": {
+                    "description": "Mirror the symbol left↔right in the opening's local frame. For a swing door\nthis moves the hinge to the other jamb; for a slider it reverses the slide\ndirection. Absent = the default orientation (hinge/anchor at the left jamb).",
+                    "type": "boolean"
+                },
+                "flipV": {
+                    "description": "Mirror the symbol across the wall line, so the door opens into the room on\nthe other side. Absent = the default (swings toward the −y / \"near\" side).",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "invert": {
+                    "description": "Flip the open/closed interpretation of `entity` (for inverted sensors).",
+                    "type": "boolean"
+                },
+                "length": {
+                    "description": "Length along the wall, in virtual units.",
+                    "type": "number"
+                },
+                "motion": {
+                    "description": "How the opening moves. `swing` (default) is a hinged door / casement window;\n`slide` is a sliding door / sliding window whose panel(s) travel along the\nwall (see {@link sliderStyle}).",
+                    "enum": [
+                        "slide",
+                        "swing"
+                    ],
+                    "type": "string"
+                },
+                "sliderStyle": {
+                    "description": "Sliding openings only (`motion: \"slide\"`): how the panels are arranged.\n- `single` (default) — one panel slides aside into the wall.\n- `bypass` — two panels on parallel tracks; one slides behind the other\n  (patio-door style).\n- `biparting` — two panels meet in the middle and part, each recessing into\n  the wall on its own side.\nIgnored for swinging openings.",
+                    "enum": [
+                        "biparting",
+                        "bypass",
+                        "single"
+                    ],
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/OpeningType",
+                    "description": "The kind of opening: a `door` (single leaf) or a `window` (two leaves / glass)."
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "angle",
+                "id",
+                "length",
+                "type",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "OpeningType": {
+            "enum": [
+                "door",
+                "window"
+            ],
+            "type": "string"
+        },
+        "Record<string,unknown>": {
+            "type": "object"
+        },
+        "Room": {
+            "description": "A room: a closed polygon drawn beneath everything else.\n\nDeliberately **not** derived from the walls. Deriving rooms means planarising an\narbitrary soup of segments, and the moment one wall does not quite meet its\nneighbour the room silently vanishes. A room is its own object.",
+            "properties": {
+                "areaId": {
+                    "description": "Home Assistant area id. Stored, not yet acted on (see Floor.haFloor).",
+                    "type": "string"
+                },
+                "fill": {
+                    "description": "A CSS colour. Default: none.",
+                    "type": "string"
+                },
+                "fillOpacity": {
+                    "description": "0..1. Default 0.25 — a room tint must not fight the walls drawn over it.",
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "points": {
+                    "description": "Closed polygon in canvas units; the closing edge is implicit.",
+                    "items": {
+                        "items": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "number"
+                            }
+                        ],
+                        "maxItems": 2,
+                        "minItems": 2,
+                        "type": "array"
+                    },
+                    "type": "array"
+                },
+                "stateStyles": {
+                    "description": "Conditional fill, first match wins. `color: \"rgb\"` follows a light.",
+                    "items": {
+                        "$ref": "#/definitions/StateStyle"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "id",
+                "points"
+            ],
+            "type": "object"
+        },
+        "StateStyle": {
+            "description": "One conditional style rule: when the entity is in this state, look like that.\n\nEvery condition present must hold (so `above` and `below` together are a range).\nA rule with no conditions always matches, which makes it a useful last entry.\n\nState comparisons are literal on the raw state string, `unavailable` included.\nThe numeric ones never match a non-numeric state, so an outage simply fails\n`above`/`below` rather than being treated as zero.",
+            "properties": {
+                "above": {
+                    "type": "number"
+                },
+                "animation": {
+                    "description": "How a matched {@link StateStyle} animates its element.",
+                    "enum": [
+                        "blink",
+                        "none",
+                        "pulse"
+                    ],
+                    "type": "string"
+                },
+                "below": {
+                    "type": "number"
+                },
+                "color": {
+                    "description": "A CSS colour, or `\"rgb\"` to take the light's own `rgb_color`.",
+                    "type": "string"
+                },
+                "entity": {
+                    "description": "Defaults to the element's own entity.",
+                    "type": "string"
+                },
+                "icon": {
+                    "description": "mdi:... — beats the element's own `icon`, because it is the more specific rule.",
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "state_not": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "Tracker": {
+            "description": "A live position tracker driven by 1 or 2 distance sensors aimed along\northogonal axes. The user draws a rectangular tracked area on the floor\nplan and binds an HA distance entity to each axis; the card linearly\nmaps each sensor's `[min, max]` reading to the corresponding edge-to-edge\nspan of the rectangle.\n\nWith both sensors configured the card animates a pulsating triangle with\nripple rings at the resolved (x, y) inside the zone. With only one\nsensor configured it animates a faint pulsating line spanning the\nunknown axis (we know the target sits *somewhere* on that line).\n\nThe zone rectangle is visible only in the editor; the live card renders\nonly the tracked-object animation.",
+            "properties": {
+                "angle": {
+                    "description": "Rotation in degrees. Default 0.",
+                    "type": "number"
+                },
+                "color": {
+                    "description": "Marker / ripple color (CSS / hex). Falls back to the primary color.",
+                    "type": "string"
+                },
+                "dotSize": {
+                    "description": "Marker diameter in pixels. Default 14.",
+                    "type": "number"
+                },
+                "h": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "w": {
+                    "description": "Size in virtual units.",
+                    "type": "number"
+                },
+                "x": {
+                    "description": "Top-left in virtual units.",
+                    "type": "number"
+                },
+                "xSensor": {
+                    "$ref": "#/definitions/TrackerSensor",
+                    "description": "Distance sensor mapped to the X axis (rectangle's horizontal span)."
+                },
+                "y": {
+                    "type": "number"
+                },
+                "ySensor": {
+                    "$ref": "#/definitions/TrackerSensor",
+                    "description": "Distance sensor mapped to the Y axis (rectangle's vertical span)."
+                }
+            },
+            "required": [
+                "h",
+                "id",
+                "w",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "TrackerPresence": {
+            "description": "A presence / occupancy gate bound to a tracker sensor. `entity` is read as\na binary on/off state (with `invert` to flip inverted-logic sensors). When\nthe entity is `unavailable` / `unknown` we treat it as \"not detected\" —\nbetter to hide a possibly-stale marker than to leave it showing during a\nsensor outage.",
+            "properties": {
+                "entity": {
+                    "type": "string"
+                },
+                "invert": {
+                    "description": "Treat \"off\" / \"clear\" as detected (for inverted-logic sensors).",
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "entity"
+            ],
+            "type": "object"
+        },
+        "TrackerSensor": {
+            "description": "A single distance sensor mapping. `[min, max]` reading values map\nlinearly to the edge-to-edge span of the tracker rectangle along the\nsensor's axis. `invert: true` flips the mapping (max → min edge).\n\nOptionally a `presence` entity gates the marker: when any configured\npresence on the tracker reports \"not detected\" the animation is hidden\nentirely (the zone outline still shows in the editor). This handles the\ncommon case where a radar / mmWave device exposes both `sensor.*_distance`\nand `binary_sensor.*_occupancy` as siblings — gating on the latter\nsuppresses ghost markers when the room is empty.",
+            "properties": {
+                "entity": {
+                    "type": "string"
+                },
+                "invert": {
+                    "description": "Flip the mapping so that `max` corresponds to the near edge.",
+                    "type": "boolean"
+                },
+                "max": {
+                    "description": "Sensor reading when the target is at the \"far\" edge.",
+                    "type": "number"
+                },
+                "min": {
+                    "description": "Sensor reading when the target is at the \"near\" edge.",
+                    "type": "number"
+                },
+                "presence": {
+                    "$ref": "#/definitions/TrackerPresence",
+                    "description": "Optional binary entity (`binary_sensor.*`, `input_boolean`, etc.) whose\n\"not detected\" state hides the marker animation. When unset, the marker\nis never gated by presence — only by whether a distance reading is\navailable."
+                }
+            },
+            "required": [
+                "entity",
+                "max",
+                "min"
+            ],
+            "type": "object"
+        },
+        "Wall": {
+            "description": "A straight wall segment in virtual coordinate space.",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "x1": {
+                    "type": "number"
+                },
+                "x2": {
+                    "type": "number"
+                },
+                "y1": {
+                    "type": "number"
+                },
+                "y2": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "id",
+                "x1",
+                "x2",
+                "y1",
+                "y2"
+            ],
+            "type": "object"
+        }
+    },
+    "properties": {
+        "background": {
+            "description": "Canvas background color (CSS / hex). Falls back to the card background.",
+            "type": "string"
+        },
+        "defaultFloor": {
+            "description": "Id of the floor shown first. Falls back to the first floor.",
+            "type": "string"
+        },
+        "floors": {
+            "description": "Multi-floor data. When present and non-empty this is the source of truth.\nWhen absent, the legacy flat arrays below describe a single implicit floor\n(kept for backward compatibility with hand-written configs).",
+            "items": {
+                "$ref": "#/definitions/Floor"
+            },
+            "type": "array"
+        },
+        "furniture": {
+            "items": {
+                "$ref": "#/definitions/Furniture"
+            },
+            "type": "array"
+        },
+        "grid": {
+            "description": "Visible editor grid spacing in virtual units (purely a visual guide).",
+            "type": "number"
+        },
+        "height": {
+            "type": "number"
+        },
+        "index": {
+            "type": "number"
+        },
+        "items": {
+            "items": {
+                "$ref": "#/definitions/FloorItem"
+            },
+            "type": "array"
+        },
+        "openings": {
+            "items": {
+                "$ref": "#/definitions/Opening"
+            },
+            "type": "array"
+        },
+        "snap": {
+            "description": "Placement snap step in virtual (canvas) units. Tri-state:\n- **unset** — placement/drag/nudge snap to the visible `grid` (the default).\n- **`0`** — free placement (no snapping anywhere).\n- **`> 0`** — snap to this custom step (absolute units).\n\nThe editor presents a custom step as a percentage of the grid (e.g. `50` %\nof a `20` grid is stored here as `10`), but the stored value is always\nabsolute. Resolve with {@link resolveSnap}.",
+            "type": "number"
+        },
+        "texts": {
+            "items": {
+                "$ref": "#/definitions/FloorText"
+            },
+            "type": "array"
+        },
+        "title": {
+            "type": "string"
+        },
+        "trackers": {
+            "items": {
+                "$ref": "#/definitions/Tracker"
+            },
+            "type": "array"
+        },
+        "type": {
+            "type": "string"
+        },
+        "view_index": {
+            "type": "number"
+        },
+        "walls": {
+            "items": {
+                "$ref": "#/definitions/Wall"
+            },
+            "type": "array"
+        },
+        "width": {
+            "description": "Virtual canvas size; the SVG viewBox uses these. Drawing is resolution-independent.",
+            "type": "number"
+        }
+    },
+    "required": [
+        "height",
+        "type",
+        "width"
+    ],
+    "type": "object"
+}
+
