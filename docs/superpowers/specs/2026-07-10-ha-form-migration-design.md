@@ -65,6 +65,9 @@ No harness changes required: the fallback renderer covers every field except `ui
 - Behavioral (Playwright on dev harness, fallback path): form renders per kind, select commit → one undo step, text burst → one undo step, numeric guard keeps old value, emitted config carries snake_case action keys only when set.
 - Real-HA sanity is deferred to manual testing in HA (ha-form branch is the same routing code as the fallback past the diff).
 
-## Compatibility
+## Compatibility (verified against home-assistant/frontend 2024.1 tag and dev)
 
-Selector config shapes are pinned to what works across HA 2024.x+ (verified against home-assistant/frontend source — see plan for exact shapes). If the `ui_action` selector proves unavailable inside custom-card editors on some target version, the action fields drop to YAML-only configuration (schema entry omitted) without affecting the rest of the migration.
+- `ha-form` consolidates inner events: one `value-changed` per change, `detail.value` = full data object (top-level spread merge). Text/number-box fields fire per keystroke; number sliders fire **on release only** (live-drag preview is lost for slider fields — accepted, matches core editors).
+- Selector shapes pinned to 2024.1-compatible forms: entity `{ entity: { filter: [{ domain: [...] }] } }`; no `flatten` (use `name: ""` if grouping is ever needed); no select `mode: "box"`; no `slider_ticks`.
+- `ui_action` selector (underscore key) needs only `hass` — verified to work inside custom card editors; emits `perform-action` configs on ≥2024.8 and `call-service` on older versions, so the card ships its own executor handling both spellings (custom-card-helpers' `handleAction` silently drops `perform-action` — not used).
+- **Loading:** the entities-editor trick does NOT define `ha-form` (verified — `hui-entities-card-editor` doesn't import it). `_ensureHaComponents` loads the **button** card editor (statically imports ha-form + the ui_action chain) plus the entities editor (defines ha-entity-picker for the custom tracker rows). Selectors inside ha-form lazy-load their own pickers.
