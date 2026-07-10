@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { ItemKind } from "./types";
+import type { FurnitureType, ItemKind } from "./types";
+import { FURNITURE_DEFAULT_SIZE } from "./types";
 import {
   snapToWall,
   openingDefaultOpen,
@@ -12,6 +13,10 @@ import {
   resolveOpeningAmount,
   kindFromEntity,
   defaultIcon,
+  renderFurniture,
+  sectionalPoints,
+  SECTIONAL_CHAISE_FRACTION,
+  SECTIONAL_SEAT_FRACTION,
   entityDefaultIcon,
   trackerSensorReading,
   openingInMotion,
@@ -524,5 +529,99 @@ describe("hassRenderInputsChanged", () => {
   it("ignores entities the plan does not watch", () => {
     const next = { ...base(), states: { [TEMP]: tempState, [HUMIDITY]: { state: "50.0" } } };
     expect(hassRenderInputsChanged(base(), next, watched)).toBe(false);
+  });
+});
+
+describe("sectionalPoints", () => {
+  const w = 200;
+  const h = 160;
+
+  function area(pts: Array<[number, number]>): number {
+    let a = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const [x1, y1] = pts[i];
+      const [x2, y2] = pts[(i + 1) % pts.length];
+      a += x1 * y2 - x2 * y1;
+    }
+    return Math.abs(a) / 2;
+  }
+
+  it("is an L: six corners, not a rectangle", () => {
+    expect(sectionalPoints(w, h, "right")).toHaveLength(6);
+  });
+
+  it("fills the bounding box minus the notch", () => {
+    const chaise = w * SECTIONAL_CHAISE_FRACTION;
+    const seat = h * SECTIONAL_SEAT_FRACTION;
+    const expected = w * h - (w - chaise) * (h - seat);
+    expect(area(sectionalPoints(w, h, "right"))).toBeCloseTo(expected, 6);
+  });
+
+  it("puts the chaise on the right when hand is right", () => {
+    const pts = sectionalPoints(w, h, "right");
+    // the front edge (max y) should only be occupied on the right half
+    const front = pts.filter(([, y]) => y === h / 2).map(([x]) => x);
+    expect(Math.min(...front)).toBeGreaterThan(0);
+    expect(Math.max(...front)).toBeCloseTo(w / 2, 6);
+  });
+
+  it("puts the chaise on the left when hand is left", () => {
+    const pts = sectionalPoints(w, h, "left");
+    const front = pts.filter(([, y]) => y === h / 2).map(([x]) => x);
+    expect(Math.max(...front)).toBeLessThan(0);
+    expect(Math.min(...front)).toBeCloseTo(-w / 2, 6);
+  });
+
+  it("left is right mirrored across x, not a different shape", () => {
+    const r = sectionalPoints(w, h, "right");
+    const l = sectionalPoints(w, h, "left");
+    expect(area(l)).toBeCloseTo(area(r), 6);
+    expect(l.map(([x, y]) => [-x, y])).toEqual(r);
+  });
+
+  it("defaults to right-handed", () => {
+    expect(sectionalPoints(w, h)).toEqual(sectionalPoints(w, h, "right"));
+  });
+
+  it("stays inside its bounding box", () => {
+    for (const hand of ["left", "right"] as const) {
+      for (const [x, y] of sectionalPoints(w, h, hand)) {
+        expect(Math.abs(x)).toBeLessThanOrEqual(w / 2 + 1e-9);
+        expect(Math.abs(y)).toBeLessThanOrEqual(h / 2 + 1e-9);
+      }
+    }
+  });
+});
+
+describe("every furniture type renders and has a default size", () => {
+  const types: FurnitureType[] = [
+    "table", "roundTable", "desk", "chair", "sofa", "bed", "wardrobe", "rug",
+    "plant", "fridge", "stove", "sink", "toilet", "stairs", "tv",
+    "washer", "dryer", "dishwasher", "waterHeater", "airHandler", "bathtub",
+    "vanity", "sectional",
+  ];
+
+  it("has a default size for each", () => {
+    for (const t of types) {
+      const s = FURNITURE_DEFAULT_SIZE[t];
+      expect(s, t).toBeTruthy();
+      expect(s.w, t).toBeGreaterThan(0);
+      expect(s.h, t).toBeGreaterThan(0);
+    }
+  });
+
+  it("renders each without throwing", () => {
+    for (const t of types) {
+      const { w, h } = FURNITURE_DEFAULT_SIZE[t];
+      expect(() => renderFurniture({ id: t, type: t, x: 0, y: 0, w, h }), t).not.toThrow();
+    }
+  });
+
+  it("renders a sectional of each hand", () => {
+    for (const hand of ["left", "right"] as const) {
+      expect(() =>
+        renderFurniture({ id: "s", type: "sectional", x: 0, y: 0, w: 230, h: 180, hand }),
+      ).not.toThrow();
+    }
   });
 });

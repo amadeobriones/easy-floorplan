@@ -1,5 +1,6 @@
 import { svg, html, type SVGTemplateResult, type TemplateResult } from "lit";
-import type { Opening, ItemKind, Furniture, Tracker, RenderHass } from "./types";
+import type {
+  SectionalHand, Opening, ItemKind, Furniture, Tracker, RenderHass } from "./types";
 import { FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, trackerAxisFraction } from "./types";
 
 export const WALL_THICKNESS = 8;
@@ -574,6 +575,45 @@ export function renderWallMask(
  * origin, then translated and rotated into place. Defaults to gray so it reads
  * differently from black walls.
  */
+/** Fraction of the bounding box the chaise occupies, and the main seat's depth. */
+export const SECTIONAL_CHAISE_FRACTION = 0.42;
+export const SECTIONAL_SEAT_FRACTION = 0.55;
+
+/**
+ * The six corners of an L-shaped sectional, centred on the origin, back at -y.
+ *
+ * `hand` is read facing the sofa from the front: a `right` sectional puts the
+ * chaise on your right, extending toward you. Mirroring across x gives `left`,
+ * so the two hands are the same polygon reflected -- not two separate shapes.
+ */
+export function sectionalPoints(
+  w: number,
+  h: number,
+  hand: SectionalHand = "right",
+): Array<[number, number]> {
+  const hw = w / 2;
+  const hh = h / 2;
+  const seat = h * SECTIONAL_SEAT_FRACTION;   // depth of the main run, from the back
+  const chaise = w * SECTIONAL_CHAISE_FRACTION;
+
+  //  back  ( -y )
+  //  +-----------------+
+  //  |                 |
+  //  |         +-------+   <- chaise, on the right
+  //  |         |
+  //  +---------+
+  //  front ( +y )
+  const pts: Array<[number, number]> = [
+    [-hw, -hh],
+    [hw, -hh],
+    [hw, hh],
+    [hw - chaise, hh],
+    [hw - chaise, -hh + seat],
+    [-hw, -hh + seat],
+  ];
+  return hand === "left" ? pts.map(([x, y]) => [-x, y] as [number, number]) : pts;
+}
+
 export function renderFurniture(f: Furniture): SVGTemplateResult {
   const color = f.color ?? FURNITURE_COLOR;
   const w = f.w;
@@ -581,8 +621,13 @@ export function renderFurniture(f: Furniture): SVGTemplateResult {
   const hw = w / 2;
   const hh = h / 2;
 
-  const roundBase = f.type === "roundTable" || f.type === "plant";
-  const base = roundBase
+  const roundBase =
+    f.type === "roundTable" || f.type === "plant" || f.type === "waterHeater";
+  const base = f.type === "sectional"
+    ? svg`<polygon points=${sectionalPoints(w, h, f.hand).map((p) => p.join(",")).join(" ")}
+                   fill=${color} fill-opacity="0.12" stroke=${color} stroke-width="2"
+                   stroke-linejoin="round" />`
+    : roundBase
     ? svg`<ellipse cx="0" cy="0" rx=${hw} ry=${hh}
                    fill=${color} fill-opacity="0.12" stroke=${color} stroke-width="2" />`
     : f.type === "rug"
@@ -692,6 +737,65 @@ export function renderFurniture(f: Furniture): SVGTemplateResult {
                          rx=${Math.min(w, h) * 0.08} fill="none" stroke=${color}
                          stroke-width="1.5" opacity="0.6" />`;
       break;
+    case "washer":
+    case "dryer": {
+      const r = Math.min(w, h) * 0.3;
+      detail = svg`
+        <line x1=${-hw + w * 0.06} y1=${-hh + h * 0.18} x2=${hw - w * 0.06} y2=${-hh + h * 0.18}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <circle cx="0" cy=${h * 0.06} r=${r} fill="none" stroke=${color} stroke-width="2" />
+        ${f.type === "dryer"
+          ? svg`<circle cx="0" cy=${h * 0.06} r=${r * 0.45}
+                        fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`
+          : svg`<circle cx=${-hw + w * 0.16} cy=${-hh + h * 0.09} r=${Math.min(w, h) * 0.045}
+                        fill="none" stroke=${color} stroke-width="1.5" />`}`;
+      break;
+    }
+    case "dishwasher":
+      detail = svg`
+        <rect x=${-hw + w * 0.1} y=${-hh + h * 0.24} width=${w * 0.8} height=${h * 0.62} rx="3"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <line x1=${-hw + w * 0.06} y1=${hh - h * 0.12} x2=${hw - w * 0.06} y2=${hh - h * 0.12}
+              stroke=${color} stroke-width="2" />`;
+      break;
+    case "waterHeater":
+      detail = svg`
+        <circle cx="0" cy="0" r=${Math.min(hw, hh) * 0.34}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "airHandler":
+      detail = svg`
+        <line x1=${-hw + w * 0.08} y1=${-hh + h * 0.08} x2=${hw - w * 0.08} y2=${hh - h * 0.08}
+              stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <line x1=${-hw + w * 0.08} y1=${hh - h * 0.08} x2=${hw - w * 0.08} y2=${-hh + h * 0.08}
+              stroke=${color} stroke-width="1.5" opacity="0.8" />`;
+      break;
+    case "bathtub":
+      detail = svg`
+        <rect x=${-hw + w * 0.06} y=${-hh + h * 0.12} width=${w * 0.88} height=${h * 0.76}
+              rx=${Math.min(w, h) * 0.12} fill="none" stroke=${color} stroke-width="2" />
+        <circle cx=${-hw + w * 0.14} cy="0" r=${Math.min(w, h) * 0.055}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "vanity":
+      detail = svg`
+        <ellipse cx="0" cy=${h * 0.06} rx=${w * 0.2} ry=${h * 0.26}
+                 fill="none" stroke=${color} stroke-width="2" />
+        <circle cx="0" cy=${-hh + h * 0.14} r=${Math.min(w, h) * 0.05}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "sectional": {
+      const pts = sectionalPoints(w, h, f.hand);
+      const seatY = pts[4][1];               // where the chaise meets the main run
+      const backY = -hh + h * 0.16;
+      const divX = pts[3][0];                // the chaise's inner edge
+      const armX = f.hand === "left" ? hw - w * 0.09 : -hw + w * 0.09;
+      detail = svg`
+        <line x1=${-hw} y1=${backY} x2=${hw} y2=${backY} stroke=${color} stroke-width="2" />
+        <line x1=${armX} y1=${backY} x2=${armX} y2=${seatY} stroke=${color} stroke-width="2" />
+        <line x1=${divX} y1=${backY} x2=${divX} y2=${hh} stroke=${color} stroke-width="2" />`;
+      break;
+    }
     case "table":
     case "roundTable":
     default:
