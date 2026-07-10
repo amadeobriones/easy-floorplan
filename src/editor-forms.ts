@@ -371,6 +371,12 @@ export function roomForm(r: Room): FormSpec {
 export function furnitureForm(f: Furniture): FormSpec {
   const fields: FormField[] = [
     {
+      name: "entity",
+      label: "Entity",
+      helper: "Optional. Without one the piece is static: no state, no tint, no action.",
+      selector: { entity: {} },
+    },
+    {
       name: "type",
       label: "Type",
       selector: {
@@ -392,11 +398,34 @@ export function furnitureForm(f: Furniture): FormSpec {
   fields.push(
     { name: "w", label: "Width", required: true, selector: { number: { min: 10, mode: "box" } } },
     { name: "h", label: "Height", required: true, selector: { number: { min: 10, mode: "box" } } },
-    angleField()
+    angleField(),
+    { name: "showState", label: "Show state", selector: { boolean: {} } },
+    {
+      name: "tap_action",
+      label: "Tap action",
+      selector: { ui_action: { default_action: defaultItemAction(f.entity).action } },
+    },
+    { name: "hold_action", label: "Hold action", selector: { ui_action: { default_action: "none" } } },
+    {
+      name: "double_tap_action",
+      label: "Double-tap action",
+      selector: { ui_action: { default_action: "none" } },
+    }
   );
   return {
     fields,
-    data: { type: f.type, hand: f.hand ?? "right", w: f.w, h: f.h, angle: f.angle ?? 0 },
+    data: {
+      entity: f.entity ?? "",
+      type: f.type,
+      hand: f.hand ?? "right",
+      w: f.w,
+      h: f.h,
+      angle: f.angle ?? 0,
+      showState: f.showState ?? false,
+      tap_action: f.tap_action,
+      hold_action: f.hold_action,
+      double_tap_action: f.double_tap_action,
+    },
     toPatch(patch) {
       const out: Record<string, unknown> = { ...patch };
       // `hand` is meaningless on anything but a sectional; drop it rather than

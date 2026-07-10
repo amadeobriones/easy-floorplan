@@ -3050,6 +3050,7 @@ export class FloorplanCardEditor extends LitElement {
         ${this._renderForm(furnitureForm(f), (patch, live) =>
           this._applyElementPatch("furniture", f.id, patch, live)
         )}
+        ${this._renderStateStyleRows(f.stateStyles ?? [], "furniture", f.id, f.entity)}
         <div class="row">
           <label>Color</label>
           <input
