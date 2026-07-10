@@ -1,7 +1,10 @@
 import { svg, html, type SVGTemplateResult, type TemplateResult } from "lit";
 import type {
-  SectionalHand, Opening, ItemKind, Furniture, Tracker, RenderHass } from "./types";
-import { FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, trackerAxisFraction } from "./types";
+  SectionalHand, FloorplanCardConfig, Opening, ItemKind, Furniture, Tracker, RenderHass,
+} from "./types";
+import {
+  FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, getFloors, trackerAxisFraction,
+} from "./types";
 
 export const WALL_THICKNESS = 8;
 
@@ -44,6 +47,25 @@ export function hassRenderInputsChanged(
     if (prev.states[id] !== next.states[id]) return true;
   }
   return false;
+}
+
+/** Every entity id whose state can change what a plan draws (all floors). */
+export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
+  const ids = new Set<string>();
+  for (const f of getFloors(c)) {
+    for (const o of f.openings) if (o.entity) ids.add(o.entity);
+    for (const it of f.items) {
+      if (it.entity) ids.add(it.entity);
+      if (it.secondaryEntity) ids.add(it.secondaryEntity);
+    }
+    for (const tr of f.trackers) {
+      for (const s of [tr.xSensor, tr.ySensor]) {
+        if (s?.entity) ids.add(s.entity);
+        if (s?.presence?.entity) ids.add(s.presence.entity);
+      }
+    }
+  }
+  return ids;
 }
 
 /** State text for an item: primary entity, plus secondary (e.g. humidity) when set. */
@@ -196,6 +218,31 @@ export function entityDefaultIcon(
     return m ? (on ? m.on : m.off) : undefined;
   }
   return undefined;
+}
+
+/** Whether an entity state renders as "active" on the plan. */
+export function isEntityOn(state: string | undefined): boolean {
+  return state === "on" || state === "open" || state === "home" || state === "playing";
+}
+
+/**
+ * Icon precedence shared by card and editor: config override → entity's
+ * explicit icon → device_class-implied icon ("show as") → the kind default.
+ */
+export function resolveItemIcon(
+  item: { entity: string; kind: ItemKind; icon?: string },
+  st: { state: string; attributes: Record<string, unknown> } | undefined,
+): string {
+  if (item.icon) return item.icon;
+  const attrIcon = st?.attributes?.icon as string | undefined;
+  if (attrIcon) return attrIcon;
+  return (
+    entityDefaultIcon(
+      item.entity,
+      st?.attributes?.device_class as string | undefined,
+      isEntityOn(st?.state),
+    ) ?? defaultIcon(item.kind)
+  );
 }
 
 /** Infer a sensible item kind from an entity id's domain. */
