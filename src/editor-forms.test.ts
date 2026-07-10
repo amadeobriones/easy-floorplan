@@ -254,7 +254,6 @@ describe("furnitureForm", () => {
     expect(furnitureForm(fur()).toPatch({ w: 120 })).toEqual({ w: 120 });
   });
 });
-
 describe("roomForm — areas", () => {
   const room = { id: "r1", points: [[0, 0], [10, 0], [10, 10]] } as never;
 
@@ -267,27 +266,6 @@ describe("roomForm — areas", () => {
     expect(f.toPatch({ areaId: "kitchen" })).toMatchObject({ areaId: "kitchen" });
     expect(f.toPatch({ areaId: undefined }).areaId).toBeUndefined();
   });
-
-  it("scopes the light picker to the area entities when provided", () => {
-    const f = roomForm(room, ["light.a", "light.b"]);
-    const light = f.fields.find((x) => x.name === "light")!;
-    expect((light.selector.entity as { include_entities?: string[] }).include_entities).toEqual([
-      "light.a",
-      "light.b",
-    ]);
-  });
-
-  it("leaves the light picker unscoped with no area entities", () => {
-    const f = roomForm(room);
-    const light = f.fields.find((x) => x.name === "light")!;
-    expect((light.selector.entity as { include_entities?: string[] }).include_entities).toBeUndefined();
-  });
-
-  it("leaves the light picker unscoped when the area has no entities", () => {
-    const f = roomForm(room, []);
-    const light = f.fields.find((x) => x.name === "light")!;
-    expect((light.selector.entity as { include_entities?: string[] }).include_entities).toBeUndefined();
-  });
 });
 
 describe("normalizeFormPatch — area", () => {
@@ -295,5 +273,20 @@ describe("normalizeFormPatch — area", () => {
     const fields = [{ name: "areaId", label: "Area", selector: { area: {} } }];
     expect(normalizeFormPatch({ areaId: "" }, fields).areaId).toBeUndefined();
     expect(normalizeFormPatch({ areaId: "kitchen" }, fields).areaId).toBe("kitchen");
+  });
+});
+
+describe("roomForm — no light/lit shorthand", () => {
+  const room = { id: "r1", points: [[0, 0], [10, 0], [10, 10]] } as never;
+  it("no longer exposes light or lit fields", () => {
+    const names = roomForm(room).fields.map((f) => f.name);
+    expect(names).not.toContain("light");
+    expect(names).not.toContain("lit");
+    expect(names).toEqual(expect.arrayContaining(["name", "areaId", "fill", "fillOpacity"]));
+  });
+  it("toPatch passes fields through without synthesizing stateStyles", () => {
+    const patch = roomForm(room).toPatch({ fill: "#fff" });
+    expect(patch).toEqual({ fill: "#fff" });
+    expect("stateStyles" in patch).toBe(false);
   });
 });

@@ -342,18 +342,8 @@ export function textForm(t: FloorText): FormSpec {
   };
 }
 
-/**
- * A room's colours.
- *
- * `stateStyles` is a rule list, and a rule list needs a repeater the editor's
- * ha-form has not got. A room's useful case is one rule -- "when this light is on,
- * wear this colour" -- so the form exposes that rule as two flat fields and
- * reassembles it. A room whose rules are richer than that keeps them: `toPatch`
- * only rewrites `stateStyles` when one of these two fields actually changed.
- */
-export function roomForm(r: Room, areaEntities?: string[]): FormSpec {
-  const rule = r.stateStyles?.[0];
-  const lightFilter = { domain: ["light", "switch"] };
+/** A room's colours. `stateStyles` rules are owned by the repeater, not this form. */
+export function roomForm(r: Room): FormSpec {
   return {
     fields: [
       { name: "name", label: "Name", selector: { text: {} } },
@@ -365,39 +355,15 @@ export function roomForm(r: Room, areaEntities?: string[]): FormSpec {
         helper: "0 is invisible, 1 is solid. The walls are drawn over the room.",
         selector: { number: { min: 0, max: 1, step: 0.05, mode: "slider" } },
       },
-      {
-        name: "light",
-        label: "Lights up with",
-        helper: "Optional. When this entity is on, the room wears its lit colour.",
-        selector: {
-          entity: areaEntities && areaEntities.length
-            ? { filter: [lightFilter], include_entities: areaEntities }
-            : { filter: [lightFilter] },
-        },
-      },
-      { name: "lit", label: "Lit colour", selector: { text: {} } },
     ],
     data: {
       name: r.name ?? "",
       areaId: r.areaId ?? "",
       fill: r.fill ?? "",
       fillOpacity: r.fillOpacity ?? ROOM_FILL_OPACITY,
-      light: rule?.entity ?? "",
-      lit: rule?.color ?? "",
     },
     toPatch(patch) {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(patch)) {
-        if (k !== "light" && k !== "lit") out[k] = v;
-      }
-      if ("light" in patch || "lit" in patch) {
-        const entity = ("light" in patch ? patch.light : rule?.entity) as string | undefined;
-        const color = ("lit" in patch ? patch.lit : rule?.color) as string | undefined;
-        // Both or neither: a rule with no colour paints nothing, and a colour with
-        // no entity would match always and pin the room to its lit state.
-        out.stateStyles = entity && color ? [{ entity, state: "on", color }] : undefined;
-      }
-      return out;
+      return patch;
     },
   };
 }
