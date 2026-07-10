@@ -241,11 +241,18 @@ export function isEntityOn(state: string | undefined): boolean {
  * calls every one of them off, forever -- and their state-dependent icons can
  * never show their active half.
  */
-const ACTIVE_STATES: Record<string, ReadonlySet<string>> = {
-  lock: new Set(["unlocked", "unlocking", "open", "opening"]),
-  vacuum: new Set(["cleaning", "returning"]),
-  camera: new Set(["recording", "streaming"]),
-  media_player: new Set(["playing", "buffering", "on"]),
+const INACTIVE_STATES: Record<string, ReadonlySet<string>> = {
+  // A climate entity's state is its hvac mode -- heat, cool, auto, dry, fan_only,
+  // off. None of them is "on", so a running thermostat read as off, permanently.
+  climate: new Set(["off"]),
+  water_heater: new Set(["off"]),
+  // "Not locked" includes jammed: a lock that failed to close must never draw the
+  // closed padlock.
+  lock: new Set(["locked", "locking"]),
+  vacuum: new Set(["docked", "idle", "paused", "error"]),
+  camera: new Set(["idle"]),
+  // Paused is not off. Home Assistant's own UI treats a paused player as on.
+  media_player: new Set(["off", "standby"]),
 };
 
 /** The colour a light is actually shining, as a CSS colour, or undefined. */
@@ -264,7 +271,14 @@ export function stateStyleMatches(
 ): boolean {
   const state = st?.state;
   if (rule.state !== undefined && state !== rule.state) return false;
-  if (rule.state_not !== undefined && state === rule.state_not) return false;
+  if (rule.state_not !== undefined) {
+    // Fail closed. "Anything but off" must not fire because the entity dropped out
+    // or never existed: every other outage path in this file is careful about it,
+    // and `state_not` is the one condition that would otherwise treat an outage as
+    // a match and pin the element to its alarming style for the whole dropout.
+    if (state === undefined || state === "unavailable" || state === "unknown") return false;
+    if (state === rule.state_not) return false;
+  }
   if (rule.above !== undefined || rule.below !== undefined) {
     const n = Number(state);
     // An outage ("unavailable") is not a number, and must not read as zero.
@@ -319,12 +333,19 @@ export function stateStyleEntities(
   return out;
 }
 
-/** Whether an entity is in its active state, by the rules of its own domain. */
+/**
+ * Whether an entity is in its active state, by the rules of its own domain.
+ *
+ * Domains are listed by what counts as *inactive*, never as active. A domain whose
+ * states are an open set -- climate's hvac modes, a media player's transport
+ * states -- gains new ones as Home Assistant grows, and a list of active states
+ * would silently call every new one "off". A list of the inactive ones cannot.
+ */
 export function entityIsActive(entityId: string | undefined, state: string | undefined): boolean {
   if (!state || state === "unavailable" || state === "unknown") return false;
   const domain = entityId?.split(".")[0] ?? "";
-  const active = ACTIVE_STATES[domain];
-  return active ? active.has(state) : isEntityOn(state);
+  const inactive = INACTIVE_STATES[domain];
+  return inactive ? !inactive.has(state) : isEntityOn(state);
 }
 
 /**

@@ -959,3 +959,64 @@ describe("renderRoom (#6)", () => {
     expect([...collectWatchedEntities(cfg)]).toEqual(["light.lamp"]);
   });
 });
+
+describe("domains whose states are an open set", () => {
+  // Found live: climate.thermostat reads "cool", and isEntityOn("cool") is false,
+  // so the thermostat badge was drawn as off no matter what the system was doing.
+  it("a climate entity is active in any hvac mode but off", () => {
+    for (const mode of ["heat", "cool", "auto", "heat_cool", "dry", "fan_only"]) {
+      expect(entityIsActive("climate.t", mode), mode).toBe(true);
+    }
+    expect(entityIsActive("climate.t", "off")).toBe(false);
+    expect(entityIsActive("climate.t", "unavailable")).toBe(false);
+  });
+
+  it("a jammed lock is not a locked lock", () => {
+    expect(entityIsActive("lock.front", "jammed")).toBe(true);
+    expect(entityIsActive("lock.front", "locking")).toBe(false);
+    expect(entityIsActive("lock.front", "locked")).toBe(false);
+  });
+
+  it("a paused media player is on; a standby one is not", () => {
+    for (const s of ["playing", "paused", "buffering", "idle", "on"]) {
+      expect(entityIsActive("media_player.tv", s), s).toBe(true);
+    }
+    for (const s of ["off", "standby"]) {
+      expect(entityIsActive("media_player.tv", s), s).toBe(false);
+    }
+  });
+
+  it("a water heater is active unless it is off", () => {
+    expect(entityIsActive("water_heater.tank", "eco")).toBe(true);
+    expect(entityIsActive("water_heater.tank", "off")).toBe(false);
+  });
+
+  // The point of listing the inactive states rather than the active ones.
+  it("a state Home Assistant has not invented yet reads as active, not as off", () => {
+    expect(entityIsActive("climate.t", "hydrogen_fusion")).toBe(true);
+    expect(entityIsActive("media_player.tv", "teleporting")).toBe(true);
+  });
+});
+
+describe("state_not fails closed on an outage", () => {
+  const rule = { state_not: "off", color: "red" };
+
+  it("does not fire because the entity dropped out", () => {
+    expect(stateStyleMatches(rule, { state: "unavailable", attributes: {} })).toBe(false);
+    expect(stateStyleMatches(rule, { state: "unknown", attributes: {} })).toBe(false);
+  });
+
+  it("does not fire because the entity never existed", () => {
+    expect(stateStyleMatches(rule, undefined)).toBe(false);
+  });
+
+  it("still fires for a real state that is not the excluded one", () => {
+    expect(stateStyleMatches(rule, { state: "heat", attributes: {} })).toBe(true);
+    expect(stateStyleMatches(rule, { state: "off", attributes: {} })).toBe(false);
+  });
+
+  // A rule naming no condition is the deliberate catch-all and keeps matching.
+  it("a rule with no conditions still matches a missing entity", () => {
+    expect(stateStyleMatches({ color: "grey" }, undefined)).toBe(true);
+  });
+});

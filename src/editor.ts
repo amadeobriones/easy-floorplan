@@ -1201,7 +1201,7 @@ export class FloorplanCardEditor extends LitElement {
       points=${pts}
       fill=${fill ?? "none"}
       fill-opacity=${fill ? (r.fillOpacity ?? ROOM_FILL_OPACITY) : 0}
-      @pointerdown=${(e: PointerEvent) => this._startDrag(e, { kind: "room", id: r.id })}
+      @pointerdown=${(e: PointerEvent) => this._selectRoom(e, r.id)}
     />`;
   }
 
@@ -1280,6 +1280,22 @@ export class FloorplanCardEditor extends LitElement {
     }
     this._commitFloor({ rooms });
     this._toast(`Added ${fresh.length} room${fresh.length === 1 ? "" : "s"}.`);
+  }
+
+  /**
+   * Select a room. Deliberately not a drag.
+   *
+   * `_startDrag` would build a Drag whose `orig` has no entry for a room -- rooms
+   * are not draggable -- and the first pointermove past the threshold would push a
+   * history snapshot and clear the redo stack before discovering there is nothing
+   * to move. An undo step that undoes nothing, and a lost redo, for a gesture that
+   * did nothing.
+   */
+  private _selectRoom(ev: PointerEvent, id: string): void {
+    if (this._tool !== "select") return;
+    ev.stopPropagation();
+    this._canvasWrap?.focus();
+    this._selectForPointer(ev, { kind: "room", id });
   }
 
   private _updateRoom(id: string, patch: Partial<Room>, live = false): void {
@@ -1423,12 +1439,18 @@ export class FloorplanCardEditor extends LitElement {
     this._activeFloorId = floor.id;
     this._clearSel();
     this._commit({ ...this._config, floors });
+    this._roomDraft = [];
   }
 
   private _switchFloor(id: string): void {
     if (id === this._activeFloorId) return;
     this._activeFloorId = id;
     this._clearSel();
+    // The draft holds the other floor's coordinates. The floor picker is a live
+    // <select> in the toolbar and a room is drawn click by click, so it is
+    // reachable mid-draft -- and committing then would put the room on the wrong
+    // floor, built from points the user placed on a plan they can no longer see.
+    this._roomDraft = [];
   }
 
   private _renameFloor(id: string, name: string): void {
@@ -1487,6 +1509,7 @@ export class FloorplanCardEditor extends LitElement {
     this._commit({ ...this._config, floors: remaining });
     this._activeFloorId = remaining[Math.max(0, idx - 1)].id;
     this._clearSel();
+    this._roomDraft = [];
   }
 
   private _updateWall(id: string, partial: Partial<Wall>): void {

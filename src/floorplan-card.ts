@@ -190,7 +190,7 @@ export class FloorplanCard extends LitElement {
     `;
   }
 
-  private _renderItem(item: FloorItem, c: FloorplanCardConfig): TemplateResult {
+  private _renderItem(item: FloorItem, c: FloorplanCardConfig): TemplateResult | typeof nothing {
     const style = this._itemStyle(item);
     const on = this._isOn(item);
     // No entity, no reading to show -- an explicit showState cannot conjure one.
@@ -215,6 +215,10 @@ export class FloorplanCard extends LitElement {
     // With no badge and no ripple the label IS the item, so it must centre on the
     // coordinate rather than hang below a zero-height column. (`showIcon: false`.)
     const labelOnly = visual === nothing;
+
+    // Nothing to draw and nothing to read: an empty div carrying role="button",
+    // tabindex and a pointer cursor is an invisible thing to click on.
+    if (visual === nothing && !showState) return nothing;
 
     return html`
       <div
@@ -502,8 +506,13 @@ export class FloorplanCard extends LitElement {
       50%, 100% { opacity: 0.25; }
     }
     @media (prefers-reduced-motion: reduce) {
+      /* Every animation this card draws, not just the conditional ones. */
       .item.anim-pulse .badge,
-      .item.anim-blink .badge {
+      .item.anim-blink .badge,
+      .ripple.active .ring,
+      .tracker-dot,
+      .tracker-ring,
+      .tracker-band {
         animation: none;
       }
     }
