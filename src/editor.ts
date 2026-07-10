@@ -1,3 +1,4 @@
+import { haAreasOf, entitiesInArea, devicesToAdd } from "./areas";
 import { isTypingTarget, pathTags } from "./editor-keys";
 import { clampZoom, zoomAnchoredScroll } from "./editor-zoom";
 import { parseAndValidate, configToText } from "./validate";
@@ -1328,6 +1329,42 @@ export class FloorplanCardEditor extends LitElement {
     else this._commitFloor({ rooms });
   }
 
+  /** "Add devices in this area" — shown when the room links an HA area. */
+  private _renderAddDevicesRow(r: Room): TemplateResult {
+    const areas = haAreasOf(this.hass);
+    if (!areas.length || !r.areaId) return html`${nothing}`;
+    const areaName = areas.find((a) => a.area_id === r.areaId)?.name ?? r.areaId;
+    const placed = new Set(
+      this._floor().items.map((it) => it.entity).filter((e): e is string => !!e)
+    );
+    const n = devicesToAdd(this.hass, r.areaId, r, placed).length;
+    return html`<div class="row">
+      <button ?disabled=${!n} @click=${() => this._addDevicesFromArea(r)}>
+        ${n ? `Add ${n} device${n === 1 ? "" : "s"} from ${areaName}` : `No new devices in ${areaName}`}
+      </button>
+    </div>`;
+  }
+
+  private _addDevicesFromArea(r: Room): void {
+    if (!r.areaId) return;
+    const placed = new Set(
+      this._floor().items.map((it) => it.entity).filter((e): e is string => !!e)
+    );
+    const toAdd = devicesToAdd(this.hass, r.areaId, r, placed);
+    if (!toAdd.length) return;
+    const items: FloorItem[] = toAdd.map((d) => ({
+      id: uid("item"),
+      entity: d.entity,
+      x: d.x,
+      y: d.y,
+      kind: d.kind,
+      showState: d.kind === "sensor",
+      showIcon: true,
+      size: DEFAULT_ITEM_SIZE,
+    }));
+    this._commitFloor({ items: [...this._floor().items, ...items] });
+  }
+
   private _deleteSelected(): void {
     if (!this._selection.length) return;
     const f = this._floor();
@@ -2329,14 +2366,31 @@ export class FloorplanCardEditor extends LitElement {
       </div>`;
     }
     if ("entity" in sel) {
-      const filter = (sel.entity as { filter?: { domain?: string[] }[] }).filter;
+      const e = sel.entity as { filter?: { domain?: string[] }[]; include_entities?: string[] };
       return html`<div class="row wide">
         <label>${f.label}</label>
         ${this._renderEntityPicker(
           String(value ?? ""),
           (v) => this._applyFallback(spec, f, v, false, apply),
-          filter?.[0]?.domain
+          e.filter?.[0]?.domain,
+          e.include_entities
         )}
+      </div>`;
+    }
+    if ("area" in sel) {
+      const areas = haAreasOf(this.hass);
+      return html`<div class="row">
+        <label>${f.label}</label>
+        <select
+          .value=${String(value ?? "")}
+          @change=${(e: Event) =>
+            this._applyFallback(spec, f, (e.target as HTMLSelectElement).value, false, apply)}
+        >
+          <option value="" ?selected=${!value}>(no area)</option>
+          ${areas.map(
+            (a) => html`<option value=${a.area_id} ?selected=${a.area_id === value}>${a.name}</option>`
+          )}
+        </select>
       </div>`;
     }
     if ("icon" in sel) {
@@ -2367,13 +2421,15 @@ export class FloorplanCardEditor extends LitElement {
   private _renderEntityPicker(
     value: string,
     onChange: (entity: string) => void,
-    includeDomains?: string[]
+    includeDomains?: string[],
+    includeEntities?: string[]
   ): TemplateResult {
     if (customElements.get("ha-entity-picker")) {
       return html`<ha-entity-picker
         .hass=${this.hass}
         .value=${value}
         .includeDomains=${includeDomains}
+        .includeEntities=${includeEntities}
         allow-custom-entity
         @value-changed=${(e: CustomEvent) => onChange((e.detail.value as string) ?? "")}
       ></ha-entity-picker>`;
@@ -2791,10 +2847,12 @@ export class FloorplanCardEditor extends LitElement {
     if (sel.kind === "room") {
       const r = (this._floor().rooms ?? []).find((x) => x.id === sel.id);
       if (!r) return html`${nothing}`;
+      const areaEntities = r.areaId ? entitiesInArea(this.hass, r.areaId) : undefined;
       return html`
-        ${this._renderForm(roomForm(r), (patch, live) =>
+        ${this._renderForm(roomForm(r, areaEntities), (patch, live) =>
           this._updateRoom(r.id, patch as Partial<Room>, live),
         )}
+        ${this._renderAddDevicesRow(r)}
       `;
     }
 

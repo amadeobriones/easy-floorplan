@@ -67,7 +67,12 @@ export function normalizeFormPatch(
   for (const field of fields) {
     if (!(field.name in patch)) continue;
     let v = patch[field.name];
-    if ("text" in field.selector || "icon" in field.selector || "entity" in field.selector) {
+    if (
+      "text" in field.selector ||
+      "icon" in field.selector ||
+      "entity" in field.selector ||
+      "area" in field.selector
+    ) {
       if (v === "" || v == null) v = field.required ? "" : undefined;
     } else if ("number" in field.selector) {
       const n = typeof v === "string" && v !== "" ? Number(v) : (v as number | undefined);
@@ -346,11 +351,13 @@ export function textForm(t: FloorText): FormSpec {
  * reassembles it. A room whose rules are richer than that keeps them: `toPatch`
  * only rewrites `stateStyles` when one of these two fields actually changed.
  */
-export function roomForm(r: Room): FormSpec {
+export function roomForm(r: Room, areaEntities?: string[]): FormSpec {
   const rule = r.stateStyles?.[0];
+  const lightFilter = { domain: ["light", "switch"] };
   return {
     fields: [
       { name: "name", label: "Name", selector: { text: {} } },
+      { name: "areaId", label: "Area", selector: { area: {} } },
       { name: "fill", label: "Colour", selector: { text: {} } },
       {
         name: "fillOpacity",
@@ -362,12 +369,17 @@ export function roomForm(r: Room): FormSpec {
         name: "light",
         label: "Lights up with",
         helper: "Optional. When this entity is on, the room wears its lit colour.",
-        selector: { entity: { filter: [{ domain: ["light", "switch"] }] } },
+        selector: {
+          entity: areaEntities && areaEntities.length
+            ? { filter: [lightFilter], include_entities: areaEntities }
+            : { filter: [lightFilter] },
+        },
       },
       { name: "lit", label: "Lit colour", selector: { text: {} } },
     ],
     data: {
       name: r.name ?? "",
+      areaId: r.areaId ?? "",
       fill: r.fill ?? "",
       fillOpacity: r.fillOpacity ?? ROOM_FILL_OPACITY,
       light: rule?.entity ?? "",

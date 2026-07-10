@@ -6,6 +6,7 @@ import {
   openingForm,
   itemForm,
   textForm,
+  roomForm,
   furnitureForm,
   trackerForm,
   wallForm,
@@ -251,5 +252,48 @@ describe("furnitureForm", () => {
 
   it("leaves other patches alone", () => {
     expect(furnitureForm(fur()).toPatch({ w: 120 })).toEqual({ w: 120 });
+  });
+});
+
+describe("roomForm — areas", () => {
+  const room = { id: "r1", points: [[0, 0], [10, 0], [10, 10]] } as never;
+
+  it("exposes an areaId field with an area selector and round-trips it", () => {
+    const f = roomForm(room);
+    const field = f.fields.find((x) => x.name === "areaId")!;
+    expect(field).toBeTruthy();
+    expect("area" in field.selector).toBe(true);
+    expect(f.data.areaId).toBe("");
+    expect(f.toPatch({ areaId: "kitchen" })).toMatchObject({ areaId: "kitchen" });
+    expect(f.toPatch({ areaId: undefined }).areaId).toBeUndefined();
+  });
+
+  it("scopes the light picker to the area entities when provided", () => {
+    const f = roomForm(room, ["light.a", "light.b"]);
+    const light = f.fields.find((x) => x.name === "light")!;
+    expect((light.selector.entity as { include_entities?: string[] }).include_entities).toEqual([
+      "light.a",
+      "light.b",
+    ]);
+  });
+
+  it("leaves the light picker unscoped with no area entities", () => {
+    const f = roomForm(room);
+    const light = f.fields.find((x) => x.name === "light")!;
+    expect((light.selector.entity as { include_entities?: string[] }).include_entities).toBeUndefined();
+  });
+
+  it("leaves the light picker unscoped when the area has no entities", () => {
+    const f = roomForm(room, []);
+    const light = f.fields.find((x) => x.name === "light")!;
+    expect((light.selector.entity as { include_entities?: string[] }).include_entities).toBeUndefined();
+  });
+});
+
+describe("normalizeFormPatch — area", () => {
+  it("clears an empty area to undefined", () => {
+    const fields = [{ name: "areaId", label: "Area", selector: { area: {} } }];
+    expect(normalizeFormPatch({ areaId: "" }, fields).areaId).toBeUndefined();
+    expect(normalizeFormPatch({ areaId: "kitchen" }, fields).areaId).toBe("kitchen");
   });
 });
