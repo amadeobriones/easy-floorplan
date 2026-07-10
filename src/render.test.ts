@@ -693,6 +693,7 @@ describe("collectWatchedEntities", () => {
 });
 
 
+
 describe("an item with no entity (#39)", () => {
   it("falls back to the kind's icon rather than guessing from a domain it hasn't got", () => {
     expect(resolveItemIcon({ kind: "light" }, undefined)).toBe(defaultIcon("light"));
@@ -713,3 +714,25 @@ describe("an item with no entity (#39)", () => {
     expect([...collectWatchedEntities(cfg)]).toEqual(["light.real"]);
   });
 });
+
+
+describe("the entity-registry icon override (shauneccles#2)", () => {
+  const item = { entity: "light.a", kind: "light" as const };
+  const st = { state: "on", attributes: { icon: "mdi:from-integration" } };
+
+  it("beats the integration's icon, as it does everywhere else in HA", () => {
+    expect(resolveItemIcon(item, st, "mdi:from-registry")).toBe("mdi:from-registry");
+  });
+
+  it("still loses to an icon set on the item itself", () => {
+    expect(resolveItemIcon({ ...item, icon: "mdi:on-the-card" }, st, "mdi:from-registry")).toBe(
+      "mdi:on-the-card",
+    );
+  });
+
+  it("is skipped when unset, leaving the old precedence intact", () => {
+    expect(resolveItemIcon(item, st, undefined)).toBe("mdi:from-integration");
+    expect(resolveItemIcon(item, undefined, undefined)).toBe(defaultIcon("light"));
+  });
+});
+

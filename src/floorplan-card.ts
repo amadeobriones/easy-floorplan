@@ -118,7 +118,13 @@ export class FloorplanCard extends LitElement {
   }
 
   private _itemIcon(item: FloorItem): string {
-    return resolveItemIcon(item, item.entity ? this.hass?.states[item.entity] : undefined);
+    // No entity: no state to read and no registry entry to override the icon.
+    const e = item.entity;
+    return resolveItemIcon(
+      item,
+      e ? this.hass?.states[e] : undefined,
+      e ? this.hass?.entities?.[e]?.icon : undefined,
+    );
   }
 
   private _label(item: FloorItem): string {
