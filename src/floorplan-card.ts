@@ -33,6 +33,7 @@ import {
 import type { Opening } from "./types";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
+import { normalizeRotation, stageAspect, plateClass, plateVars } from "./rotation";
 
 @customElement("easy-floorplan-card")
 export class FloorplanCard extends LitElement {
@@ -264,14 +265,15 @@ export class FloorplanCard extends LitElement {
       floors.find((f) => f.id === this._activeFloorId) ??
       floors.find((f) => f.id === c.defaultFloor) ??
       floors[0];
+    const rot = normalizeRotation(active.rotation);
     return html`
       <ha-card .header=${c.title ?? nothing}>
         <div
           class="stage"
-          style="aspect-ratio: ${c.width} / ${c.height}; background:${c.background ??
+          style="aspect-ratio: ${stageAspect(c.width, c.height, rot)}; background:${c.background ??
           "var(--card-background-color, #fff)"};"
         >
-          <div class="plate" style="--fp-arw:${c.width / c.height};">
+          <div class="plate ${plateClass(rot)}" style="${plateVars(c.width, c.height, rot)}">
 <!-- preserveAspectRatio="none" is correct, and now provably so. The .plate box
                always carries the natural width/height ratio (aspect-ratio: var(--fp-arw)),
                so the SVG's box equals its viewBox and "none" never distorts. .plate also
@@ -417,8 +419,14 @@ export class FloorplanCard extends LitElement {
       left: 50%;
       aspect-ratio: var(--fp-arw);
       width: min(100cqw, 100cqh * var(--fp-arw));
-      transform: translate(-50%, -50%);
+      transform: translate(-50%, -50%) rotate(var(--fp-rot, 0deg));
       transform-origin: center;
+    }
+    /* At 90/270 the plate's rotated box must fill the swapped stage footprint,
+       so bound the natural-ratio width by the stage's height instead. */
+    .plate.rot90,
+    .plate.rot270 {
+      width: min(100cqh, 100cqw * var(--fp-arw));
     }
     .wall {
       stroke: var(--primary-text-color);
