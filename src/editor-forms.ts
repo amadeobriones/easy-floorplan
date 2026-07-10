@@ -370,7 +370,7 @@ export function roomForm(r: Room, areaEntities?: string[]): FormSpec {
         label: "Lights up with",
         helper: "Optional. When this entity is on, the room wears its lit colour.",
         selector: {
-          entity: areaEntities
+          entity: areaEntities && areaEntities.length
             ? { filter: [lightFilter], include_entities: areaEntities }
             : { filter: [lightFilter] },
         },

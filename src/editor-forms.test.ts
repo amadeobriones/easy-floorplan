@@ -282,6 +282,12 @@ describe("roomForm — areas", () => {
     const light = f.fields.find((x) => x.name === "light")!;
     expect((light.selector.entity as { include_entities?: string[] }).include_entities).toBeUndefined();
   });
+
+  it("leaves the light picker unscoped when the area has no entities", () => {
+    const f = roomForm(room, []);
+    const light = f.fields.find((x) => x.name === "light")!;
+    expect((light.selector.entity as { include_entities?: string[] }).include_entities).toBeUndefined();
+  });
 });
 
 describe("normalizeFormPatch — area", () => {
