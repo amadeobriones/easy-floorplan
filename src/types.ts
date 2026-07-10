@@ -117,6 +117,28 @@ export type ItemKind =
   | "generic";
 
 /** An entity icon placed on the plan. */
+/**
+ * A room: a closed polygon drawn beneath everything else.
+ *
+ * Deliberately **not** derived from the walls. Deriving rooms means planarising an
+ * arbitrary soup of segments, and the moment one wall does not quite meet its
+ * neighbour the room silently vanishes. A room is its own object.
+ */
+export interface Room {
+  id: string;
+  name?: string;
+  /** Closed polygon in canvas units; the closing edge is implicit. */
+  points: Array<[number, number]>;
+  /** A CSS colour. Default: none. */
+  fill?: string;
+  /** 0..1. Default 0.25 — a room tint must not fight the walls drawn over it. */
+  fillOpacity?: number;
+  /** Conditional fill, first match wins. `color: "rgb"` follows a light. */
+  stateStyles?: StateStyle[];
+  /** Home Assistant area id. Stored, not yet acted on (see Floor.haFloor). */
+  areaId?: string;
+}
+
 /** How a matched {@link StateStyle} animates its element. */
 export type StateAnimation = "none" | "pulse" | "blink";
 
@@ -408,6 +430,8 @@ export interface Floor {
   image?: string;
   /** Background image opacity, 0–1. Default 1. */
   imageOpacity?: number;
+  /** Room polygons, drawn beneath the walls. Optional: older configs have none. */
+  rooms?: Room[];
   walls: Wall[];
   openings: Opening[];
   items: FloorItem[];

@@ -19,6 +19,7 @@ import {
   openingClickAction,
   renderRipple,
   renderFurniture,
+  renderRoom,
   renderTracker,
   trackerSensorReading,
   itemStateText,
@@ -50,7 +51,7 @@ export class FloorplanCard extends LitElement {
     // instead of a render crash deep inside the SVG.
     if (!config || typeof config !== "object") throw new Error("Invalid configuration");
     const raw = config as Record<string, unknown>;
-    for (const key of ["walls", "openings", "items", "texts", "furniture", "trackers", "floors"]) {
+    for (const key of ["rooms", "walls", "openings", "items", "texts", "furniture", "trackers", "floors"]) {
       if (raw[key] !== undefined && !Array.isArray(raw[key]))
         throw new Error(`Invalid configuration: "${key}" must be a list`);
     }
@@ -285,6 +286,9 @@ export class FloorplanCard extends LitElement {
               ? svg`<image href=${active.image} x="0" y="0" width=${c.width} height=${c.height}
                           preserveAspectRatio="none" opacity=${active.imageOpacity ?? 1} />`
               : nothing}
+            ${(active.rooms ?? []).map((r) =>
+              renderRoom(r, resolveStateStyle(r.stateStyles, this.hass, undefined)),
+            )}
             ${active.furniture.map((f) => renderFurniture(f))}
             ${renderWallMask(active.openings, c.width, c.height, this._wallMaskId)}
             <g mask=${`url(#${this._wallMaskId})`}>

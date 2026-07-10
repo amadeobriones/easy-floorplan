@@ -1,7 +1,7 @@
 import { svg, html, type SVGTemplateResult, type TemplateResult } from "lit";
 import type {
   SectionalHand, FloorplanCardConfig, Opening, ItemKind, Furniture, Tracker, RenderHass,
-  StateStyle, StateAnimation,
+  StateStyle, StateAnimation, Room,
 } from "./types";
 import {
   FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, getFloors, trackerAxisFraction,
@@ -54,6 +54,9 @@ export function hassRenderInputsChanged(
 export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
   const ids = new Set<string>();
   for (const f of getFloors(c)) {
+    for (const r of f.rooms ?? []) {
+      for (const id of stateStyleEntities(r.stateStyles, undefined)) ids.add(id);
+    }
     for (const o of f.openings) if (o.entity) ids.add(o.entity);
     for (const it of f.items) {
       if (it.entity) ids.add(it.entity);
@@ -770,6 +773,26 @@ export function sectionalPoints(
     [-hw, -hh + seat],
   ];
   return hand === "left" ? pts.map(([x, y]) => [-x, y] as [number, number]) : pts;
+}
+
+/** Default tint: strong enough to read, weak enough not to fight the walls. */
+export const ROOM_FILL_OPACITY = 0.25;
+
+/**
+ * A room polygon. A matched rule's colour beats the room's own `fill`, which is
+ * what makes "light the room with its lamp's colour" a two-line config.
+ *
+ * A room with no colour at all draws nothing rather than a black slab.
+ */
+export function renderRoom(r: Room, style?: ResolvedStyle): SVGTemplateResult {
+  const fill = style?.color ?? r.fill;
+  const pts = r.points.map(([x, y]) => `${x},${y}`).join(" ");
+  return svg`<polygon
+    class="room"
+    points=${pts}
+    fill=${fill ?? "none"}
+    fill-opacity=${fill ? (r.fillOpacity ?? ROOM_FILL_OPACITY) : 0}
+  />`;
 }
 
 export function renderFurniture(f: Furniture): SVGTemplateResult {

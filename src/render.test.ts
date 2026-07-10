@@ -32,6 +32,8 @@ import {
   stateStyleMatches,
   stateStyleEntities,
   rgbColorOf,
+  renderRoom,
+  ROOM_FILL_OPACITY,
 } from "./render";
 import type { FloorplanCardConfig, Opening, RenderHass } from "./types";
 
@@ -912,5 +914,48 @@ describe("stateStyleEntities", () => {
       items: [{ id: "i", kind: "light", x: 0, y: 0, entity: "light.b", stateStyles: [{ entity: "sensor.a", above: 1 }] }],
     } as unknown as FloorplanCardConfig;
     expect([...collectWatchedEntities(cfg)].sort()).toEqual(["light.b", "sensor.a"]);
+  });
+});
+
+describe("renderRoom (#6)", () => {
+  const room = { id: "r", points: [[0, 0], [100, 0], [100, 80], [0, 80]] as Array<[number, number]> };
+  const values = (t: unknown) => JSON.stringify((t as { values: unknown[] }).values);
+
+  it("draws the polygon it was given", () => {
+    expect(values(renderRoom(room))).toContain("0,0 100,0 100,80 0,80");
+  });
+
+  it("a room with no colour draws nothing rather than a black slab", () => {
+    expect(values(renderRoom(room))).toContain('"none"');
+    expect(values(renderRoom(room))).toContain("0");
+  });
+
+  it("uses its own fill and the default opacity", () => {
+    const v = values(renderRoom({ ...room, fill: "#0af" }));
+    expect(v).toContain("#0af");
+    expect(v).toContain(String(ROOM_FILL_OPACITY));
+  });
+
+  it("honours an explicit opacity", () => {
+    expect(values(renderRoom({ ...room, fill: "#0af", fillOpacity: 0.6 }))).toContain("0.6");
+  });
+
+  // This is what makes "light the room with its lamp's colour" a two-line config.
+  it("a matched rule's colour beats the room's own fill", () => {
+    const v = values(renderRoom({ ...room, fill: "#0af" }, { color: "rgb(1, 2, 3)" }));
+    expect(v).toContain("rgb(1, 2, 3)");
+    expect(v).not.toContain("#0af");
+  });
+
+  it("a room whose rule watches a light is watched by the card", () => {
+    const cfg = {
+      floors: [
+        {
+          id: "f", name: "F", walls: [], openings: [], items: [], texts: [], furniture: [],
+          rooms: [{ id: "r", points: [], stateStyles: [{ entity: "light.lamp", color: "rgb" }] }],
+        },
+      ],
+    } as unknown as FloorplanCardConfig;
+    expect([...collectWatchedEntities(cfg)]).toEqual(["light.lamp"]);
   });
 });
