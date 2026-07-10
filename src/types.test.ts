@@ -8,7 +8,9 @@ import {
   gridPercentToSnap,
   trackerAxisFraction,
   trackerPresenceDetected,
+  haFloorsOf,
   uid,
+  configsEqual,
 } from "./types";
 import type { FloorplanCardConfig, TrackerSensor } from "./types";
 
@@ -229,9 +231,69 @@ describe("getFloors", () => {
   });
 });
 
+describe("haFloorsOf", () => {
+  const hass = {
+    floors: {
+      up: { floor_id: "up", name: "Upstairs", level: 1 },
+      ground: { floor_id: "ground", name: "Ground floor", level: 0 },
+      cellar: { floor_id: "cellar", name: "Cellar", level: -1 },
+    },
+  };
+
+  it("lists HA floors sorted by level then name", () => {
+    expect(haFloorsOf(hass).map((f) => f.floor_id)).toEqual(["cellar", "ground", "up"]);
+  });
+
+  it("sorts same-level floors by name and tolerates a missing level", () => {
+    const h = {
+      floors: {
+        b: { floor_id: "b", name: "B wing" },
+        a: { floor_id: "a", name: "A wing" },
+      },
+    };
+    expect(haFloorsOf(h).map((f) => f.name)).toEqual(["A wing", "B wing"]);
+  });
+
+  it("returns [] for hass objects without a floor registry (older HA, dev harness)", () => {
+    expect(haFloorsOf({})).toEqual([]);
+    expect(haFloorsOf(undefined)).toEqual([]);
+    expect(haFloorsOf(null)).toEqual([]);
+    expect(haFloorsOf({ floors: "bogus" })).toEqual([]);
+  });
+
+  it("drops malformed registry entries", () => {
+    expect(haFloorsOf({ floors: { x: { floor_id: "x" }, ok: { floor_id: "ok", name: "Ok" } } })).toEqual([
+      { floor_id: "ok", name: "Ok" },
+    ]);
+  });
+});
+
 describe("uid", () => {
   it("prefixes the id and stays unique", () => {
     expect(uid("wall")).toMatch(/^wall_/);
     expect(uid("x")).not.toBe(uid("x"));
+  });
+});
+
+describe("configsEqual", () => {
+  it("treats missing key and undefined value as equal", () => {
+    expect(configsEqual({ a: 1, b: undefined }, { a: 1 })).toBe(true);
+  });
+
+  it("compares nested arrays/objects structurally", () => {
+    expect(configsEqual({ f: [{ x: 1 }] }, { f: [{ x: 1 }] })).toBe(true);
+    expect(configsEqual({ f: [{ x: 1 }] }, { f: [{ x: 2 }] })).toBe(false);
+  });
+
+  it("detects added/removed keys and length changes", () => {
+    expect(configsEqual({ a: 1 }, { a: 1, b: 2 })).toBe(false);
+    expect(configsEqual({ f: [1] }, { f: [1, 2] })).toBe(false);
+  });
+
+  it("handles primitives and nulls", () => {
+    expect(configsEqual(1, 1)).toBe(true);
+    expect(configsEqual(null, null)).toBe(true);
+    expect(configsEqual(null, {})).toBe(false);
+    expect(configsEqual("a", "b")).toBe(false);
   });
 });

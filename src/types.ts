@@ -287,6 +287,13 @@ export interface Floor {
   id: string;
   name: string;
   /**
+   * Optional link to a Home Assistant floor (its registry `floor_id`).
+   * Selecting one in the editor names this floor after it; the id is kept so
+   * future features (e.g. area filtering, per-floor entity defaults) can use
+   * the association. Purely additive — nothing renders differently today.
+   */
+  haFloor?: string;
+  /**
    * Optional background image URL (e.g. `/local/floorplan.png` or an external
    * URL) drawn behind the elements — handy for tracing over a real floor plan.
    * It fills the virtual canvas, so match the canvas width/height to the image
@@ -332,9 +339,9 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   floors?: Floor[];
   /** Id of the floor shown first. Falls back to the first floor. */
   defaultFloor?: string;
-  walls: Wall[];
-  openings: Opening[];
-  items: FloorItem[];
+  walls?: Wall[];
+  openings?: Opening[];
+  items?: FloorItem[];
   texts?: FloorText[];
   furniture?: Furniture[];
   trackers?: Tracker[];
@@ -379,6 +386,29 @@ export function gridPercentToSnap(percent: number, grid: number): number {
   return Math.max(1, Math.round((grid * percent) / 100));
 }
 
+/** A Home Assistant floor-registry entry (the subset this card uses). */
+export interface HaFloorInfo {
+  floor_id: string;
+  name: string;
+  /** Vertical ordering in HA (ground = 0, upstairs = 1, basement = -1, …). */
+  level?: number | null;
+}
+
+/**
+ * List the Home Assistant floors from a `hass` object, sorted by level then
+ * name. Older HA versions (before the floor registry was exposed on `hass`)
+ * and the dev harness simply yield `[]`, so callers can hide the control when
+ * there is nothing to link to. Typed loosely because `custom-card-helpers`'
+ * HomeAssistant type predates `hass.floors`.
+ */
+export function haFloorsOf(hass: unknown): HaFloorInfo[] {
+  const floors = (hass as { floors?: Record<string, HaFloorInfo> } | null | undefined)?.floors;
+  if (!floors || typeof floors !== "object") return [];
+  return Object.values(floors)
+    .filter((f): f is HaFloorInfo => !!f && typeof f.floor_id === "string" && typeof f.name === "string")
+    .sort((a, b) => (a.level ?? 0) - (b.level ?? 0) || a.name.localeCompare(b.name));
+}
+
 export function emptyConfig(type: string): FloorplanCardConfig {
   return {
     type,
@@ -396,6 +426,26 @@ export function emptyConfig(type: string): FloorplanCardConfig {
 
 export function uid(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * Structural equality for JSON-shaped config data. A missing key and an
+ * `undefined` value compare equal, because a YAML round-trip through HA's
+ * dialog drops undefined-valued keys.
+ */
+export function configsEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => configsEqual(v, b[i]));
+  }
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  for (const k of new Set([...Object.keys(ra), ...Object.keys(rb)])) {
+    if (!configsEqual(ra[k], rb[k])) return false;
+  }
+  return true;
 }
 
 /** A fresh, empty floor (optionally seeded with walls). */

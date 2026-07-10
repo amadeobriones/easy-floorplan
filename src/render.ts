@@ -1,6 +1,6 @@
 import { svg, html, type SVGTemplateResult, type TemplateResult } from "lit";
-import type { Opening, ItemKind, Furniture, Tracker, RenderHass } from "./types";
-import { FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, trackerAxisFraction } from "./types";
+import type { FloorplanCardConfig, Opening, ItemKind, Furniture, Tracker, RenderHass } from "./types";
+import { FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, getFloors, trackerAxisFraction } from "./types";
 
 export const WALL_THICKNESS = 8;
 
@@ -45,6 +45,25 @@ export function hassRenderInputsChanged(
   return false;
 }
 
+/** Every entity id whose state can change what a plan draws (all floors). */
+export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
+  const ids = new Set<string>();
+  for (const f of getFloors(c)) {
+    for (const o of f.openings) if (o.entity) ids.add(o.entity);
+    for (const it of f.items) {
+      if (it.entity) ids.add(it.entity);
+      if (it.secondaryEntity) ids.add(it.secondaryEntity);
+    }
+    for (const tr of f.trackers) {
+      for (const s of [tr.xSensor, tr.ySensor]) {
+        if (s?.entity) ids.add(s.entity);
+        if (s?.presence?.entity) ids.add(s.presence.entity);
+      }
+    }
+  }
+  return ids;
+}
+
 /** State text for an item: primary entity, plus secondary (e.g. humidity) when set. */
 export function itemStateText(
   hass: RenderHass | undefined,
@@ -73,6 +92,122 @@ export function defaultIcon(kind: ItemKind): string {
     default:
       return "mdi:circle";
   }
+}
+
+/**
+ * State-aware icons per `binary_sensor` device class ("show as" in the HA UI),
+ * mirroring Home Assistant's own device-class icon set. `on` is the
+ * device-class's active state (open / detected / unlocked / …).
+ */
+const BINARY_SENSOR_CLASS_ICONS: Record<string, { on: string; off: string }> = {
+  battery: { on: "mdi:battery-alert", off: "mdi:battery" },
+  battery_charging: { on: "mdi:battery-charging", off: "mdi:battery" },
+  carbon_monoxide: { on: "mdi:smoke-detector-alert", off: "mdi:smoke-detector" },
+  cold: { on: "mdi:snowflake", off: "mdi:thermometer" },
+  connectivity: { on: "mdi:check-network-outline", off: "mdi:close-network-outline" },
+  door: { on: "mdi:door-open", off: "mdi:door-closed" },
+  garage_door: { on: "mdi:garage-open", off: "mdi:garage" },
+  gas: { on: "mdi:alert-circle", off: "mdi:check-circle" },
+  heat: { on: "mdi:fire", off: "mdi:thermometer" },
+  light: { on: "mdi:brightness-7", off: "mdi:brightness-5" },
+  lock: { on: "mdi:lock-open", off: "mdi:lock" },
+  moisture: { on: "mdi:water", off: "mdi:water-off" },
+  motion: { on: "mdi:motion-sensor", off: "mdi:motion-sensor-off" },
+  occupancy: { on: "mdi:home", off: "mdi:home-outline" },
+  opening: { on: "mdi:square-outline", off: "mdi:square" },
+  plug: { on: "mdi:power-plug", off: "mdi:power-plug-off" },
+  power: { on: "mdi:power-plug", off: "mdi:power-plug-off" },
+  presence: { on: "mdi:home", off: "mdi:home-outline" },
+  problem: { on: "mdi:alert-circle", off: "mdi:check-circle" },
+  running: { on: "mdi:play", off: "mdi:stop" },
+  safety: { on: "mdi:alert-circle", off: "mdi:check-circle" },
+  smoke: { on: "mdi:smoke-detector-variant-alert", off: "mdi:smoke-detector-variant" },
+  sound: { on: "mdi:music-note", off: "mdi:music-note-off" },
+  tamper: { on: "mdi:vibrate", off: "mdi:check-circle" },
+  vibration: { on: "mdi:vibrate", off: "mdi:crop-portrait" },
+  window: { on: "mdi:window-open", off: "mdi:window-closed" },
+};
+
+/** Icons per `sensor` device class (not state-dependent). */
+const SENSOR_CLASS_ICONS: Record<string, string> = {
+  temperature: "mdi:thermometer",
+  humidity: "mdi:water-percent",
+  battery: "mdi:battery",
+  power: "mdi:flash",
+  energy: "mdi:lightning-bolt",
+  illuminance: "mdi:brightness-5",
+  pressure: "mdi:gauge",
+  carbon_dioxide: "mdi:molecule-co2",
+  pm25: "mdi:air-filter",
+  signal_strength: "mdi:wifi",
+  voltage: "mdi:sine-wave",
+  current: "mdi:current-ac",
+};
+
+/** State-aware icons per `cover` device class. */
+const COVER_CLASS_ICONS: Record<string, { on: string; off: string }> = {
+  garage: { on: "mdi:garage-open", off: "mdi:garage" },
+  garage_door: { on: "mdi:garage-open", off: "mdi:garage" },
+  door: { on: "mdi:door-open", off: "mdi:door-closed" },
+  gate: { on: "mdi:gate-open", off: "mdi:gate" },
+  window: { on: "mdi:window-open", off: "mdi:window-closed" },
+  blind: { on: "mdi:blinds-open", off: "mdi:blinds" },
+  shade: { on: "mdi:roller-shade", off: "mdi:roller-shade-closed" },
+  shutter: { on: "mdi:window-shutter-open", off: "mdi:window-shutter" },
+  curtain: { on: "mdi:curtains", off: "mdi:curtains-closed" },
+  awning: { on: "mdi:awning-outline", off: "mdi:awning-outline" },
+};
+
+/**
+ * Icon implied by an entity's `device_class` — HA's "show as" setting (issue
+ * #29). A `binary_sensor` shown as a Lock gets `mdi:lock` / `mdi:lock-open`,
+ * matching what HA itself renders. Returns `undefined` when the domain /
+ * device class has no mapping so callers can fall back to the kind default.
+ * An explicit config `icon` or a per-entity `attributes.icon` still wins —
+ * this only replaces the generic kind fallback.
+ */
+export function entityDefaultIcon(
+  entityId: string,
+  deviceClass: string | undefined,
+  on: boolean,
+): string | undefined {
+  if (!deviceClass) return undefined;
+  const domain = entityId.split(".")[0];
+  if (domain === "binary_sensor") {
+    const m = BINARY_SENSOR_CLASS_ICONS[deviceClass];
+    return m ? (on ? m.on : m.off) : undefined;
+  }
+  if (domain === "sensor") return SENSOR_CLASS_ICONS[deviceClass];
+  if (domain === "cover") {
+    const m = COVER_CLASS_ICONS[deviceClass];
+    return m ? (on ? m.on : m.off) : undefined;
+  }
+  return undefined;
+}
+
+/** Whether an entity state renders as "active" on the plan. */
+export function isEntityOn(state: string | undefined): boolean {
+  return state === "on" || state === "open" || state === "home" || state === "playing";
+}
+
+/**
+ * Icon precedence shared by card and editor: config override → entity's
+ * explicit icon → device_class-implied icon ("show as") → the kind default.
+ */
+export function resolveItemIcon(
+  item: { entity: string; kind: ItemKind; icon?: string },
+  st: { state: string; attributes: Record<string, unknown> } | undefined,
+): string {
+  if (item.icon) return item.icon;
+  const attrIcon = st?.attributes?.icon as string | undefined;
+  if (attrIcon) return attrIcon;
+  return (
+    entityDefaultIcon(
+      item.entity,
+      st?.attributes?.device_class as string | undefined,
+      isEntityOn(st?.state),
+    ) ?? defaultIcon(item.kind)
+  );
 }
 
 /** Infer a sensible item kind from an entity id's domain. */
@@ -206,6 +341,11 @@ export function resolveOpeningOpen(o: Opening, state: string | undefined): boole
   return o.invert ? !open : open;
 }
 
+/** A `cover` in transit. Its `current_position` may not have caught up yet. */
+export function openingInMotion(state: string | undefined): boolean {
+  return state === "opening" || state === "closing";
+}
+
 /**
  * How far open an opening should be drawn, as a fraction 0..1, driving partial
  * swing / slide for position-aware `cover` entities. When the entity exposes a
@@ -214,6 +354,11 @@ export function resolveOpeningOpen(o: Opening, state: string | undefined): boole
  * {@link resolveOpeningOpen} (0 or 1). With no entity/state it uses the type
  * default; an `unavailable`/`unknown` outage fails closed (0), ignoring any
  * stale position.
+ *
+ * A live position wins over the `opening`/`closing` state even when the two
+ * disagree: a cover that has begun opening genuinely still sits at 0, and
+ * overriding that would snap the leaf open and back on every cover that streams
+ * its position. {@link openingIsActive} carries the motion instead.
  */
 export function resolveOpeningAmount(
   o: Opening,
@@ -229,6 +374,22 @@ export function resolveOpeningAmount(
     return o.invert ? 1 - frac : frac;
   }
   return resolveOpeningOpen(o, state.state) ? 1 : 0;
+}
+
+/**
+ * Whether an entity-bound opening should wear its accent colour. Drawn-open
+ * covers do, and so does one still in transit: a cover reports `opening` at
+ * position 0 for as long as it takes to move — a full second on a garage door,
+ * the whole travel on a cover that only publishes position at rest. Without
+ * this the leaf sits shut and unaccented and a tap reads as having done
+ * nothing. An outage is never active (see {@link isSensorOutage}).
+ */
+export function openingIsActive(
+  o: Opening,
+  state: { state: string; attributes?: Record<string, unknown> } | undefined,
+): boolean {
+  if (!o.entity || !state || isSensorOutage(state.state)) return false;
+  return openingInMotion(state.state) || resolveOpeningAmount(o, state) > 0;
 }
 
 /** Style options for {@link renderOpening}. */

@@ -133,6 +133,9 @@ function mockFormatEntityState(s: {
 }): string {
   if (s.state === "unavailable") return "Unavailable";
   if (s.state === "unknown") return "Unknown";
+  // "Show as" wording (issue #29): a lock device_class reads Locked/Unlocked
+  // instead of the raw on/off, like HA's localized formatter does.
+  if (s.attributes?.device_class === "lock") return s.state === "on" ? "Unlocked" : "Locked";
   const precision = s.entity_id ? entityRegistry[s.entity_id]?.display_precision : undefined;
   const num = Number(s.state);
   const body = precision != null && Number.isFinite(num) ? num.toFixed(precision) : s.state;
@@ -153,6 +156,13 @@ const hass = {
       state: "on",
       attributes: { friendly_name: "Living Room" },
     },
+    // "Show as" demo (issue #29): a binary_sensor with device_class lock should
+    // render mdi:lock / mdi:lock-open instead of the generic kind icon.
+    "binary_sensor.door_lock": {
+      entity_id: "binary_sensor.door_lock",
+      state: "off",
+      attributes: { friendly_name: "Door Lock", device_class: "lock" },
+    },
     [SENSOR_TEMPERATURE]: {
       entity_id: SENSOR_TEMPERATURE,
       state: "17.94",
@@ -167,6 +177,13 @@ const hass = {
   entities: entityRegistry,
   locale: { language: "en" },
   themes: { darkMode: false },
+  // HA floor registry mock so the editor's "HA floor" link (issue #24) is
+  // exercisable outside HA.
+  floors: {
+    ground: { floor_id: "ground", name: "Ground floor", level: 0 },
+    upstairs: { floor_id: "upstairs", name: "Upstairs", level: 1 },
+    basement: { floor_id: "basement", name: "Basement", level: -1 },
+  },
   callService: (...args: unknown[]) => console.log("[mock hass] callService", ...args),
   formatEntityState: mockFormatEntityState,
   localize: (k: string) => k,

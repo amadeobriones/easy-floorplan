@@ -111,7 +111,9 @@ background):
   types shown as their actual glyphs (pick a sofa by seeing a sofa). The new element is
   selected immediately so the **Element** section is ready for configuring it.
 - **floor** — switch floors with the dropdown, add one with **+**; rename and delete
-  live behind the gear button.
+  live behind the gear button. The gear also offers an **HA floor** dropdown listing
+  your Home Assistant floors — linking one names the plan floor after it (rename
+  afterwards if you like; the link sticks either way).
 
 Undo/redo buttons sit at the right of the tools row. Zoom controls live on the canvas
 itself (bottom-right): **−** / **+** step, click the percentage to reset, the fit button
@@ -139,6 +141,12 @@ By default it shows an icon badge:
   including the entity's configured display precision. Add a **2nd entity** to show two
   readings in one element — e.g. a temperature and a humidity sensor render together as
   `21.5 °C · 45%`.
+- **Follows "show as"** — the icon and state label respect the entity's
+  **device class** (HA's *show as* setting): a `binary_sensor` shown as a Lock renders
+  `mdi:lock` / `mdi:lock-open` and reads "Locked" / "Unlocked", a door contact gets
+  door icons, a motion sensor gets motion icons, and so on — the same defaults HA
+  itself uses. An explicit icon on the entity, or an **icon** override on the device,
+  still wins.
 - **Make it yours** — override the **icon** (with autocomplete + live preview), set a
   custom **name**, change the **size**, **rotate** it, or hide the icon entirely.
 
@@ -340,10 +348,14 @@ for backward compatibility.
 
 ### Floor
 
-`{ id, name, image?, imageOpacity?, walls, openings, items, texts, furniture }` — a named
-floor with its own elements. Use the **floor** controls in the editor toolbar to add,
-rename, switch and delete floors; the live card shows a floor switcher in the top-right
-when there is more than one.
+`{ id, name, haFloor?, image?, imageOpacity?, walls, openings, items, texts, furniture }`
+— a named floor with its own elements. Use the **floor** controls in the editor toolbar
+to add, rename, switch and delete floors; the live card shows a floor switcher in the
+top-right when there is more than one.
+
+**`haFloor`** optionally stores the id of a linked Home Assistant floor (set from the
+editor's floor gear popover). Today the link auto-names the floor; it is kept in the
+config so future features (like area-based entity filtering) can build on it.
 
 Set **`image`** to a background image URL (e.g. `/local/floorplan.png` or an external
 URL) to draw it behind the elements — handy for tracing over a real floor plan. It fills

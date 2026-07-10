@@ -11,12 +11,18 @@ import {
   resolveOpeningAmount,
   kindFromEntity,
   defaultIcon,
+  entityDefaultIcon,
   trackerSensorReading,
+  openingInMotion,
+  openingIsActive,
   entityStateText,
   itemStateText,
   hassRenderInputsChanged,
+  collectWatchedEntities,
+  isEntityOn,
+  resolveItemIcon,
 } from "./render";
-import type { Opening, RenderHass } from "./types";
+import type { FloorplanCardConfig, Opening, RenderHass } from "./types";
 
 describe("snapToWall", () => {
   const hWall = { x1: 0, y1: 0, x2: 100, y2: 0 }; // horizontal
@@ -254,11 +260,107 @@ describe("trackerSensorReading", () => {
   });
 });
 
+describe("entityDefaultIcon", () => {
+  it("maps a binary_sensor shown as a Lock to lock icons per state (issue #29)", () => {
+    // on = unlocked for HA's lock device class
+    expect(entityDefaultIcon("binary_sensor.front_door_lock", "lock", true)).toBe("mdi:lock-open");
+    expect(entityDefaultIcon("binary_sensor.front_door_lock", "lock", false)).toBe("mdi:lock");
+  });
+
+  it("is state-aware for other binary_sensor device classes", () => {
+    expect(entityDefaultIcon("binary_sensor.d", "door", true)).toBe("mdi:door-open");
+    expect(entityDefaultIcon("binary_sensor.d", "door", false)).toBe("mdi:door-closed");
+    expect(entityDefaultIcon("binary_sensor.m", "motion", true)).toBe("mdi:motion-sensor");
+    expect(entityDefaultIcon("binary_sensor.w", "window", false)).toBe("mdi:window-closed");
+  });
+
+  it("maps sensor device classes (state-independent)", () => {
+    expect(entityDefaultIcon("sensor.t", "temperature", false)).toBe("mdi:thermometer");
+    expect(entityDefaultIcon("sensor.h", "humidity", true)).toBe("mdi:water-percent");
+  });
+
+  it("maps cover device classes per state", () => {
+    expect(entityDefaultIcon("cover.g", "garage", true)).toBe("mdi:garage-open");
+    expect(entityDefaultIcon("cover.g", "garage", false)).toBe("mdi:garage");
+  });
+
+  it("returns undefined for unknown device classes, missing class, or unmapped domains", () => {
+    expect(entityDefaultIcon("binary_sensor.x", "made_up", true)).toBeUndefined();
+    expect(entityDefaultIcon("binary_sensor.x", undefined, true)).toBeUndefined();
+    expect(entityDefaultIcon("light.x", "lock", true)).toBeUndefined();
+  });
+});
+
 describe("defaultIcon", () => {
   it("returns a sensible mdi icon per kind", () => {
     expect(defaultIcon("light")).toBe("mdi:lightbulb");
     expect(defaultIcon("cover")).toBe("mdi:window-shutter");
     expect(defaultIcon("generic")).toBe("mdi:circle");
+  });
+});
+
+describe("openingInMotion", () => {
+  it("reads the transient cover states as motion", () => {
+    expect(openingInMotion("opening")).toBe(true);
+    expect(openingInMotion("closing")).toBe(true);
+  });
+  it("reads settled, absent and outage states as still", () => {
+    expect(openingInMotion("open")).toBe(false);
+    expect(openingInMotion("closed")).toBe(false);
+    expect(openingInMotion("on")).toBe(false);
+    expect(openingInMotion(undefined)).toBe(false);
+    expect(openingInMotion("unavailable")).toBe(false);
+  });
+});
+
+describe("openingIsActive", () => {
+  const cover = { type: "door", entity: "cover.garage" } as Opening;
+
+  it("accents a cover that is open", () => {
+    expect(openingIsActive(cover, { state: "open", attributes: { current_position: 100 } })).toBe(
+      true,
+    );
+  });
+
+  it("accents a cover that has begun opening but not yet moved", () => {
+    // A real garage door reports opening at position 0 for a full second, and a
+    // rest-only-position cover reports it for the whole travel. Drawn shut, it
+    // must still read as in motion, or a tap looks like it did nothing.
+    expect(openingIsActive(cover, { state: "opening", attributes: { current_position: 0 } })).toBe(
+      true,
+    );
+  });
+
+  it("accents a cover that is closing but still reports itself fully open", () => {
+    expect(openingIsActive(cover, { state: "closing", attributes: { current_position: 100 } })).toBe(
+      true,
+    );
+  });
+
+  it("leaves a settled closed cover unaccented", () => {
+    expect(openingIsActive(cover, { state: "closed", attributes: { current_position: 0 } })).toBe(
+      false,
+    );
+  });
+
+  it("never accents during a sensor outage, even with a stale open position", () => {
+    expect(
+      openingIsActive(cover, { state: "unavailable", attributes: { current_position: 100 } }),
+    ).toBe(false);
+  });
+
+  it("leaves an opening with no entity unaccented", () => {
+    expect(openingIsActive({ type: "door" } as Opening, undefined)).toBe(false);
+  });
+});
+
+describe("resolveOpeningAmount keeps trusting a live position", () => {
+  const cover = { type: "door", entity: "cover.garage" } as Opening;
+  it("does not snap a live-position cover open the moment it starts moving", () => {
+    // Regression guard: overriding a mid-travel position with the binary state
+    // would jump 0 -> 1 -> 0.07 on covers that stream position every second.
+    expect(resolveOpeningAmount(cover, { state: "opening", attributes: { current_position: 0 } })).toBe(0);
+    expect(resolveOpeningAmount(cover, { state: "opening", attributes: { current_position: 7 } })).toBeCloseTo(0.07);
   });
 });
 
@@ -382,5 +484,66 @@ describe("hassRenderInputsChanged", () => {
   it("ignores entities the plan does not watch", () => {
     const next = { ...base(), states: { [TEMP]: tempState, [HUMIDITY]: { state: "50.0" } } };
     expect(hassRenderInputsChanged(base(), next, watched)).toBe(false);
+  });
+});
+
+describe("isEntityOn / resolveItemIcon", () => {
+  it("treats on/open/home/playing as on", () => {
+    for (const s of ["on", "open", "home", "playing"]) expect(isEntityOn(s)).toBe(true);
+    for (const s of ["off", "closed", "idle", undefined]) expect(isEntityOn(s)).toBe(false);
+  });
+
+  it("resolves icon precedence: override → entity icon → device_class → kind default", () => {
+    const item = { entity: "binary_sensor.a", kind: "sensor" as const };
+    expect(resolveItemIcon({ ...item, icon: "mdi:override" }, undefined)).toBe("mdi:override");
+    expect(
+      resolveItemIcon(item, { state: "on", attributes: { icon: "mdi:from-entity" } })
+    ).toBe("mdi:from-entity");
+    expect(
+      resolveItemIcon(item, { state: "on", attributes: { device_class: "door" } })
+    ).toBe(entityDefaultIcon("binary_sensor.a", "door", true));
+    expect(resolveItemIcon(item, undefined)).toBe(defaultIcon("sensor"));
+  });
+});
+
+describe("collectWatchedEntities", () => {
+  it("collects opening, item, secondary, and tracker entities across floors", () => {
+    const cfg = {
+      floors: [
+        {
+          id: "f1",
+          name: "F1",
+          walls: [],
+          texts: [],
+          furniture: [],
+          openings: [{ id: "o1", type: "door", x: 0, y: 0, entity: "cover.door" }],
+          items: [
+            { id: "i1", kind: "light", x: 0, y: 0, entity: "light.a", secondaryEntity: "sensor.b" },
+          ],
+          trackers: [
+            {
+              id: "t1",
+              x: 0,
+              y: 0,
+              w: 10,
+              h: 10,
+              xSensor: { entity: "sensor.x", min: 0, max: 5, presence: { entity: "binary_sensor.p" } },
+            },
+          ],
+        },
+      ],
+    } as unknown as FloorplanCardConfig;
+    const got = collectWatchedEntities(cfg);
+    for (const id of ["cover.door", "light.a", "sensor.b", "sensor.x", "binary_sensor.p"]) {
+      expect(got.has(id)).toBe(true);
+    }
+  });
+
+  it("skips unset entities and handles a legacy flat config", () => {
+    const got = collectWatchedEntities({
+      items: [{ id: "i", kind: "light", x: 0, y: 0, entity: "light.legacy" }],
+    } as unknown as FloorplanCardConfig);
+    expect(got.has("light.legacy")).toBe(true);
+    expect(got.size).toBe(1);
   });
 });
