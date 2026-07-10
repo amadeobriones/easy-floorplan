@@ -226,6 +226,30 @@ export function isEntityOn(state: string | undefined): boolean {
 }
 
 /**
+ * States that mean "this thing is doing something", for the domains that do not
+ * say `on`.
+ *
+ * A lock is `locked` / `unlocked`; a vacuum is `docked` / `cleaning`; a camera is
+ * `idle` / `recording`. None of them ever reads `on`, so a generic on/off test
+ * calls every one of them off, forever -- and their state-dependent icons can
+ * never show their active half.
+ */
+const ACTIVE_STATES: Record<string, ReadonlySet<string>> = {
+  lock: new Set(["unlocked", "unlocking", "open", "opening"]),
+  vacuum: new Set(["cleaning", "returning"]),
+  camera: new Set(["recording", "streaming"]),
+  media_player: new Set(["playing", "buffering", "on"]),
+};
+
+/** Whether an entity is in its active state, by the rules of its own domain. */
+export function entityIsActive(entityId: string | undefined, state: string | undefined): boolean {
+  if (!state || state === "unavailable" || state === "unknown") return false;
+  const domain = entityId?.split(".")[0] ?? "";
+  const active = ACTIVE_STATES[domain];
+  return active ? active.has(state) : isEntityOn(state);
+}
+
+/**
  * Icon precedence shared by card and editor: config override → entity's
  * explicit icon → device_class-implied icon ("show as") → the kind default.
  */
@@ -251,7 +275,7 @@ export function resolveItemIcon(
     ? entityDefaultIcon(
         item.entity,
         st?.attributes?.device_class as string | undefined,
-        isEntityOn(st?.state),
+        entityIsActive(item.entity, st?.state),
       )
     : undefined;
   return byDomain ?? defaultIcon(item.kind);

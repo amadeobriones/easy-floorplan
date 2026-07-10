@@ -24,7 +24,7 @@ import {
   itemStateText,
   hassRenderInputsChanged,
   collectWatchedEntities,
-  isEntityOn,
+  entityIsActive,
   resolveItemIcon,
 } from "./render";
 import type { Opening } from "./types";
@@ -102,7 +102,7 @@ export class FloorplanCard extends LitElement {
   }
 
   private _isOn(item: FloorItem): boolean {
-    return item.entity ? isEntityOn(this.hass?.states[item.entity]?.state) : false;
+    return item.entity ? entityIsActive(item.entity, this.hass?.states[item.entity]?.state) : false;
   }
 
   /** How far open an opening should be drawn (0..1), from its entity (or default). */
