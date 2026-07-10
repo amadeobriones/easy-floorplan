@@ -448,6 +448,11 @@ export class FloorplanCard extends LitElement {
       inset: 0;
       pointer-events: none;
     }
+    /* A room is decoration. It must never swallow a click meant for the opening
+       or the device drawn over it. */
+    .room {
+      pointer-events: none;
+    }
     .item {
       position: absolute;
       transform: translate(-50%, -50%);

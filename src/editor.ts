@@ -1,5 +1,6 @@
 import { isTypingTarget, pathTags } from "./editor-keys";
 import { clampZoom, zoomAnchoredScroll } from "./editor-zoom";
+import { detectRooms, centroid, pointInPolygon } from "./rooms-from-walls";
 import {
   dragWallWelded,
   moveEnds,
@@ -98,13 +99,14 @@ import {
 const formLabel = (s: FormField): string => s.label;
 const formHelper = (s: FormField): string | undefined => s.helper;
 
-type Tool = "select" | "wall" | "door" | "window" | "tracker";
+type Tool = "select" | "wall" | "room" | "door" | "window" | "tracker";
 type OverlaySel = { kind: "item" | "text"; id: string };
 
 /** Toolbar metadata per tool: mdi icon + label (icons make the modes scannable). */
 const TOOL_META: Record<Tool, { icon: string; label: string }> = {
   select: { icon: "mdi:cursor-default", label: "Select" },
   wall: { icon: "mdi:wall", label: "Wall" },
+  room: { icon: "mdi:floor-plan", label: "Room" },
   door: { icon: "mdi:door", label: "Door" },
   window: { icon: "mdi:window-closed-variant", label: "Window" },
   tracker: { icon: "mdi:crosshairs-gps", label: "Tracker" },
@@ -176,6 +178,8 @@ export class FloorplanCardEditor extends LitElement {
   @state() private _draft: { x1: number; y1: number; x2: number; y2: number } | null = null;
   /** While dragging the Tracker tool, the rectangle being drawn (top-left corner + opposite corner). */
   @state() private _draftTracker: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** Corners placed so far by the Room tool. Closed by clicking the first one. */
+  @state() private _roomDraft: Array<[number, number]> = [];
   /** When true, walls are drawn freely (no horizontal/vertical or corner gravity). */
   @state() private _freeWalls = false;
   /** Default length applied to a freshly placed door/window. User-editable from the context bar. */
@@ -609,6 +613,16 @@ export class FloorplanCardEditor extends LitElement {
     // While a gesture is live, any keyboard mutation (paste, delete, nudge,
     // undo…) would interleave with the drag's emits and history snapshot —
     // ignore them all; Escape below still cancels the gesture itself.
+    if (ev.key === "Escape" && this._roomDraft.length) {
+      ev.preventDefault();
+      this._roomDraft = [];
+      return;
+    }
+    if (ev.key === "Enter" && this._roomDraft.length >= 3) {
+      ev.preventDefault();
+      this._commitRoomDraft();
+      return;
+    }
     const gestureActive = !!(this._drag || this._draft || this._draftTracker || this._marquee);
     if (gestureActive && ev.key !== "Escape" && !(mod && key === "c")) return;
     if (mod && key === "c") {
@@ -755,6 +769,18 @@ export class FloorplanCardEditor extends LitElement {
     if (this._gesturePointer !== null) return;
     this._canvasWrap?.focus();
     const raw = this._toVirtual(ev, false);
+
+    if (this._tool === "room") {
+      const p = this._snapWallPoint(raw.x, raw.y);
+      const first = this._roomDraft[0];
+      // Clicking the first corner closes the room, as every polygon tool does.
+      if (first && this._roomDraft.length >= 3 && Math.hypot(p.x - first[0], p.y - first[1]) <= ENDPOINT_SNAP) {
+        this._commitRoomDraft();
+      } else {
+        this._roomDraft = [...this._roomDraft, [p.x, p.y]];
+      }
+      return;
+    }
 
     if (this._tool === "wall") {
       const s = this._freeWalls
@@ -1176,6 +1202,83 @@ export class FloorplanCardEditor extends LitElement {
       fill-opacity=${fill ? (r.fillOpacity ?? ROOM_FILL_OPACITY) : 0}
       @pointerdown=${(e: PointerEvent) => this._startDrag(e, { kind: "room", id: r.id })}
     />`;
+  }
+
+  /** HA's own toast. The editor has no status line of its own. */
+  private _toast(message: string): void {
+    this.dispatchEvent(
+      new CustomEvent("hass-notification", { detail: { message }, bubbles: true, composed: true }),
+    );
+  }
+
+  /** Colours for rooms the user did not colour: distinguishable, and quiet. */
+  private static readonly ROOM_PALETTE = [
+    "#8FA6C4", "#9FB89A", "#B49AC0", "#C0A99A", "#8FBAC4",
+    "#B0AE96", "#A8A8A8", "#B8A88F", "#AFA2B8", "#9BB3A6",
+  ];
+
+  private _nextRoomFill(): string {
+    const n = (this._floor().rooms ?? []).length;
+    return FloorplanCardEditor.ROOM_PALETTE[n % FloorplanCardEditor.ROOM_PALETTE.length];
+  }
+
+  /** The polygon being drawn: the closed part, plus a dot on each placed corner. */
+  private _renderRoomDraft() {
+    const pts = this._roomDraft;
+    if (!pts.length) return nothing;
+    return svg`
+      <polyline
+        class="room-draft"
+        points=${pts.map(([x, y]) => `${x},${y}`).join(" ")}
+        fill="none"
+      />
+      ${pts.map(
+        ([x, y], i) =>
+          svg`<circle class=${i === 0 ? "room-draft-dot first" : "room-draft-dot"} cx=${x} cy=${y} r="4" />`,
+      )}
+    `;
+  }
+
+  private _commitRoomDraft(): void {
+    const points = this._roomDraft;
+    this._roomDraft = [];
+    if (points.length < 3) return;
+    const room: Room = { id: uid("room"), points, fill: this._nextRoomFill(), fillOpacity: 0.25 };
+    this._commitFloor({ rooms: [...(this._floor().rooms ?? []), room] });
+    this._selection = [{ kind: "room", id: room.id }];
+    this._tool = "select";
+  }
+
+  /**
+   * Read the rooms off the walls: every space they enclose becomes a polygon.
+   *
+   * One-shot, and never automatic. A derived room vanishes the instant a corner is
+   * a pixel out, and a plan that silently loses a room is worse than one with none.
+   * What this produces is an ordinary room the user then owns and can edit.
+   *
+   * Rooms already on the floor are left alone: a face whose centroid falls inside
+   * an existing room is one we have already got.
+   */
+  private _detectRooms(): void {
+    const f = this._floor();
+    const existing = f.rooms ?? [];
+    const found = detectRooms(f.walls);
+    const fresh = found.filter((poly) => !existing.some((r) => pointInPolygon(centroid(poly), r.points)));
+    if (!fresh.length) {
+      this._toast(found.length ? "No new rooms found." : "No enclosed rooms found.");
+      return;
+    }
+    const rooms = [...existing];
+    for (const points of fresh) {
+      rooms.push({
+        id: uid("room"),
+        points,
+        fill: FloorplanCardEditor.ROOM_PALETTE[rooms.length % FloorplanCardEditor.ROOM_PALETTE.length],
+        fillOpacity: 0.25,
+      });
+    }
+    this._commitFloor({ rooms });
+    this._toast(`Added ${fresh.length} room${fresh.length === 1 ? "" : "s"}.`);
   }
 
   private _updateRoom(id: string, patch: Partial<Room>, live = false): void {
@@ -1813,7 +1916,7 @@ export class FloorplanCardEditor extends LitElement {
         <div class="toolbar">
           <!-- Tools — modes; exactly one is active at a time -->
           <div class="seg" role="group" aria-label="Tool">
-            ${(["select", "wall", "door", "window", "tracker"] as Tool[]).map(
+            ${(["select", "wall", "room", "door", "window", "tracker"] as Tool[]).map(
               (t) => html`
                 <button
                   class=${this._tool === t ? "active" : ""}
@@ -1823,11 +1926,18 @@ export class FloorplanCardEditor extends LitElement {
                     this._tool = t;
                     this._draft = null;
                     this._draftTracker = null;
+                    this._roomDraft = [];
                   }}
                 >
                   <ha-icon icon=${TOOL_META[t].icon}></ha-icon>${TOOL_META[t].label}
                 </button>`
             )}
+            <button
+              title="Find the rooms your walls enclose. Adds a polygon for each; existing rooms are left alone."
+              @click=${this._detectRooms}
+            >
+              <ha-icon icon="mdi:vector-polygon"></ha-icon>Detect rooms
+            </button>
           </div>
 
           <span class="divider"></span>
@@ -1965,6 +2075,7 @@ export class FloorplanCardEditor extends LitElement {
                 : nothing}
               ${this._renderGrid()}
               ${(floor.rooms ?? []).map((r) => this._renderRoomSel(r))}
+              ${this._renderRoomDraft()}
               ${floor.furniture.map((f) => this._renderFurnitureSel(f))}
               ${renderWallMask(floor.openings, c.width, c.height, this._wallMaskId)}
               ${floor.walls.map((w) => this._renderWall(w))}
@@ -3104,6 +3215,31 @@ export class FloorplanCardEditor extends LitElement {
     .canvas-wrap:focus-visible {
       outline: 2px solid var(--primary-color, #03a9f4);
       outline-offset: -2px;
+    }
+    .room-sel {
+      cursor: pointer;
+      /* An uncoloured room renders fill="none", which has no hit area at all --
+         it could be drawn and then never selected again. */
+      pointer-events: all;
+    }
+    .room-sel.selected {
+      stroke: var(--primary-color, #03a9f4);
+      stroke-width: 2;
+      stroke-dasharray: 6 4;
+    }
+    .room-draft {
+      stroke: var(--primary-color, #03a9f4);
+      stroke-width: 2;
+      stroke-dasharray: 6 4;
+    }
+    .room-draft-dot {
+      fill: var(--primary-color, #03a9f4);
+    }
+    /* The first corner is the one you click to close the room. */
+    .room-draft-dot.first {
+      fill: var(--card-background-color, #fff);
+      stroke: var(--primary-color, #03a9f4);
+      stroke-width: 2;
     }
     .canvas-wrap {
       border: 1px solid var(--divider-color, #ccc);
