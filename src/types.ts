@@ -339,9 +339,9 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   floors?: Floor[];
   /** Id of the floor shown first. Falls back to the first floor. */
   defaultFloor?: string;
-  walls: Wall[];
-  openings: Opening[];
-  items: FloorItem[];
+  walls?: Wall[];
+  openings?: Opening[];
+  items?: FloorItem[];
   texts?: FloorText[];
   furniture?: Furniture[];
   trackers?: Tracker[];

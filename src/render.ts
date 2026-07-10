@@ -1,6 +1,6 @@
 import { svg, html, type SVGTemplateResult, type TemplateResult } from "lit";
-import type { Opening, ItemKind, Furniture, Tracker, RenderHass } from "./types";
-import { FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, trackerAxisFraction } from "./types";
+import type { FloorplanCardConfig, Opening, ItemKind, Furniture, Tracker, RenderHass } from "./types";
+import { FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, getFloors, trackerAxisFraction } from "./types";
 
 export const WALL_THICKNESS = 8;
 
@@ -43,6 +43,25 @@ export function hassRenderInputsChanged(
     if (prev.states[id] !== next.states[id]) return true;
   }
   return false;
+}
+
+/** Every entity id whose state can change what a plan draws (all floors). */
+export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
+  const ids = new Set<string>();
+  for (const f of getFloors(c)) {
+    for (const o of f.openings) if (o.entity) ids.add(o.entity);
+    for (const it of f.items) {
+      if (it.entity) ids.add(it.entity);
+      if (it.secondaryEntity) ids.add(it.secondaryEntity);
+    }
+    for (const tr of f.trackers) {
+      for (const s of [tr.xSensor, tr.ySensor]) {
+        if (s?.entity) ids.add(s.entity);
+        if (s?.presence?.entity) ids.add(s.presence.entity);
+      }
+    }
+  }
+  return ids;
 }
 
 /** State text for an item: primary entity, plus secondary (e.g. humidity) when set. */

@@ -53,6 +53,8 @@ import {
   entityDefaultIcon,
   kindFromEntity,
   snapToWall,
+  collectWatchedEntities,
+  hassRenderInputsChanged,
 } from "./render";
 
 const FURNITURE_TYPES: FurnitureType[] = [
@@ -165,6 +167,8 @@ export class FloorplanCardEditor extends LitElement {
   private readonly _wallMaskId = `fp-edit-wall-mask-${FloorplanCardEditor._nextWallMaskId++}`;
 
   @property({ attribute: false }) public hass?: HomeAssistant;
+  /** Entity ids this plan displays; used to skip irrelevant hass updates. */
+  private _watchedEntities: Set<string> = new Set();
   @state() private _config!: FloorplanCardConfig;
   @state() private _tool: Tool = "select";
   @state() private _selection: Sel[] = [];
@@ -254,6 +258,23 @@ export class FloorplanCardEditor extends LitElement {
       this._future = [];
       this._liveEditKey = null;
     }
+    this._watchedEntities = collectWatchedEntities(this._config);
+  }
+
+  /**
+   * HA replaces `hass` on every state change in the instance; the editor's
+   * render is expensive (full SVG + panels). Skip ticks that can't change
+   * anything we draw. Entity pickers keep the `hass` they last rendered with —
+   * acceptable, the registry data they browse changes rarely.
+   */
+  protected shouldUpdate(changed: PropertyValues): boolean {
+    if (!(changed.size === 1 && changed.has("hass"))) return true;
+    const prev = changed.get("hass") as HomeAssistant | undefined;
+    if (!prev || !this.hass) return true;
+    // The HA-floor link select reads the floor registry.
+    const floorsOf = (h: HomeAssistant) => (h as { floors?: unknown }).floors;
+    if (floorsOf(prev) !== floorsOf(this.hass)) return true;
+    return hassRenderInputsChanged(prev, this.hass, this._watchedEntities);
   }
 
   // ---- active floor access -----------------------------------------------
@@ -284,6 +305,13 @@ export class FloorplanCardEditor extends LitElement {
 
   protected firstUpdated(): void {
     void this._ensurePickers();
+    // Upgrade the plain-input fallbacks in place whenever a picker element
+    // gets defined later (by us or by another editor the user opened).
+    for (const tag of ["ha-entity-picker", "ha-icon-picker"]) {
+      if (!customElements.get(tag)) {
+        void customElements.whenDefined(tag).then(() => this.requestUpdate());
+      }
+    }
   }
 
   /**
@@ -295,8 +323,11 @@ export class FloorplanCardEditor extends LitElement {
    * hides the popover on its own. Browsers without the API keep the fixed
    * fallback, which is already correct on the mobile dialog (transform: none).
    */
-  protected updated(changed: PropertyValues): void {
-    if (!changed.has("_fullscreen") || !this._fullscreen) return;
+  protected updated(): void {
+    // Re-asserted on every render while fullscreen (not just the transition):
+    // idempotent via :popover-open, and it self-heals if the browser
+    // force-hid the popover, e.g. across a disconnect/reconnect.
+    if (!this._fullscreen) return;
     const el = this._editorEl;
     if (!el?.isConnected || typeof el.showPopover !== "function") return;
     if (!el.matches(":popover-open")) {
@@ -437,9 +468,15 @@ export class FloorplanCardEditor extends LitElement {
 
   private _emit(config: FloorplanCardConfig): void {
     this._config = config;
-    this._lastEmitted = config;
+    // Emit without the legacy flat arrays: `floors` is the source of truth,
+    // and empty stubs would otherwise be persisted into the user's YAML.
+    const out = { ...config };
+    for (const key of ["walls", "openings", "items", "texts", "furniture", "trackers"] as const) {
+      if (!out[key]?.length) delete out[key];
+    }
+    this._lastEmitted = out;
     this.dispatchEvent(
-      new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true })
+      new CustomEvent("config-changed", { detail: { config: out }, bubbles: true, composed: true })
     );
   }
 
@@ -1756,7 +1793,13 @@ export class FloorplanCardEditor extends LitElement {
                   html`<option value=${f.id} ?selected=${f.id === this._activeFloorId}>${f.name}</option>`
               )}
             </select>
-            <button title="Add a floor (copies the current walls)" @click=${this._addFloor}>+</button>
+            <button
+              aria-label="Add floor"
+              title="Add a floor (copies the current walls)"
+              @click=${this._addFloor}
+            >
+              +
+            </button>
             <button
               aria-label="Floor settings"
               title="Rename or delete this floor"
@@ -1896,9 +1939,42 @@ export class FloorplanCardEditor extends LitElement {
     `;
   }
 
+  /**
+   * `ha-entity-picker` when defined, else a plain entity-id input — mirrors
+   * the icon-picker fallback so entity binding never silently dead-ends when
+   * the helper load fails or the editor runs outside HA.
+   */
+  private _renderEntityPicker(
+    value: string,
+    onChange: (entity: string) => void,
+    includeDomains?: string[]
+  ): TemplateResult {
+    if (customElements.get("ha-entity-picker")) {
+      return html`<ha-entity-picker
+        .hass=${this.hass}
+        .value=${value}
+        .includeDomains=${includeDomains}
+        allow-custom-entity
+        @value-changed=${(e: CustomEvent) => onChange((e.detail.value as string) ?? "")}
+      ></ha-entity-picker>`;
+    }
+    return html`<input
+      type="text"
+      placeholder="sensor.example"
+      .value=${value}
+      @change=${(e: Event) => onChange((e.target as HTMLInputElement).value)}
+    />`;
+  }
+
   /** Toggle the full-screen workspace. */
   private _toggleFullscreen(): void {
     this._fullscreen = !this._fullscreen;
+    if (this._fullscreen && this._canvasWrap) {
+      // A drag-resized canvas carries inline width/height that would defeat
+      // the fullscreen flex fill.
+      this._canvasWrap.style.width = "";
+      this._canvasWrap.style.height = "";
+    }
     // Any open toolbar popover would be orphaned by the layout change.
     this._floorMenuOpen = false;
     this._addMenuOpen = false;
@@ -2324,11 +2400,10 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   /**
-   * Editor fields for the currently-selected element, rendered inline inside the
-   * context bar so the user can configure the selection without scrolling away
-   * from the canvas. Returns nothing when the selection isn't exactly one
-   * element — multi-select and empty-select states are handled by the context
-   * bar itself.
+   * Editor fields for the currently-selected element, rendered in the Element
+   * section below the canvas (docked beside it in fullscreen). Returns nothing
+   * when the selection isn't exactly one element — multi-select and
+   * empty-select states are handled by the Element header itself.
    */
   private _renderSelectionEditor(): TemplateResult {
     const sel = this._primary();
@@ -2454,13 +2529,10 @@ export class FloorplanCardEditor extends LitElement {
           : nothing}
         <div class="row wide">
           <label>Entity</label>
-          <ha-entity-picker
-            .hass=${this.hass}
-            .value=${o.entity ?? ""}
-            .includeDomains=${["binary_sensor", "cover"]}
-            allow-custom-entity
-            @value-changed=${(e: CustomEvent) => {
-              const entity = (e.detail.value as string) || undefined;
+          ${this._renderEntityPicker(
+            o.entity ?? "",
+            (value) => {
+              const entity = value || undefined;
               // Infer type/motion from the entity's HA device_class (e.g. a
               // `cover` with device_class `window` → a window; a `garage`
               // roller → a sliding door). Only when the class is known, so we
@@ -2469,8 +2541,9 @@ export class FloorplanCardEditor extends LitElement {
                 ? (this.hass?.states[entity]?.attributes?.device_class as string | undefined)
                 : undefined;
               this._updateOpening(o.id, { entity, ...(dc ? openingFromDeviceClass(dc) : {}) });
-            }}
-          ></ha-entity-picker>
+            },
+            ["binary_sensor", "cover"]
+          )}
         </div>
         ${o.entity
           ? html`<div class="row">
@@ -2519,27 +2592,15 @@ export class FloorplanCardEditor extends LitElement {
       return html`
         <div class="row wide">
           <label>Entity</label>
-          <ha-entity-picker
-            .hass=${this.hass}
-            .value=${it.entity}
-            allow-custom-entity
-            @value-changed=${(e: CustomEvent) => {
-              const entity = e.detail.value as string;
-              this._updateItem(it.id, { entity, kind: kindFromEntity(entity) });
-            }}
-          ></ha-entity-picker>
+          ${this._renderEntityPicker(it.entity, (entity) =>
+            this._updateItem(it.id, { entity, kind: kindFromEntity(entity) })
+          )}
         </div>
         <div class="row wide">
           <label>2nd entity</label>
-          <ha-entity-picker
-            .hass=${this.hass}
-            .value=${it.secondaryEntity ?? ""}
-            allow-custom-entity
-            @value-changed=${(e: CustomEvent) =>
-              this._updateItem(it.id, {
-                secondaryEntity: (e.detail.value as string) || undefined,
-              })}
-          ></ha-entity-picker>
+          ${this._renderEntityPicker(it.secondaryEntity ?? "", (value) =>
+            this._updateItem(it.id, { secondaryEntity: value || undefined })
+          )}
         </div>
         <div class="row wide">
           <label>Icon</label>
@@ -2839,15 +2900,24 @@ export class FloorplanCardEditor extends LitElement {
             class="num"
             type="number"
             .value=${String(Math.round(tr.x))}
-            @change=${(e: Event) =>
-              this._updateTracker(tr.id, { x: Number((e.target as HTMLInputElement).value) })}
+            @change=${(e: Event) => {
+              const input = e.target as HTMLInputElement;
+              const n = Number(input.value);
+              // A cleared/garbled field must not teleport the tracker to 0.
+              if (input.value !== "" && Number.isFinite(n)) this._updateTracker(tr.id, { x: n });
+              else input.value = String(Math.round(tr.x));
+            }}
           />
           <input
             class="num"
             type="number"
             .value=${String(Math.round(tr.y))}
-            @change=${(e: Event) =>
-              this._updateTracker(tr.id, { y: Number((e.target as HTMLInputElement).value) })}
+            @change=${(e: Event) => {
+              const input = e.target as HTMLInputElement;
+              const n = Number(input.value);
+              if (input.value !== "" && Number.isFinite(n)) this._updateTracker(tr.id, { y: n });
+              else input.value = String(Math.round(tr.y));
+            }}
           />
         </div>
         ${this._renderAngleRow(
@@ -2983,17 +3053,14 @@ export class FloorplanCardEditor extends LitElement {
     return html`
       <div class="row wide">
         <label>${label}</label>
-        <ha-entity-picker
-          .hass=${this.hass}
-          .value=${s?.entity ?? ""}
-          .includeDomains=${["sensor", "input_number", "number"]}
-          allow-custom-entity
-          @value-changed=${(e: CustomEvent) => {
-            const v = (e.detail.value as string) || "";
+        ${this._renderEntityPicker(
+          s?.entity ?? "",
+          (v) => {
             if (!v) this._updateTrackerSensor(tr.id, axis, null);
             else this._updateTrackerSensor(tr.id, axis, { entity: v });
-          }}
-        ></ha-entity-picker>
+          },
+          ["sensor", "input_number", "number"]
+        )}
       </div>
       ${s
         ? html`<div class="row">
@@ -3004,10 +3071,14 @@ export class FloorplanCardEditor extends LitElement {
               step="0.01"
               title="Reading at the near edge"
               .value=${String(s.min)}
-              @change=${(e: Event) =>
-                this._updateTrackerSensor(tr.id, axis, {
-                  min: Number((e.target as HTMLInputElement).value),
-                })}
+              @change=${(e: Event) => {
+                const input = e.target as HTMLInputElement;
+                const n = Number(input.value);
+                // A cleared field must not silently collapse the range to 0.
+                if (input.value !== "" && Number.isFinite(n))
+                  this._updateTrackerSensor(tr.id, axis, { min: n });
+                else input.value = String(s.min);
+              }}
             />
             <input
               class="num"
@@ -3015,10 +3086,13 @@ export class FloorplanCardEditor extends LitElement {
               step="0.01"
               title="Reading at the far edge"
               .value=${String(s.max)}
-              @change=${(e: Event) =>
-                this._updateTrackerSensor(tr.id, axis, {
-                  max: Number((e.target as HTMLInputElement).value),
-                })}
+              @change=${(e: Event) => {
+                const input = e.target as HTMLInputElement;
+                const n = Number(input.value);
+                if (input.value !== "" && Number.isFinite(n))
+                  this._updateTrackerSensor(tr.id, axis, { max: n });
+                else input.value = String(s.max);
+              }}
             />
             <label class="inline-check">
               <input
@@ -3034,18 +3108,14 @@ export class FloorplanCardEditor extends LitElement {
           </div>
           <div class="row wide">
             <label>${label} presence</label>
-            <ha-entity-picker
-              .hass=${this.hass}
-              .value=${s.presence?.entity ?? ""}
-              .includeDomains=${["binary_sensor", "input_boolean", "device_tracker"]}
-              allow-custom-entity
-              @value-changed=${(e: CustomEvent) => {
-                const v = (e.detail.value as string) || "";
+            ${this._renderEntityPicker(
+              s.presence?.entity ?? "",
+              (v) =>
                 this._updateTrackerSensor(tr.id, axis, {
                   presence: v ? { entity: v, invert: s.presence?.invert } : undefined,
-                });
-              }}
-            ></ha-entity-picker>
+                }),
+              ["binary_sensor", "input_boolean", "device_tracker"]
+            )}
             ${s.presence
               ? html`<label class="inline-check" title="Treat 'off' as detected">
                   <input
@@ -3076,8 +3146,9 @@ export class FloorplanCardEditor extends LitElement {
     /* Full-screen workspace, shown as a popover so the top layer lifts it clear
        of HA's edit dialog (whose surface is transformed — see updated()). The
        resets undo the UA popover defaults: fit-content size, auto margins, a
-       solid border and padding. z-index and the fixed position only matter to
-       the fallback path, where the dialog sets --dialog-z-index: 6. */
+       solid border and padding. The fixed position only matters to the
+       non-popover fallback, where the transformed dialog surface is the
+       containing block — there "fullscreen" fills the dialog, not the page. */
     .editor.fullscreen {
       position: fixed;
       inset: 0;
@@ -3093,9 +3164,6 @@ export class FloorplanCardEditor extends LitElement {
       color: inherit;
       background: var(--card-background-color, #fff);
       overflow: hidden;
-    }
-    .editor.fullscreen::backdrop {
-      background: rgba(0, 0, 0, 0.6);
     }
     /* Toolbar-icon button (Expand/Exit) — match the gear button's icon+label
        alignment so it reads as part of the toolbar. */
@@ -3150,6 +3218,9 @@ export class FloorplanCardEditor extends LitElement {
     @media (max-width: 900px) {
       .editor.fullscreen .workspace {
         flex-direction: column;
+        /* Stacked panels can exceed a short viewport (phone landscape) — the
+           root clips, so the workspace itself must scroll. */
+        overflow-y: auto;
       }
       .editor.fullscreen .side {
         flex: 0 0 auto;
@@ -3274,7 +3345,7 @@ export class FloorplanCardEditor extends LitElement {
     }
     button.active {
       background: var(--primary-color, #03a9f4);
-      color: #fff;
+      color: var(--text-primary-color, #fff);
       border-color: var(--primary-color, #03a9f4);
     }
     button.danger {
@@ -3584,7 +3655,7 @@ export class FloorplanCardEditor extends LitElement {
     }
     .handle {
       fill: var(--primary-color, #03a9f4);
-      stroke: #fff;
+      stroke: var(--card-background-color, #fff);
       stroke-width: 1.5;
       cursor: grab;
     }
@@ -3940,11 +4011,6 @@ export class FloorplanCardEditor extends LitElement {
       font-size: 13px;
       color: var(--secondary-text-color);
       line-height: 1.5;
-    }
-    hr {
-      border: none;
-      border-top: 1px solid var(--divider-color, #eee);
-      margin: 10px 0;
     }
   `;
 }
