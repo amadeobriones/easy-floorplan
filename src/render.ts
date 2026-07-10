@@ -229,11 +229,22 @@ export function isEntityOn(state: string | undefined): boolean {
  * Icon precedence shared by card and editor: config override → entity's
  * explicit icon → device_class-implied icon ("show as") → the kind default.
  */
+/**
+ * The icon for an item, in Home Assistant's own order of precedence.
+ *
+ * `registryIcon` is the user's override from Settings -> Entities, which lives
+ * at `hass.entities[entityId].icon` and never reaches `attributes.icon`. HA's
+ * `entityIcon()` prefers it over the integration's icon, so an icon a user set
+ * by hand must win here too -- otherwise the floorplan is the one place in the
+ * dashboard that ignores it.
+ */
 export function resolveItemIcon(
   item: { entity: string; kind: ItemKind; icon?: string },
   st: { state: string; attributes: Record<string, unknown> } | undefined,
+  registryIcon?: string,
 ): string {
   if (item.icon) return item.icon;
+  if (registryIcon) return registryIcon;
   const attrIcon = st?.attributes?.icon as string | undefined;
   if (attrIcon) return attrIcon;
   return (

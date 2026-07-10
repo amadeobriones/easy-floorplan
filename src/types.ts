@@ -14,6 +14,12 @@ export type HassEntity = BaseHomeAssistant["states"][string];
  */
 export interface HomeAssistant extends BaseHomeAssistant {
   /**
+   * The entity registry as the frontend exposes it. `custom-card-helpers` does
+   * not declare it, but HA has handed it to cards since 2023.4; it is where a
+   * user's per-entity icon override lives.
+   */
+  entities?: Record<string, { icon?: string } | undefined>;
+  /**
    * HA's own state formatter. It applies the entity registry's display
    * precision, the locale's number format, the blank before a unit and the
    * wording of `unavailable` — none of which live on the state object. HA
@@ -26,6 +32,8 @@ export interface HomeAssistant extends BaseHomeAssistant {
 /** The slice of `hass` the card draws from. */
 export interface RenderHass {
   states: Record<string, HassEntity | undefined>;
+  /** The entity registry, as the frontend exposes it. Carries the user's icon override. */
+  entities?: Record<string, { icon?: string } | undefined>;
   formatEntityState(stateObj: HassEntity): string;
 }
 
