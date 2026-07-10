@@ -21,11 +21,11 @@ import {
   renderFurniture,
   renderTracker,
   trackerSensorReading,
-  defaultIcon,
-  entityDefaultIcon,
   itemStateText,
   hassRenderInputsChanged,
   collectWatchedEntities,
+  isEntityOn,
+  resolveItemIcon,
 } from "./render";
 import type { Opening } from "./types";
 
@@ -102,8 +102,7 @@ export class FloorplanCard extends LitElement {
   }
 
   private _isOn(item: FloorItem): boolean {
-    const st = this.hass?.states[item.entity]?.state;
-    return st === "on" || st === "open" || st === "home" || st === "playing";
+    return isEntityOn(this.hass?.states[item.entity]?.state);
   }
 
   /** How far open an opening should be drawn (0..1), from its entity (or default). */
@@ -119,18 +118,7 @@ export class FloorplanCard extends LitElement {
   }
 
   private _itemIcon(item: FloorItem): string {
-    // Precedence: config override → entity's explicit icon → the icon implied
-    // by its device_class ("show as", issue #29) → the generic kind default.
-    if (item.icon) return item.icon;
-    const st = this.hass?.states[item.entity];
-    if (st?.attributes?.icon) return st.attributes.icon;
-    return (
-      entityDefaultIcon(
-        item.entity,
-        st?.attributes?.device_class as string | undefined,
-        this._isOn(item)
-      ) ?? defaultIcon(item.kind)
-    );
+    return resolveItemIcon(item, this.hass?.states[item.entity]);
   }
 
   private _label(item: FloorItem): string {

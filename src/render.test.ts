@@ -19,6 +19,8 @@ import {
   itemStateText,
   hassRenderInputsChanged,
   collectWatchedEntities,
+  isEntityOn,
+  resolveItemIcon,
 } from "./render";
 import type { FloorplanCardConfig, Opening, RenderHass } from "./types";
 
@@ -482,6 +484,25 @@ describe("hassRenderInputsChanged", () => {
   it("ignores entities the plan does not watch", () => {
     const next = { ...base(), states: { [TEMP]: tempState, [HUMIDITY]: { state: "50.0" } } };
     expect(hassRenderInputsChanged(base(), next, watched)).toBe(false);
+  });
+});
+
+describe("isEntityOn / resolveItemIcon", () => {
+  it("treats on/open/home/playing as on", () => {
+    for (const s of ["on", "open", "home", "playing"]) expect(isEntityOn(s)).toBe(true);
+    for (const s of ["off", "closed", "idle", undefined]) expect(isEntityOn(s)).toBe(false);
+  });
+
+  it("resolves icon precedence: override → entity icon → device_class → kind default", () => {
+    const item = { entity: "binary_sensor.a", kind: "sensor" as const };
+    expect(resolveItemIcon({ ...item, icon: "mdi:override" }, undefined)).toBe("mdi:override");
+    expect(
+      resolveItemIcon(item, { state: "on", attributes: { icon: "mdi:from-entity" } })
+    ).toBe("mdi:from-entity");
+    expect(
+      resolveItemIcon(item, { state: "on", attributes: { device_class: "door" } })
+    ).toBe(entityDefaultIcon("binary_sensor.a", "door", true));
+    expect(resolveItemIcon(item, undefined)).toBe(defaultIcon("sensor"));
   });
 });
 

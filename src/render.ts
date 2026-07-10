@@ -185,6 +185,31 @@ export function entityDefaultIcon(
   return undefined;
 }
 
+/** Whether an entity state renders as "active" on the plan. */
+export function isEntityOn(state: string | undefined): boolean {
+  return state === "on" || state === "open" || state === "home" || state === "playing";
+}
+
+/**
+ * Icon precedence shared by card and editor: config override → entity's
+ * explicit icon → device_class-implied icon ("show as") → the kind default.
+ */
+export function resolveItemIcon(
+  item: { entity: string; kind: ItemKind; icon?: string },
+  st: { state: string; attributes: Record<string, unknown> } | undefined,
+): string {
+  if (item.icon) return item.icon;
+  const attrIcon = st?.attributes?.icon as string | undefined;
+  if (attrIcon) return attrIcon;
+  return (
+    entityDefaultIcon(
+      item.entity,
+      st?.attributes?.device_class as string | undefined,
+      isEntityOn(st?.state),
+    ) ?? defaultIcon(item.kind)
+  );
+}
+
 /** Infer a sensible item kind from an entity id's domain. */
 export function kindFromEntity(entity: string): ItemKind {
   const domain = entity.split(".")[0];

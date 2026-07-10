@@ -50,12 +50,23 @@ import {
   renderTracker,
   trackerSensorReading,
   defaultIcon,
-  entityDefaultIcon,
   kindFromEntity,
+  resolveItemIcon,
   snapToWall,
   collectWatchedEntities,
   hassRenderInputsChanged,
 } from "./render";
+import {
+  ENDPOINT_SNAP,
+  applyDelta,
+  elementsInRect,
+  nearestCorner,
+  snapWallEnd,
+  type OrigPos,
+  type Rect,
+  type Sel,
+  type SelKind,
+} from "./editor-geometry";
 
 const FURNITURE_TYPES: FurnitureType[] = [
   "table",
@@ -95,8 +106,6 @@ const FURNITURE_LABELS: Record<FurnitureType, string> = {
 };
 
 type Tool = "select" | "wall" | "door" | "window" | "tracker";
-type SelKind = "wall" | "opening" | "item" | "text" | "furniture" | "tracker";
-type Sel = { kind: SelKind; id: string };
 type OverlaySel = { kind: "item" | "text"; id: string };
 
 /** Toolbar metadata per tool: mdi icon + label (icons make the modes scannable). */
@@ -118,11 +127,6 @@ const SEL_KIND_ICON: Record<SelKind, string> = {
   tracker: "mdi:crosshairs-gps",
 };
 
-/** Snapshot of an element's position at drag start, for group translation. */
-type OrigPos =
-  | { kind: "wall"; x1: number; y1: number; x2: number; y2: number }
-  | { kind: "pt"; x: number; y: number };
-
 interface Drag {
   /** The element under the pointer (drives snapping); the whole selection moves with it. */
   primary: Sel;
@@ -134,14 +138,11 @@ interface Drag {
   endpoint?: 1 | 2;
   /** Set once the drag actually moved something (history snapshots lazily). */
   moved?: boolean;
+  /** The exact history entry this drag pushed, so cancel can remove it by identity. */
+  snapshot?: FloorplanCardConfig;
 }
 
-interface Marquee {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-}
+type Marquee = Rect;
 
 /** Elements copied to the in-memory clipboard (not part of the config). */
 interface Clipboard {
@@ -153,9 +154,8 @@ interface Clipboard {
   trackers: Tracker[];
 }
 
-/** Snap distance (virtual units) for openings onto walls / wall endpoints onto each other. */
+/** Snap distance (virtual units) for openings onto walls. */
 const WALL_SNAP = 35;
-const ENDPOINT_SNAP = 26;
 const HISTORY_MAX = 60;
 /** Angle (degrees) within which a drawn wall is snapped flat to horizontal/vertical. */
 const WALL_AXIS_SNAP_DEG = 10;
@@ -414,21 +414,7 @@ export class FloorplanCardEditor extends LitElement {
 
   /** Nearest existing wall endpoint within ENDPOINT_SNAP, or null. */
   private _nearestCorner(rawX: number, rawY: number): { x: number; y: number } | null {
-    let best: { x: number; y: number } | null = null;
-    let bestDist = ENDPOINT_SNAP;
-    for (const w of this._floor().walls) {
-      for (const e of [
-        { x: w.x1, y: w.y1 },
-        { x: w.x2, y: w.y2 },
-      ]) {
-        const d = Math.hypot(rawX - e.x, rawY - e.y);
-        if (d < bestDist) {
-          bestDist = d;
-          best = { x: e.x, y: e.y };
-        }
-      }
-    }
-    return best;
+    return nearestCorner(this._floor().walls, rawX, rawY, ENDPOINT_SNAP);
   }
 
   /** Snap a raw point to a nearby existing wall endpoint, else to the snap step. */
@@ -436,29 +422,24 @@ export class FloorplanCardEditor extends LitElement {
     return this._nearestCorner(rawX, rawY) ?? { x: this._snap(rawX), y: this._snap(rawY) };
   }
 
-  /**
-   * Snap a wall's moving endpoint while drawing. Existing corners win (so rooms
-   * close/continue); otherwise, unless free-draw is on, apply "gravity" toward
-   * horizontal/vertical relative to the start point. The position itself snaps
-   * to the configured snap step (which is the grid by default, or nothing when
-   * Snap is Off) — "straighten" only governs the H/V alignment, not snapping.
-   */
+  /** See {@link snapWallEnd}: corners win, then axis gravity, then the snap step. */
   private _snapWallEnd(
     x1: number,
     y1: number,
     rawX: number,
     rawY: number
   ): { x: number; y: number } {
-    if (this._freeWalls) return { x: this._snap(rawX), y: this._snap(rawY) };
-    const corner = this._nearestCorner(rawX, rawY);
-    if (corner) return corner;
-    const dx = rawX - x1;
-    const dy = rawY - y1;
-    const t = Math.tan((WALL_AXIS_SNAP_DEG * Math.PI) / 180);
-    // Sticky: align flat to an axis when close; the free coordinate snaps to step.
-    if (Math.abs(dy) <= Math.abs(dx) * t) return { x: this._snap(rawX), y: y1 }; // horizontal
-    if (Math.abs(dx) <= Math.abs(dy) * t) return { x: x1, y: this._snap(rawY) }; // vertical
-    return { x: this._snap(rawX), y: this._snap(rawY) };
+    return snapWallEnd(
+      this._floor().walls,
+      x1,
+      y1,
+      rawX,
+      rawY,
+      (v) => this._snap(v),
+      this._freeWalls,
+      WALL_AXIS_SNAP_DEG,
+      ENDPOINT_SNAP
+    );
   }
 
   // ---- config mutation + history ----------------------------------------
@@ -468,6 +449,10 @@ export class FloorplanCardEditor extends LitElement {
 
   private _emit(config: FloorplanCardConfig): void {
     this._config = config;
+    // Recompute here, not just in setConfig: real HA deep-equal-skips the
+    // setConfig echo of our own emission, so entities bound during the
+    // session would otherwise never enter the watched set.
+    this._watchedEntities = collectWatchedEntities(config);
     // Emit without the legacy flat arrays: `floors` is the source of truth,
     // and empty stubs would otherwise be persisted into the user's YAML.
     const out = { ...config };
@@ -524,16 +509,21 @@ export class FloorplanCardEditor extends LitElement {
 
   private _selectOne(sel: Sel): void {
     this._selection = [sel];
+    // Selection changes end any live-edit burst: re-selecting the same
+    // element later must start a new undo step, not extend the old one.
+    this._liveEditKey = null;
   }
 
   private _toggleSel(sel: Sel): void {
     this._selection = this._isSel(sel.kind, sel.id)
       ? this._selection.filter((s) => !(s.kind === sel.kind && s.id === sel.id))
       : [...this._selection, sel];
+    this._liveEditKey = null;
   }
 
   private _clearSel(): void {
     this._selection = [];
+    this._liveEditKey = null;
   }
 
   /** Pointer-driven selection: modifier toggles; plain click selects unless already in the set. */
@@ -568,8 +558,22 @@ export class FloorplanCardEditor extends LitElement {
     // Only react while the user is actually working in the editor — the event
     // must originate inside it (the canvas is focusable, so canvas work counts).
     // A window-level listener sees every key on the page; without this, keys
-    // leak in from HA UI stacked above (more-info dialog, quick-bar).
-    if (!path.includes(this)) return;
+    // leak in from HA UI stacked above (more-info dialog, quick-bar). The
+    // deliberate cost: shortcuts are dead until the first click inside the
+    // editor after the dialog opens.
+    if (!path.includes(this)) {
+      // While fullscreen the workspace owns the screen: an Escape that fires
+      // from `body` (focus dropped after a blur or a dead-space click) must
+      // collapse it rather than reach — and close — HA's dialog hidden
+      // underneath. A dialog stacked above us is unaffected: it takes focus,
+      // and the focusin guard has already collapsed fullscreen by then.
+      if (this._fullscreen && ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this._fullscreen = false;
+      }
+      return;
+    }
     // Don't hijack keys while typing in a field / picker.
     const typing = path.some((el) => {
       const node = el as HTMLElement;
@@ -591,13 +595,20 @@ export class FloorplanCardEditor extends LitElement {
       if (ev.key === "Escape" && this._fullscreen) {
         ev.preventDefault();
         ev.stopPropagation();
-        (path[0] as HTMLElement | undefined)?.blur?.();
+        // Move focus to the canvas (not a bare blur, which would strand focus
+        // on `body` and route the next Escape around the editor entirely).
+        this._canvasWrap?.focus();
       }
       return;
     }
 
     const mod = ev.ctrlKey || ev.metaKey;
     const key = ev.key.toLowerCase();
+    // While a gesture is live, any keyboard mutation (paste, delete, nudge,
+    // undo…) would interleave with the drag's emits and history snapshot —
+    // ignore them all; Escape below still cancels the gesture itself.
+    const gestureActive = !!(this._drag || this._draft || this._draftTracker || this._marquee);
+    if (gestureActive && ev.key !== "Escape" && !(mod && key === "c")) return;
     if (mod && key === "c") {
       if (this._selection.length) {
         ev.preventDefault();
@@ -622,15 +633,12 @@ export class FloorplanCardEditor extends LitElement {
     // Undo / redo — the toolbar buttons exist, but the keyboard is what
     // everyone reaches for first. Ctrl/Cmd+Z, Shift for redo, plus Ctrl+Y.
     if (mod && key === "z") {
-      // Mid-gesture undo would emit on top of the restored config — ignore.
-      if (this._drag || this._draft || this._draftTracker || this._marquee) return;
       ev.preventDefault();
       if (ev.shiftKey) this._redo();
       else this._undo();
       return;
     }
     if (mod && key === "y") {
-      if (this._drag || this._draft || this._draftTracker || this._marquee) return;
       ev.preventDefault();
       this._redo();
       return;
@@ -776,8 +784,9 @@ export class FloorplanCardEditor extends LitElement {
 
   /**
    * Abort any in-progress gesture. A moved drag is rolled back to the exact
-   * pre-drag config (restoring wall-snap angle changes too) and its history
-   * snapshot is dropped — a canceled drag leaves no trace in undo.
+   * pre-drag config (restoring wall-snap angle changes too) and its own
+   * history snapshot — matched by identity, in case something else pushed in
+   * between — is dropped, so a canceled drag leaves no trace in undo.
    */
   private _cancelGesture(): void {
     this._gesturePointer = null;
@@ -786,10 +795,9 @@ export class FloorplanCardEditor extends LitElement {
     this._marquee = null;
     const drag = this._drag;
     this._drag = null;
-    if (drag?.moved) {
-      const prev = this._history[this._history.length - 1];
-      this._history = this._history.slice(0, -1);
-      if (prev) this._emit(prev);
+    if (drag?.moved && drag.snapshot) {
+      this._history = this._history.filter((c) => c !== drag.snapshot);
+      this._emit(drag.snapshot);
     }
   }
 
@@ -875,6 +883,7 @@ export class FloorplanCardEditor extends LitElement {
       }
       const hits = this._elementsInRect(m);
       this._selection = this._marqueeAdd ? this._mergeSel(this._selection, hits) : hits;
+      this._liveEditKey = null;
       return;
     }
     if (this._drag) {
@@ -885,22 +894,7 @@ export class FloorplanCardEditor extends LitElement {
 
   /** All active-floor elements whose center lies inside the marquee rect. */
   private _elementsInRect(m: Marquee): Sel[] {
-    const minX = Math.min(m.x0, m.x1);
-    const maxX = Math.max(m.x0, m.x1);
-    const minY = Math.min(m.y0, m.y1);
-    const maxY = Math.max(m.y0, m.y1);
-    const inside = (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY;
-    const f = this._floor();
-    const out: Sel[] = [];
-    for (const w of f.walls)
-      if (inside((w.x1 + w.x2) / 2, (w.y1 + w.y2) / 2)) out.push({ kind: "wall", id: w.id });
-    for (const o of f.openings) if (inside(o.x, o.y)) out.push({ kind: "opening", id: o.id });
-    for (const it of f.items) if (inside(it.x, it.y)) out.push({ kind: "item", id: it.id });
-    for (const t of f.texts) if (inside(t.x, t.y)) out.push({ kind: "text", id: t.id });
-    for (const fu of f.furniture) if (inside(fu.x, fu.y)) out.push({ kind: "furniture", id: fu.id });
-    for (const tr of f.trackers ?? [])
-      if (inside(tr.x + tr.w / 2, tr.y + tr.h / 2)) out.push({ kind: "tracker", id: tr.id });
-    return out;
+    return elementsInRect(this._floor(), m);
   }
 
   // ---- dragging existing elements ----------------------------------------
@@ -954,13 +948,17 @@ export class FloorplanCardEditor extends LitElement {
 
   private _applyDrag(ev: PointerEvent): void {
     const drag = this._drag!;
-    // First actual movement: snapshot for undo now, not at pointerdown, so a
-    // plain selection click doesn't spam history or wipe the redo stack.
+    const p = this._toVirtual(ev, false);
+    // First *effective* movement: snapshot for undo now, not at pointerdown,
+    // so a plain selection click — including the ~1px jitter real clicks and
+    // taps produce — doesn't spam history or wipe the redo stack. Threshold
+    // matches the marquee's click-vs-drag test.
     if (!drag.moved) {
+      if (Math.hypot(p.x - drag.start.x, p.y - drag.start.y) <= 4) return;
       drag.moved = true;
       this._pushHistory();
+      drag.snapshot = this._history[this._history.length - 1];
     }
-    const p = this._toVirtual(ev, false);
     const f = this._floor();
 
     // Single wall endpoint handle: snaps to nearby wall corners.
@@ -1008,35 +1006,7 @@ export class FloorplanCardEditor extends LitElement {
 
   /** Translate every snapshotted element by (dx, dy). */
   private _applyDelta(dx: number, dy: number, orig: Map<string, OrigPos>): Partial<Floor> {
-    const f = this._floor();
-    return {
-      walls: f.walls.map((w) => {
-        const o = orig.get(`wall:${w.id}`);
-        return o && o.kind === "wall"
-          ? { ...w, x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy }
-          : w;
-      }),
-      openings: f.openings.map((el) => {
-        const o = orig.get(`opening:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-      items: f.items.map((el) => {
-        const o = orig.get(`item:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-      texts: f.texts.map((el) => {
-        const o = orig.get(`text:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-      furniture: f.furniture.map((el) => {
-        const o = orig.get(`furniture:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-      trackers: (f.trackers ?? []).map((el) => {
-        const o = orig.get(`tracker:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-    };
+    return applyDelta(this._floor(), dx, dy, orig);
   }
 
   // ---- overlay drag for items & texts (HTML, not SVG) --------------------
@@ -2171,16 +2141,8 @@ export class FloorplanCardEditor extends LitElement {
 
   private _renderItemOverlay(it: FloorItem, c: FloorplanCardConfig): TemplateResult {
     const selected = this._isSel("item", it.id);
-    // Same icon precedence as the live card: config override → entity's
-    // explicit icon → device_class-implied icon ("show as") → kind default.
     const st = it.entity ? this.hass?.states[it.entity] : undefined;
-    const stateOn =
-      st?.state === "on" || st?.state === "open" || st?.state === "home" || st?.state === "playing";
-    const icon =
-      it.icon ??
-      (st?.attributes?.icon as string | undefined) ??
-      entityDefaultIcon(it.entity, st?.attributes?.device_class as string | undefined, stateOn) ??
-      defaultIcon(it.kind);
+    const icon = resolveItemIcon(it, st);
     const label = it.name || it.entity || it.kind;
     const size = it.size ?? DEFAULT_ITEM_SIZE;
     const showIcon = it.showIcon ?? true;
