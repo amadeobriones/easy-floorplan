@@ -115,6 +115,8 @@ interface Edge {
   from: number;
   to: number;
   angle: number;
+  /** This edge's position in `out.get(from)`, once that list is sorted. */
+  slot: number;
 }
 
 const key = (from: number, to: number) => `${from}>${to}`;
@@ -133,12 +135,14 @@ export function faces(input: readonly Wall[], eps: number = WELD_EPS): Poly[] {
   // Directed edges, deduplicated: two walls between the same pair of corners are
   // one edge of the graph, and a zero-length wall is no edge at all.
   const out = new Map<number, Edge[]>();
-  const seen = new Set<string>();
+  const byKey = new Map<string, Edge>();
   const addEdge = (from: number, to: number) => {
-    if (from === to || seen.has(key(from, to))) return;
-    seen.add(key(from, to));
+    if (from === to || byKey.has(key(from, to))) return;
     const angle = Math.atan2(vertices[to].y - vertices[from].y, vertices[to].x - vertices[from].x);
-    (out.get(from) ?? out.set(from, []).get(from)!).push({ from, to, angle });
+    const e: Edge = { from, to, angle, slot: -1 };
+    byKey.set(key(from, to), e);
+    if (!out.has(from)) out.set(from, []);
+    out.get(from)!.push(e);
   };
   for (const w of walls) {
     const a = indexOf(w.x1, w.y1);
@@ -147,18 +151,24 @@ export function faces(input: readonly Wall[], eps: number = WELD_EPS): Poly[] {
     addEdge(a, b);
     addEdge(b, a);
   }
-  for (const list of out.values()) list.sort((p, q) => p.angle - q.angle);
+  // Sort each vertex's outgoing edges by angle, then record where each one landed.
+  for (const list of out.values()) {
+    list.sort((p, q) => p.angle - q.angle);
+    list.forEach((e, i) => (e.slot = i));
+  }
 
-  /** The edge leaving `to` that turns most tightly back from the edge `from->to`. */
+  /**
+   * The edge leaving `e.to` that turns most tightly back from `e`.
+   *
+   * Found through the reverse edge's own recorded slot, never by searching for an
+   * angle: two collinear edges leaving one vertex have the *same* angle, so an
+   * angle search can match the wrong one — or match nothing, and then an
+   * unguarded `(i - 1 + n) % n` quietly returns `list[n - 2]`.
+   */
   const nextEdge = (e: Edge): Edge => {
     const list = out.get(e.to)!;
-    const backAngle = Math.atan2(
-      vertices[e.from].y - vertices[e.to].y,
-      vertices[e.from].x - vertices[e.to].x,
-    );
-    const i = list.findIndex((x) => Math.abs(x.angle - backAngle) < 1e-9);
-    // One step clockwise from the way we came in. A dead end walks straight back.
-    return list[(i - 1 + list.length) % list.length];
+    const back = byKey.get(key(e.to, e.from))!;
+    return list[(back.slot - 1 + list.length) % list.length];
   };
 
   const visited = new Set<string>();
@@ -168,12 +178,13 @@ export function faces(input: readonly Wall[], eps: number = WELD_EPS): Poly[] {
       if (visited.has(key(start.from, start.to))) continue;
       const poly: Poly = [];
       let e = start;
-      // A malformed graph must not spin forever.
-      for (let guard = 0; guard < seen.size + 1; guard++) {
+      // A malformed graph must not spin forever: every face is at most as long as
+      // the number of directed edges.
+      for (let guard = 0; guard < byKey.size + 1; guard++) {
         visited.add(key(e.from, e.to));
         poly.push([vertices[e.from].x, vertices[e.from].y]);
         e = nextEdge(e);
-        if (key(e.from, e.to) === key(start.from, start.to)) break;
+        if (e === start) break;
       }
       // A tree of walls encloses nothing: its single face walks out and back along
       // every edge, so it has vertices but no area. That is not a face.
