@@ -95,6 +95,8 @@ import {
   type FormField,
   type FormSpec,
 } from "./editor-forms";
+import { addRule, removeRule, setRule } from "./statestyles";
+import type { StateStyle } from "./types";
 
 const formLabel = (s: FormField): string => s.label;
 const formHelper = (s: FormField): string | undefined => s.helper;
@@ -1304,6 +1306,44 @@ export class FloorplanCardEditor extends LitElement {
     else this._commitFloor({ rooms });
   }
 
+  private _stateElement(kind: "room" | "item", id: string): Room | FloorItem | undefined {
+    return kind === "room"
+      ? (this._floor().rooms ?? []).find((r) => r.id === id)
+      : this._floor().items.find((x) => x.id === id);
+  }
+
+  private _patchStateStyles(
+    kind: "room" | "item",
+    id: string,
+    stateStyles: StateStyle[] | undefined,
+    live: boolean
+  ): void {
+    if (kind === "room") this._updateRoom(id, { stateStyles }, live);
+    else if (live) this._updateItemLive(id, { stateStyles });
+    else this._updateItem(id, { stateStyles });
+  }
+
+  private _addStateStyleRule(kind: "room" | "item", id: string): void {
+    const el = this._stateElement(kind, id);
+    if (el) this._patchStateStyles(kind, id, addRule(el.stateStyles), false);
+  }
+
+  private _removeStateStyleRule(kind: "room" | "item", id: string, i: number): void {
+    const el = this._stateElement(kind, id);
+    if (el) this._patchStateStyles(kind, id, removeRule(el.stateStyles ?? [], i), false);
+  }
+
+  private _updateStateStyleRule(
+    kind: "room" | "item",
+    id: string,
+    i: number,
+    patch: Partial<StateStyle>,
+    live = false
+  ): void {
+    const el = this._stateElement(kind, id);
+    if (el) this._patchStateStyles(kind, id, setRule(el.stateStyles ?? [], i, patch), live);
+  }
+
   private _deleteSelected(): void {
     if (!this._selection.length) return;
     const f = this._floor();
@@ -2362,6 +2402,77 @@ export class FloorplanCardEditor extends LitElement {
     />`;
   }
 
+  private _renderStateStyleRows(
+    rules: StateStyle[],
+    kind: "room" | "item",
+    id: string,
+    defaultEntity?: string
+  ): TemplateResult {
+    return html`
+      <div class="statestyles">
+        <div class="statestyles-head">Conditional styles</div>
+        ${rules.map((rule, i) => this._renderStateStyleRule(rule, kind, id, i, defaultEntity))}
+        <button class="add-rule" @click=${() => this._addStateStyleRule(kind, id)}>+ Add rule</button>
+      </div>
+    `;
+  }
+
+  private _renderStateStyleRule(
+    rule: StateStyle,
+    kind: "room" | "item",
+    id: string,
+    i: number,
+    defaultEntity?: string
+  ): TemplateResult {
+    const set = (patch: Partial<StateStyle>, live = false) =>
+      this._updateStateStyleRule(kind, id, i, patch, live);
+    const numOrUndef = (s: string) => (s === "" ? undefined : Number(s));
+    return html`
+      <div class="rule">
+        <div class="row wide">
+          <label>When entity</label>
+          ${this._renderEntityPicker(rule.entity ?? "", (v) => set({ entity: v }))}
+          <button class="rule-remove" title="Remove rule" @click=${() =>
+            this._removeStateStyleRule(kind, id, i)}>✕</button>
+        </div>
+        <div class="row">
+          <label>State</label>
+          <input type="text" placeholder=${defaultEntity ? "is…" : "any"} .value=${rule.state ?? ""}
+            @change=${(e: Event) => set({ state: (e.target as HTMLInputElement).value })} />
+          <input type="text" placeholder="is not…" .value=${rule.state_not ?? ""}
+            @change=${(e: Event) => set({ state_not: (e.target as HTMLInputElement).value })} />
+        </div>
+        <div class="row">
+          <label>Range</label>
+          <input class="num" type="number" placeholder="above" .value=${String(rule.above ?? "")}
+            @change=${(e: Event) => set({ above: numOrUndef((e.target as HTMLInputElement).value) })} />
+          <input class="num" type="number" placeholder="below" .value=${String(rule.below ?? "")}
+            @change=${(e: Event) => set({ below: numOrUndef((e.target as HTMLInputElement).value) })} />
+        </div>
+        <div class="row wide">
+          <label>Icon</label>
+          <input type="text" placeholder="mdi:… (optional)" .value=${rule.icon ?? ""}
+            @change=${(e: Event) => set({ icon: (e.target as HTMLInputElement).value })} />
+        </div>
+        <div class="row">
+          <label>Colour</label>
+          <input type="color" .value=${rule.color && rule.color !== "rgb" ? rule.color : "#03a9f4"}
+            @input=${(e: Event) => set({ color: (e.target as HTMLInputElement).value }, true)} />
+          <input type="text" placeholder='colour or "rgb"' .value=${rule.color ?? ""}
+            @change=${(e: Event) => set({ color: (e.target as HTMLInputElement).value })} />
+        </div>
+        <div class="row">
+          <label>Animation</label>
+          <select @change=${(e: Event) => set({ animation: (e.target as HTMLSelectElement).value as StateStyle["animation"] })}>
+            <option value="none" ?selected=${(rule.animation ?? "none") === "none"}>None</option>
+            <option value="pulse" ?selected=${rule.animation === "pulse"}>Pulse</option>
+            <option value="blink" ?selected=${rule.animation === "blink"}>Blink</option>
+          </select>
+        </div>
+      </div>
+    `;
+  }
+
   /** Toggle the full-screen workspace. */
   private _toggleFullscreen(): void {
     this._fullscreen = !this._fullscreen;
@@ -2752,6 +2863,7 @@ export class FloorplanCardEditor extends LitElement {
         ${this._renderForm(roomForm(r), (patch, live) =>
           this._updateRoom(r.id, patch as Partial<Room>, live),
         )}
+        ${this._renderStateStyleRows(r.stateStyles ?? [], "room", r.id)}
       `;
     }
 
@@ -2789,6 +2901,7 @@ export class FloorplanCardEditor extends LitElement {
               />
             </div>`
           : nothing}
+        ${this._renderStateStyleRows(it.stateStyles ?? [], "item", it.id, it.entity)}
       `;
     }
 
@@ -3930,6 +4043,40 @@ export class FloorplanCardEditor extends LitElement {
       font-size: 13px;
       color: var(--secondary-text-color);
       line-height: 1.5;
+    }
+    .statestyles {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .statestyles-head {
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--secondary-text-color, #888);
+    }
+    .rule {
+      border: 1px solid var(--divider-color, #ccc);
+      border-radius: 6px;
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .rule-remove {
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--secondary-text-color, #888);
+    }
+    .add-rule {
+      align-self: flex-start;
+      cursor: pointer;
+      border: 1px dashed var(--divider-color, #ccc);
+      background: none;
+      color: var(--primary-text-color);
+      border-radius: 6px;
+      padding: 4px 10px;
     }
   `;
 }
