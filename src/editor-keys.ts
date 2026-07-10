@@ -23,8 +23,13 @@ const TEXT_ENTRY_TAGS: ReadonlySet<string> = new Set([
  * after you change floors. Treating it as a text field left every shortcut —
  * paste, delete, undo, the arrows — dead until the user clicked somewhere else,
  * which reads as "copy and paste doesn't work between floors".
+ *
+ * `ha-form` is here for the same reason: an `ha-select` inside it puts no native
+ * input on the event path, so bare arrows and Escape must not reach the canvas —
+ * but `Cmd+V` over a dropdown is still a paste. When the focused control *is* a
+ * text field, that field appears on the path in its own right and is caught above.
  */
-const BARE_KEY_TAGS: ReadonlySet<string> = new Set(["select"]);
+const BARE_KEY_TAGS: ReadonlySet<string> = new Set(["select", "ha-form"]);
 
 /**
  * Does a focused control own this keystroke?

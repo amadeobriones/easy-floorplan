@@ -16,6 +16,17 @@ describe("isTypingTarget", () => {
     expect(isTypingTarget(["select"], true)).toBe(false);
   });
 
+  // ha-select inside an ha-form puts no native input on the path, so bare arrows
+  // and Escape must not reach the canvas — but Cmd+V over a dropdown is a paste.
+  it("an ha-form owns bare keys but not modifier combinations", () => {
+    expect(isTypingTarget(["ha-form", "ha-select"], false)).toBe(true);
+    expect(isTypingTarget(["ha-form", "ha-select"], true)).toBe(false);
+  });
+
+  it("a text field inside an ha-form still owns Cmd+V", () => {
+    expect(isTypingTarget(["ha-form", "ha-textfield", "input"], true)).toBe(true);
+  });
+
   it("the canvas owns everything", () => {
     expect(isTypingTarget(["svg", "div", "easy-floorplan-card-editor"], false)).toBe(false);
     expect(isTypingTarget(["svg", "div"], true)).toBe(false);

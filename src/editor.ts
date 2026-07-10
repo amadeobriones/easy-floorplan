@@ -1,3 +1,4 @@
+import { isTypingTarget, pathTags } from "./editor-keys";
 import { LitElement, html, css, svg, nothing, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type {
@@ -561,22 +562,12 @@ export class FloorplanCardEditor extends LitElement {
       }
       return;
     }
-    // Don't hijack keys while typing in a field / picker. ha-form covers all
-    // its inner controls — ha-select dropdowns have no native input in the
-    // event path, so arrows/Escape/Delete would otherwise reach the canvas.
-    const typing = path.some((el) => {
-      const node = el as HTMLElement;
-      const tag = node.tagName?.toLowerCase();
-      return (
-        tag === "input" ||
-        tag === "textarea" ||
-        tag === "select" ||
-        tag === "ha-form" ||
-        tag === "ha-entity-picker" ||
-        tag === "ha-icon-picker" ||
-        node.isContentEditable === true
-      );
-    });
+    // Don't hijack keys while typing in a field / picker. A <select> and an
+    // ha-form are not fields: they consume bare keys (type-to-jump, arrows,
+    // Escape) but a modifier combination belongs to the canvas. The floor
+    // switcher is a <select> and keeps focus after you change floors, which is
+    // why Cmd+V looked broken "between floors". See {@link isTypingTarget}.
+    const typing = isTypingTarget(pathTags(path), ev.ctrlKey || ev.metaKey);
     if (typing) {
       // While fullscreen, Escape must never fall through to HA's dialog — it
       // would close it underneath the top-layer workspace (and a dirty config
