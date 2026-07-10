@@ -226,3 +226,30 @@ describe("splitAtTJunctions", () => {
     expect(out.some((x) => x.id === "n")).toBe(false);
   });
 });
+
+describe("degenerate and awkward graphs", () => {
+  it("collinear overlapping walls enclose nothing and do not hang", () => {
+    const walls = [w("a", 0, 0, 100, 0), w("b", 0, 0, 50, 0), w("c", 50, 0, 100, 0)];
+    expect(detectRooms(walls)).toEqual([]);
+  });
+
+  it("a star of twelve walls meeting at one point terminates", () => {
+    const walls: Wall[] = [];
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      walls.push(w(`s${i}`, 0, 0, Math.round(Math.cos(a) * 100), Math.round(Math.sin(a) * 100)));
+    }
+    expect(() => faces(walls)).not.toThrow();
+    expect(detectRooms(walls)).toEqual([]);
+  });
+
+  // A free-standing room inside another: two disconnected components, so the outer
+  // room's polygon covers the inner one. Both are returned. Rooms draw in order and
+  // the inner is added second, so it paints over -- which is what you want to see.
+  it("a room inside a room returns both, the outer one covering the inner", () => {
+    const outer = [w("n",0,0,300,0), w("e",300,0,300,300), w("s",300,300,0,300), w("w",0,300,0,0)];
+    const inner = [w("in",100,100,200,100), w("ie",200,100,200,200), w("is",200,200,100,200), w("iw",100,200,100,100)];
+    const rooms = detectRooms([...outer, ...inner]);
+    expect(rooms.map(areaOf).sort((a, b) => b - a)).toEqual([90000, 10000]);
+  });
+});
