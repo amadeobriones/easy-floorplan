@@ -3959,6 +3959,36 @@ export class FloorplanCardEditor extends LitElement {
     .row input.num {
       flex: 0 0 64px;
     }
+    /* The Import/Export row stacks its label, textarea, buttons, and error
+       list vertically instead of the usual horizontal .row layout, so the
+       textarea can take the full panel width. */
+    .row.import-export {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+    .row.import-export textarea {
+      width: 100%;
+      box-sizing: border-box;
+      font-family: monospace;
+      font-size: 12px;
+      resize: vertical;
+      padding: 4px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+    }
+    .ie-buttons {
+      display: flex;
+      gap: 8px;
+    }
+    .import-errors {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--error-color, #db4437);
+      font-size: 12px;
+    }
     /* Compact inline checkbox+label used inside a .row that already has its
        primary <label> on the left (e.g. the Tracker sensor "invert" toggle). */
     .row .inline-check {
