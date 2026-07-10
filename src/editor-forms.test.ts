@@ -6,6 +6,7 @@ import {
   openingForm,
   itemForm,
   textForm,
+  roomForm,
   furnitureForm,
   trackerForm,
   wallForm,
@@ -251,5 +252,20 @@ describe("furnitureForm", () => {
 
   it("leaves other patches alone", () => {
     expect(furnitureForm(fur()).toPatch({ w: 120 })).toEqual({ w: 120 });
+  });
+});
+
+describe("roomForm — no light/lit shorthand", () => {
+  const room = { id: "r1", points: [[0, 0], [10, 0], [10, 10]] } as never;
+  it("no longer exposes light or lit fields", () => {
+    const names = roomForm(room).fields.map((f) => f.name);
+    expect(names).not.toContain("light");
+    expect(names).not.toContain("lit");
+    expect(names).toEqual(expect.arrayContaining(["name", "fill", "fillOpacity"]));
+  });
+  it("toPatch passes fields through without synthesizing stateStyles", () => {
+    const patch = roomForm(room).toPatch({ fill: "#fff" });
+    expect(patch).toEqual({ fill: "#fff" });
+    expect("stateStyles" in patch).toBe(false);
   });
 });
