@@ -16,6 +16,7 @@ import type {
   FloorplanCardConfig,
   Floor,
   Wall,
+  Room,
   Opening,
   OpeningType,
   FloorItem,
@@ -61,6 +62,8 @@ import {
   snapToWall,
   collectWatchedEntities,
   hassRenderInputsChanged,
+  resolveStateStyle,
+  ROOM_FILL_OPACITY,
 } from "./render";
 import {
   ENDPOINT_SNAP,
@@ -79,6 +82,7 @@ import {
   diffFormValue,
   floorImageForm,
   furnitureForm,
+  roomForm,
   isLiveField,
   itemForm,
   normalizeFormPatch,
@@ -108,6 +112,7 @@ const TOOL_META: Record<Tool, { icon: string; label: string }> = {
 
 /** Icon shown in the Element header per selected element kind. */
 const SEL_KIND_ICON: Record<SelKind, string> = {
+  room: "mdi:floor-plan",
   wall: "mdi:wall",
   opening: "mdi:door",
   item: "mdi:lightbulb-outline",
@@ -935,11 +940,13 @@ export class FloorplanCardEditor extends LitElement {
       } else if (s.kind === "furniture") {
         const fu = f.furniture.find((x) => x.id === s.id);
         if (fu) m.set(`furniture:${fu.id}`, { kind: "pt", x: fu.x, y: fu.y });
-      } else {
-        // tracker — stored by top-left corner.
+      } else if (s.kind === "tracker") {
+        // stored by top-left corner.
         const tr = (f.trackers ?? []).find((x) => x.id === s.id);
         if (tr) m.set(`tracker:${tr.id}`, { kind: "pt", x: tr.x, y: tr.y });
       }
+      // A room has no snapshot: it is selected and edited, never dragged. The
+      // bare `else` used to reach in here and look it up among the trackers.
     }
     return m;
   }
@@ -1155,6 +1162,28 @@ export class FloorplanCardEditor extends LitElement {
     this._tool = "select";
   }
 
+  /** A room polygon, selectable. Drawn under everything, so it never steals a click
+   *  from a wall or a device on top of it. */
+  private _renderRoomSel(r: Room) {
+    const selected = this._isSel("room", r.id);
+    const style = resolveStateStyle(r.stateStyles, this.hass, undefined);
+    const fill = style?.color ?? r.fill;
+    const pts = r.points.map(([x, y]) => `${x},${y}`).join(" ");
+    return svg`<polygon
+      class=${`room-sel${selected ? " selected" : ""}`}
+      points=${pts}
+      fill=${fill ?? "none"}
+      fill-opacity=${fill ? (r.fillOpacity ?? ROOM_FILL_OPACITY) : 0}
+      @pointerdown=${(e: PointerEvent) => this._startDrag(e, { kind: "room", id: r.id })}
+    />`;
+  }
+
+  private _updateRoom(id: string, patch: Partial<Room>, live = false): void {
+    const rooms = (this._floor().rooms ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r));
+    if (live) this._emitFloor({ rooms });
+    else this._commitFloor({ rooms });
+  }
+
   private _deleteSelected(): void {
     if (!this._selection.length) return;
     const f = this._floor();
@@ -1164,7 +1193,9 @@ export class FloorplanCardEditor extends LitElement {
     const tIds = this._idsOfKind("text");
     const fIds = this._idsOfKind("furniture");
     const trIds = this._idsOfKind("tracker");
+    const rIds = this._idsOfKind("room");
     this._commitFloor({
+      rooms: (f.rooms ?? []).filter((r) => !rIds.has(r.id)),
       walls: f.walls.filter((w) => !wIds.has(w.id)),
       openings: f.openings.filter((o) => !oIds.has(o.id)),
       items: f.items.filter((i) => !iIds.has(i.id)),
@@ -1547,6 +1578,11 @@ export class FloorplanCardEditor extends LitElement {
   private _selectionSummary(sel: Sel): string {
     const f = this._floor();
     switch (sel.kind) {
+      case "room": {
+        const r = (f.rooms ?? []).find((x) => x.id === sel.id);
+        if (!r) return "Room";
+        return `Room · ${r.name || `${r.points.length} corners`}`;
+      }
       case "wall": {
         const w = f.walls.find((x) => x.id === sel.id);
         return w ? `Wall · ${Math.round(Math.hypot(w.x2 - w.x1, w.y2 - w.y1))} units` : "Wall";
@@ -1928,6 +1964,7 @@ export class FloorplanCardEditor extends LitElement {
                             preserveAspectRatio="none" opacity=${floor.imageOpacity ?? 1} />`
                 : nothing}
               ${this._renderGrid()}
+              ${(floor.rooms ?? []).map((r) => this._renderRoomSel(r))}
               ${floor.furniture.map((f) => this._renderFurnitureSel(f))}
               ${renderWallMask(floor.openings, c.width, c.height, this._wallMaskId)}
               ${floor.walls.map((w) => this._renderWall(w))}
@@ -2561,6 +2598,16 @@ export class FloorplanCardEditor extends LitElement {
               />
             </div>`
           : nothing}
+      `;
+    }
+
+    if (sel.kind === "room") {
+      const r = (this._floor().rooms ?? []).find((x) => x.id === sel.id);
+      if (!r) return html`${nothing}`;
+      return html`
+        ${this._renderForm(roomForm(r), (patch, live) =>
+          this._updateRoom(r.id, patch as Partial<Room>, live),
+        )}
       `;
     }
 

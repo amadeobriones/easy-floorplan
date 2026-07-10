@@ -1,7 +1,7 @@
 import type { Floor, Wall } from "./types";
 
 /** Element kinds addressable by the editor's selection model. */
-export type SelKind = "wall" | "opening" | "item" | "text" | "furniture" | "tracker";
+export type SelKind = "wall" | "opening" | "item" | "text" | "furniture" | "tracker" | "room";
 
 export interface Sel {
   kind: SelKind;
