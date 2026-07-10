@@ -1,5 +1,14 @@
 import { isTypingTarget, pathTags } from "./editor-keys";
 import { clampZoom, zoomAnchoredScroll } from "./editor-zoom";
+import {
+  dragWallWelded,
+  moveEnds,
+  weldVertices,
+  vertexAt,
+  endKey,
+  nearestCornerExcluding,
+  type WallEnd,
+} from "./editor-walls";
 import { LitElement, html, css, svg, nothing, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type {
@@ -116,6 +125,12 @@ interface Drag {
   orig: Map<string, OrigPos>;
   /** Set when dragging a single wall endpoint handle. */
   endpoint?: 1 | 2;
+  /**
+   * The floor's walls as they were when the drag began. Welding looks a corner up
+   * by position, so it has to look in the walls the corner was in -- not in the
+   * ones it has already moved.
+   */
+  walls?: Wall[];
   /** Set once the drag actually moved something (history snapshots lazily). */
   moved?: boolean;
   /** The exact history entry this drag pushed, so cancel can remove it by identity. */
@@ -894,6 +909,7 @@ export class FloorplanCardEditor extends LitElement {
       start: this._toVirtual(ev, false),
       orig: this._snapshotSelection(),
       endpoint,
+      walls: [...this._floor().walls],
     };
     this._gesturePointer = ev.pointerId;
     this._capturePointer(ev);
@@ -943,17 +959,41 @@ export class FloorplanCardEditor extends LitElement {
     }
     const f = this._floor();
 
-    // Single wall endpoint handle: snaps to nearby wall corners.
+    // Single wall endpoint handle: snaps to nearby wall corners, and takes every
+    // other wall that meets there with it -- otherwise the corner tears open.
+    // Free-walls mode is the opt-out: it already means "no corner gravity".
     if (drag.endpoint) {
-      const target = this._snapWallPoint(p.x, p.y);
-      const walls = f.walls.map((w) => {
-        if (w.id !== drag.primary.id) return w;
-        return drag.endpoint === 1
-          ? { ...w, x1: target.x, y1: target.y }
-          : { ...w, x2: target.x, y2: target.y };
-      });
-      this._emitFloor({ walls });
+      const before = drag.walls ?? f.walls;
+      const w0 = before.find((w) => w.id === drag.primary.id);
+      if (!w0) return;
+      const from =
+        drag.endpoint === 1 ? { x: w0.x1, y: w0.y1 } : { x: w0.x2, y: w0.y2 };
+
+      // The ends coming along for the ride. They must not be candidates for the
+      // corner snap, or the handle snaps back onto where it already is.
+      const moving: WallEnd[] = this._freeWalls
+        ? [{ id: w0.id, end: drag.endpoint }]
+        : (vertexAt(weldVertices(before), from)?.ends ?? [{ id: w0.id, end: drag.endpoint }]);
+      const exclude = new Set(moving.map(endKey));
+
+      const target =
+        nearestCornerExcluding(before, p, ENDPOINT_SNAP, exclude) ??
+        { x: this._snap(p.x), y: this._snap(p.y) };
+
+      this._emitFloor({ walls: moveEnds(before, moving, target) });
       return;
+    }
+
+    // A single wall: translate it and stretch whatever is attached to its corners.
+    if (!this._freeWalls && this._selection.length === 1 && drag.primary.kind === "wall") {
+      const ref = drag.orig.get(`wall:${drag.primary.id}`);
+      const before = drag.walls;
+      if (ref && ref.kind === "wall" && before) {
+        const dx = this._snap(ref.x1 + (p.x - drag.start.x)) - ref.x1;
+        const dy = this._snap(ref.y1 + (p.y - drag.start.y)) - ref.y1;
+        this._emitFloor({ walls: dragWallWelded(before, drag.primary.id, dx, dy) });
+        return;
+      }
     }
 
     // Single opening: keep the wall-snapping (and angle alignment) behavior.
