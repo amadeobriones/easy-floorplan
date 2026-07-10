@@ -99,6 +99,16 @@
                     },
                     "type": "array"
                 },
+                "rotation": {
+                    "description": "Display-only quarter-turn rotation. Coordinates are always canonical; this\nrotates the drawn plan (and swaps the stage footprint at 90/270). The editor\nedits unrotated and preserves this field untouched.",
+                    "enum": [
+                        0,
+                        180,
+                        270,
+                        90
+                    ],
+                    "type": "number"
+                },
                 "texts": {
                     "items": {
                         "$ref": "#/definitions/FloorText"
