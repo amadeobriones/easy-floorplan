@@ -1,3 +1,4 @@
+import { load, dump } from "js-yaml";
 import type { FloorplanCardConfig } from "./types";
 
 export type ValidationResult =
@@ -83,4 +84,20 @@ const config = shape(
 export function validateConfig(raw: unknown): ValidationResult {
   const errors = config(raw, "config");
   return errors.length ? { ok: false, errors } : { ok: true, config: raw as FloorplanCardConfig };
+}
+
+/** Parse (YAML, a superset of JSON) then validate. A parse error is one error, not a throw. */
+export function parseAndValidate(text: string): ValidationResult {
+  let parsed: unknown;
+  try {
+    parsed = load(text);
+  } catch (err) {
+    return { ok: false, errors: [`Could not parse: ${(err as Error).message}`] };
+  }
+  return validateConfig(parsed);
+}
+
+/** Serialize a config to YAML for export (HA's config format). */
+export function configToText(config: FloorplanCardConfig): string {
+  return dump(config, { noRefs: true, lineWidth: 120 });
 }

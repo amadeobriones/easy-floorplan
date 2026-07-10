@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validateConfig } from "./validate";
+import { parseAndValidate, configToText } from "./validate";
 
 const valid = {
   type: "custom:floorplan-card",
@@ -63,5 +64,39 @@ describe("validateConfig", () => {
   });
   it("allows unknown extra keys", () => {
     expect(validateConfig({ ...valid, futureKey: 123 }).ok).toBe(true);
+  });
+  it("rejects a non-positive width or height", () => {
+    expect(validateConfig({ ...valid, width: 0 }).ok).toBe(false);
+    expect(validateConfig({ ...valid, height: -5 }).ok).toBe(false);
+  });
+});
+
+describe("parseAndValidate", () => {
+  const json = JSON.stringify(valid);
+  const yaml = "type: custom:floorplan-card\nwidth: 1000\nheight: 600\nfloors:\n  - id: f1\n    items:\n      - id: i1\n        x: 5\n        y: 5\n        kind: light\n";
+  it("accepts a JSON string", () => {
+    expect(parseAndValidate(json).ok).toBe(true);
+  });
+  it("accepts an equivalent YAML string", () => {
+    expect(parseAndValidate(yaml).ok).toBe(true);
+  });
+  it("reports a syntax error as one error, not a throw", () => {
+    const r = parseAndValidate("{ this is: not valid: json or yaml ][");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.length).toBe(1);
+  });
+  it("reports validation errors for parseable-but-invalid input", () => {
+    const r = parseAndValidate('{"width": "big"}');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some((x) => x.startsWith("config.width"))).toBe(true);
+  });
+});
+
+describe("configToText round-trip", () => {
+  it("exports YAML that parses back to an equal config", () => {
+    const text = configToText(valid as never);
+    const r = parseAndValidate(text);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.config).toEqual(valid);
   });
 });
