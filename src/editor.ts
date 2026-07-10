@@ -148,6 +148,7 @@ type Marquee = Rect;
 
 /** Elements copied to the in-memory clipboard (not part of the config). */
 interface Clipboard {
+  rooms: Room[];
   walls: Wall[];
   openings: Opening[];
   items: FloorItem[];
@@ -1320,7 +1321,9 @@ export class FloorplanCardEditor extends LitElement {
     const tIds = this._idsOfKind("text");
     const fIds = this._idsOfKind("furniture");
     const trIds = this._idsOfKind("tracker");
+    const rIds = this._idsOfKind("room");
     this._clipboard = structuredClone({
+      rooms: (f.rooms ?? []).filter((r) => rIds.has(r.id)),
       walls: f.walls.filter((w) => wIds.has(w.id)),
       openings: f.openings.filter((o) => oIds.has(o.id)),
       items: f.items.filter((it) => iIds.has(it.id)),
@@ -1338,6 +1341,11 @@ export class FloorplanCardEditor extends LitElement {
     // Fall back to the grid when snap is explicitly off (`0`) to avoid overlap.
     const off = this._resolvedSnap || this.grid;
     const f = this._floor();
+    const newRooms: Room[] = (cb.rooms ?? []).map((r) => ({
+      ...r,
+      id: uid("room"),
+      points: r.points.map(([x, y]) => [x + off, y + off] as [number, number]),
+    }));
     const newWalls: Wall[] = cb.walls.map((w) => ({
       ...w,
       id: uid("wall"),
@@ -1377,6 +1385,7 @@ export class FloorplanCardEditor extends LitElement {
       y: tr.y + off,
     }));
     this._commitFloor({
+      rooms: [...(f.rooms ?? []), ...newRooms],
       walls: [...f.walls, ...newWalls],
       openings: [...f.openings, ...newOpenings],
       items: [...f.items, ...newItems],
@@ -1385,6 +1394,7 @@ export class FloorplanCardEditor extends LitElement {
       trackers: [...(f.trackers ?? []), ...newTrackers],
     });
     this._selection = [
+      ...newRooms.map((r) => ({ kind: "room" as const, id: r.id })),
       ...newWalls.map((w) => ({ kind: "wall" as const, id: w.id })),
       ...newOpenings.map((o) => ({ kind: "opening" as const, id: o.id })),
       ...newItems.map((it) => ({ kind: "item" as const, id: it.id })),
