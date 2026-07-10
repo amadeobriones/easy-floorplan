@@ -22,6 +22,8 @@ import {
   renderTracker,
   trackerSensorReading,
   itemStateText,
+  resolveStateStyle,
+  type ResolvedStyle,
   hassRenderInputsChanged,
   collectWatchedEntities,
   entityIsActive,
@@ -117,6 +119,11 @@ export class FloorplanCard extends LitElement {
     return openingIsActive(o, state);
   }
 
+  /** The first matching conditional rule for this item, if any. */
+  private _itemStyle(item: FloorItem): ResolvedStyle | undefined {
+    return resolveStateStyle(item.stateStyles, this.hass, item.entity);
+  }
+
   private _itemIcon(item: FloorItem): string {
     // No entity: no state to read and no registry entry to override the icon.
     const e = item.entity;
@@ -165,22 +172,25 @@ export class FloorplanCard extends LitElement {
     }
   }
 
-  private _renderBadge(item: FloorItem): TemplateResult {
+  private _renderBadge(item: FloorItem, style?: ResolvedStyle): TemplateResult {
     const size = item.size ?? DEFAULT_ITEM_SIZE;
+    // A matched rule's icon beats the item's own: it is the more specific one.
+    const icon = style?.icon ?? this._itemIcon(item);
+    const colour = style?.color
+      ? `background:${style.color};border-color:${style.color};`
+      : "";
     return html`
       <div
         class="badge"
-        style="width:${size}px;height:${size}px;transform:rotate(${item.angle ?? 0}deg);"
+        style="width:${size}px;height:${size}px;transform:rotate(${item.angle ?? 0}deg);${colour}"
       >
-        <ha-icon
-          icon=${this._itemIcon(item)}
-          style="--mdc-icon-size:${Math.round(size * 0.62)}px;"
-        ></ha-icon>
+        <ha-icon icon=${icon} style="--mdc-icon-size:${Math.round(size * 0.62)}px;"></ha-icon>
       </div>
     `;
   }
 
   private _renderItem(item: FloorItem, c: FloorplanCardConfig): TemplateResult {
+    const style = this._itemStyle(item);
     const on = this._isOn(item);
     // No entity, no reading to show -- an explicit showState cannot conjure one.
     const showState = !!item.entity && (item.showState ?? item.kind === "sensor");
@@ -195,10 +205,10 @@ export class FloorplanCard extends LitElement {
     } else if (display === "iconRipple") {
       visual = html`<div class="stack">
         ${renderRipple(on, rippleColor, rippleSize)}
-        ${showIcon ? html`<div class="stack-icon">${this._renderBadge(item)}</div>` : nothing}
+        ${showIcon ? html`<div class="stack-icon">${this._renderBadge(item, style)}</div>` : nothing}
       </div>`;
     } else if (showIcon) {
-      visual = this._renderBadge(item);
+      visual = this._renderBadge(item, style);
     }
 
     // With no badge and no ripple the label IS the item, so it must centre on the
@@ -207,7 +217,9 @@ export class FloorplanCard extends LitElement {
 
     return html`
       <div
-        class="item ${on ? "on" : "off"} ${labelOnly ? "label-only" : ""}"
+        class="item ${on ? "on" : "off"} ${labelOnly ? "label-only" : ""} ${
+          style?.animation && style.animation !== "none" ? `anim-${style.animation}` : ""
+        }"
         style="left:${(item.x / c.width) * 100}%; top:${(item.y / c.height) * 100}%;"
         title=${this._label(item)}
         role="button"
@@ -460,6 +472,32 @@ export class FloorplanCard extends LitElement {
      * no badge, so the column has zero height and an absolute label would hang
      * 2px below the point instead of centring on it.
      */
+    /*
+     * Conditional animations (stateStyles). Only two: pulse and blink. "Blinking"
+     * is one keyframe; a general animation grammar is a project, not a feature.
+     */
+    .item.anim-pulse .badge {
+      animation: fp-item-pulse 1.6s ease-in-out infinite;
+    }
+    .item.anim-blink .badge {
+      animation: fp-item-blink 1s steps(1, end) infinite;
+    }
+    /* The scale property, not transform: scale(). The badge carries an inline
+       transform: rotate(angle), and an animated transform would erase it. */
+    @keyframes fp-item-pulse {
+      0%, 100% { scale: 1; }
+      50% { scale: 1.18; }
+    }
+    @keyframes fp-item-blink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0.25; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .item.anim-pulse .badge,
+      .item.anim-blink .badge {
+        animation: none;
+      }
+    }
     .item.label-only > .label {
       position: static;
       transform: none;

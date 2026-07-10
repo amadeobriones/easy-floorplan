@@ -1,6 +1,7 @@
 import { svg, html, type SVGTemplateResult, type TemplateResult } from "lit";
 import type {
   SectionalHand, FloorplanCardConfig, Opening, ItemKind, Furniture, Tracker, RenderHass,
+  StateStyle, StateAnimation,
 } from "./types";
 import {
   FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, getFloors, trackerAxisFraction,
@@ -57,6 +58,9 @@ export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
     for (const it of f.items) {
       if (it.entity) ids.add(it.entity);
       if (it.secondaryEntity) ids.add(it.secondaryEntity);
+      // A rule may watch an entity the item itself does not, and the card skips a
+      // render for anything it is not watching.
+      for (const id of stateStyleEntities(it.stateStyles, it.entity)) ids.add(id);
     }
     for (const tr of f.trackers) {
       for (const s of [tr.xSensor, tr.ySensor]) {
@@ -240,6 +244,77 @@ const ACTIVE_STATES: Record<string, ReadonlySet<string>> = {
   camera: new Set(["recording", "streaming"]),
   media_player: new Set(["playing", "buffering", "on"]),
 };
+
+/** The colour a light is actually shining, as a CSS colour, or undefined. */
+export function rgbColorOf(st: { attributes?: Record<string, unknown> } | undefined): string | undefined {
+  const rgb = st?.attributes?.rgb_color;
+  if (!Array.isArray(rgb) || rgb.length < 3) return undefined;
+  const [r, g, b] = rgb;
+  if ([r, g, b].some((v) => typeof v !== "number")) return undefined;
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/** Does one rule hold? Every condition it names must hold; a rule naming none always does. */
+export function stateStyleMatches(
+  rule: StateStyle,
+  st: { state: string; attributes?: Record<string, unknown> } | undefined,
+): boolean {
+  const state = st?.state;
+  if (rule.state !== undefined && state !== rule.state) return false;
+  if (rule.state_not !== undefined && state === rule.state_not) return false;
+  if (rule.above !== undefined || rule.below !== undefined) {
+    const n = Number(state);
+    // An outage ("unavailable") is not a number, and must not read as zero.
+    if (state === undefined || state === "" || !Number.isFinite(n)) return false;
+    if (rule.above !== undefined && !(n > rule.above)) return false;
+    if (rule.below !== undefined && !(n < rule.below)) return false;
+  }
+  return true;
+}
+
+export interface ResolvedStyle {
+  icon?: string;
+  color?: string;
+  animation?: StateAnimation;
+}
+
+/**
+ * The first rule that matches, resolved against `hass`. Later rules do not merge
+ * into it: a cascade of partial styles is unexplainable the moment it is three
+ * rules long.
+ *
+ * A rule may name its own `entity`; otherwise it watches the element's.
+ * `color: "rgb"` takes the entity's `rgb_color`, and yields no colour when the
+ * light is off or has none, rather than a black room.
+ */
+export function resolveStateStyle(
+  rules: StateStyle[] | undefined,
+  hass: RenderHass | undefined,
+  ownEntity: string | undefined,
+): ResolvedStyle | undefined {
+  if (!rules?.length) return undefined;
+  for (const rule of rules) {
+    const id = rule.entity ?? ownEntity;
+    const st = id ? hass?.states[id] : undefined;
+    if (!stateStyleMatches(rule, st)) continue;
+    const color = rule.color === "rgb" ? rgbColorOf(st) : rule.color;
+    return { icon: rule.icon, color, animation: rule.animation };
+  }
+  return undefined;
+}
+
+/** Every entity a rule set watches, so the card knows to re-render for them. */
+export function stateStyleEntities(
+  rules: StateStyle[] | undefined,
+  ownEntity: string | undefined,
+): string[] {
+  const out: string[] = [];
+  for (const r of rules ?? []) {
+    const id = r.entity ?? ownEntity;
+    if (id) out.push(id);
+  }
+  return out;
+}
 
 /** Whether an entity is in its active state, by the rules of its own domain. */
 export function entityIsActive(entityId: string | undefined, state: string | undefined): boolean {

@@ -117,6 +117,33 @@ export type ItemKind =
   | "generic";
 
 /** An entity icon placed on the plan. */
+/** How a matched {@link StateStyle} animates its element. */
+export type StateAnimation = "none" | "pulse" | "blink";
+
+/**
+ * One conditional style rule: when the entity is in this state, look like that.
+ *
+ * Every condition present must hold (so `above` and `below` together are a range).
+ * A rule with no conditions always matches, which makes it a useful last entry.
+ *
+ * State comparisons are literal on the raw state string, `unavailable` included.
+ * The numeric ones never match a non-numeric state, so an outage simply fails
+ * `above`/`below` rather than being treated as zero.
+ */
+export interface StateStyle {
+  /** Defaults to the element's own entity. */
+  entity?: string;
+  state?: string;
+  state_not?: string;
+  above?: number;
+  below?: number;
+  /** mdi:... — beats the element's own `icon`, because it is the more specific rule. */
+  icon?: string;
+  /** A CSS colour, or `"rgb"` to take the light's own `rgb_color`. */
+  color?: string;
+  animation?: StateAnimation;
+}
+
 export interface FloorItem {
   id: string;
   /**
@@ -152,6 +179,12 @@ export interface FloorItem {
   rippleColor?: string;
   /** Max ripple ring diameter in pixels. Default 80. */
   rippleSize?: number;
+  /**
+   * Conditional styling, first match wins. Rules do not stack: a cascade of
+   * partial styles is how every conditional-formatting system becomes
+   * unexplainable.
+   */
+  stateStyles?: StateStyle[];
   /** Lovelace actions. Defaults: tap = toggle (controllable domains) or more-info; hold/double = none. */
   tap_action?: ActionConfig;
   hold_action?: ActionConfig;

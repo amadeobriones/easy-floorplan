@@ -28,6 +28,10 @@ import {
   isEntityOn,
   resolveItemIcon,
   entityIsActive,
+  resolveStateStyle,
+  stateStyleMatches,
+  stateStyleEntities,
+  rgbColorOf,
 } from "./render";
 import type { FloorplanCardConfig, Opening, RenderHass } from "./types";
 
@@ -781,5 +785,132 @@ describe("entityIsActive — domains that never say \"on\"", () => {
     expect(resolveItemIcon({ entity: "lock.front", kind: "lock" }, st)).toBe("mdi:lock-open-variant");
     expect(resolveItemIcon({ entity: "lock.front", kind: "lock" }, { state: "locked", attributes: {} }))
       .toBe("mdi:lock");
+  });
+});
+
+describe("stateStyleMatches", () => {
+  const st = (state: string, attributes: Record<string, unknown> = {}) => ({ state, attributes });
+
+  it("a rule with no conditions always matches, which makes it a good last entry", () => {
+    expect(stateStyleMatches({}, st("anything"))).toBe(true);
+    expect(stateStyleMatches({}, undefined)).toBe(true);
+  });
+
+  it("state and state_not compare literally", () => {
+    expect(stateStyleMatches({ state: "cleaning" }, st("cleaning"))).toBe(true);
+    expect(stateStyleMatches({ state: "cleaning" }, st("docked"))).toBe(false);
+    expect(stateStyleMatches({ state_not: "off" }, st("on"))).toBe(true);
+    expect(stateStyleMatches({ state_not: "off" }, st("off"))).toBe(false);
+  });
+
+  it("every condition present must hold, so above+below is a range", () => {
+    const rule = { above: 10, below: 20 };
+    expect(stateStyleMatches(rule, st("15"))).toBe(true);
+    expect(stateStyleMatches(rule, st("10"))).toBe(false);
+    expect(stateStyleMatches(rule, st("20"))).toBe(false);
+  });
+
+  // An outage must not read as zero, or `below: 5` lights up whenever HA restarts.
+  it("a non-numeric state never satisfies above or below", () => {
+    for (const bad of ["unavailable", "unknown", "", "on"]) {
+      expect(stateStyleMatches({ below: 5 }, st(bad)), bad).toBe(false);
+      expect(stateStyleMatches({ above: -5 }, st(bad)), bad).toBe(false);
+    }
+    expect(stateStyleMatches({ below: 5 }, undefined)).toBe(false);
+  });
+
+  it("combines a state test with a numeric one", () => {
+    expect(stateStyleMatches({ state_not: "unavailable", below: 20 }, st("15"))).toBe(true);
+    expect(stateStyleMatches({ state_not: "unavailable", below: 20 }, st("unavailable"))).toBe(false);
+  });
+});
+
+describe("rgbColorOf", () => {
+  it("reads a light's rgb_color", () => {
+    expect(rgbColorOf({ attributes: { rgb_color: [255, 128, 0] } })).toBe("rgb(255, 128, 0)");
+  });
+
+  it("yields nothing rather than black when the light is off or has no colour", () => {
+    expect(rgbColorOf(undefined)).toBeUndefined();
+    expect(rgbColorOf({ attributes: {} })).toBeUndefined();
+    expect(rgbColorOf({ attributes: { rgb_color: [1, 2] } })).toBeUndefined();
+    expect(rgbColorOf({ attributes: { rgb_color: ["a", "b", "c"] } })).toBeUndefined();
+  });
+});
+
+describe("resolveStateStyle", () => {
+  const hass = {
+    states: {
+      "vacuum.roomba": { state: "cleaning", attributes: {} },
+      "light.lamp": { state: "on", attributes: { rgb_color: [10, 20, 30] } },
+      "sensor.temp": { state: "31.5", attributes: {} },
+    },
+    formatEntityState: (s: { state: string }) => s.state,
+  } as unknown as Parameters<typeof resolveStateStyle>[1];
+
+  it("returns nothing when there are no rules", () => {
+    expect(resolveStateStyle(undefined, hass, "light.lamp")).toBeUndefined();
+    expect(resolveStateStyle([], hass, "light.lamp")).toBeUndefined();
+  });
+
+  // The reporter's vacuum: active is blue and blinking, everything else is grey.
+  it("first match wins, and later rules do not merge into it", () => {
+    const rules = [
+      { state: "cleaning", color: "blue", animation: "blink" as const },
+      { color: "grey", icon: "mdi:sleep" },
+    ];
+    expect(resolveStateStyle(rules, hass, "vacuum.roomba")).toEqual({
+      icon: undefined,
+      color: "blue",
+      animation: "blink",
+    });
+  });
+
+  it("falls through to the rule that matches", () => {
+    const rules = [
+      { state: "docked", color: "grey" },
+      { state: "cleaning", color: "blue" },
+    ];
+    expect(resolveStateStyle(rules, hass, "vacuum.roomba")?.color).toBe("blue");
+  });
+
+  it("a rule may watch an entity other than the item's own", () => {
+    const rules = [{ entity: "sensor.temp", above: 30, color: "red" }];
+    expect(resolveStateStyle(rules, hass, "light.lamp")?.color).toBe("red");
+  });
+
+  it("color: rgb takes the light's own colour", () => {
+    expect(resolveStateStyle([{ color: "rgb" }], hass, "light.lamp")?.color).toBe("rgb(10, 20, 30)");
+  });
+
+  it("color: rgb on a light with no colour yields no colour, not black", () => {
+    expect(resolveStateStyle([{ color: "rgb" }], hass, "vacuum.roomba")?.color).toBeUndefined();
+  });
+
+  it("an unknown entity matches only a rule that asks for nothing", () => {
+    expect(resolveStateStyle([{ state: "on", color: "x" }], hass, "light.nope")).toBeUndefined();
+    expect(resolveStateStyle([{ color: "x" }], hass, "light.nope")?.color).toBe("x");
+  });
+});
+
+describe("stateStyleEntities", () => {
+  it("collects each rule's entity, defaulting to the item's", () => {
+    expect(stateStyleEntities([{ state: "on" }, { entity: "sensor.a" }], "light.b")).toEqual([
+      "light.b",
+      "sensor.a",
+    ]);
+  });
+
+  it("skips rules with no entity anywhere", () => {
+    expect(stateStyleEntities([{ state: "on" }], undefined)).toEqual([]);
+    expect(stateStyleEntities(undefined, "light.b")).toEqual([]);
+  });
+
+  // Without this the card never re-renders when the watched entity changes.
+  it("a rule's entity is watched even though the item does not use it", () => {
+    const cfg = {
+      items: [{ id: "i", kind: "light", x: 0, y: 0, entity: "light.b", stateStyles: [{ entity: "sensor.a", above: 1 }] }],
+    } as unknown as FloorplanCardConfig;
+    expect([...collectWatchedEntities(cfg)].sort()).toEqual(["light.b", "sensor.a"]);
   });
 });
