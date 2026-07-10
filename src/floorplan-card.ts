@@ -201,9 +201,13 @@ export class FloorplanCard extends LitElement {
       visual = this._renderBadge(item);
     }
 
+    // With no badge and no ripple the label IS the item, so it must centre on the
+    // coordinate rather than hang below a zero-height column. (`showIcon: false`.)
+    const labelOnly = visual === nothing;
+
     return html`
       <div
-        class="item ${on ? "on" : "off"}"
+        class="item ${on ? "on" : "off"} ${labelOnly ? "label-only" : ""}"
         style="left:${(item.x / c.width) * 100}%; top:${(item.y / c.height) * 100}%;"
         title=${this._label(item)}
         role="button"
@@ -440,6 +444,16 @@ export class FloorplanCard extends LitElement {
       top: calc(100% + 2px);
       left: 50%;
       transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    /*
+     * ...unless the label is all there is. An item with showIcon: false renders
+     * no badge, so the column has zero height and an absolute label would hang
+     * 2px below the point instead of centring on it.
+     */
+    .item.label-only > .label {
+      position: static;
+      transform: none;
       white-space: nowrap;
     }
     .badge {
