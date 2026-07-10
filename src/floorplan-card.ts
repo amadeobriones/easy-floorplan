@@ -271,20 +271,13 @@ export class FloorplanCard extends LitElement {
           style="aspect-ratio: ${c.width} / ${c.height}; background:${c.background ??
           "var(--card-background-color, #fff)"};"
         >
-<!-- preserveAspectRatio="none" is correct here, and it took a wrong fix to
-               see why. .stage pins aspect-ratio: width / height inline, so the
-               SVG's box already matches its viewBox and "none" never distorts.
-
-               "meet" letterboxes the SVG inside its box. The .items overlay is
-               HTML, positioned with raw left/top percentages of .stage, and it
-               does not letterbox. So the moment anything overrides the stage's
-               ratio (card-mod, a grid row count) the drawing shrinks away from
-               the badges and every icon drifts off the wall it was placed on.
-               "none" stretches both layers identically: distorted, but aligned.
-
-               The real fix letterboxes both layers together -- wrap the svg and
-               the overlay in one aspect-ratio box and centre it. Until then, do
-               not "fix" this line. -->
+          <div class="plate" style="--fp-arw:${c.width / c.height};">
+<!-- preserveAspectRatio="none" is correct, and now provably so. The .plate box
+               always carries the natural width/height ratio (aspect-ratio: var(--fp-arw)),
+               so the SVG's box equals its viewBox and "none" never distorts. .plate also
+               holds the .items HTML overlay, so both layers letterbox and rotate as one
+               unit -- the badges can no longer drift off their walls when card-mod or a
+               grid row-count overrides the .stage box. Do not change this to "meet". -->
           <svg viewBox="0 0 ${c.width} ${c.height}" preserveAspectRatio="none">
             ${active.image
               ? svg`<image href=${active.image} x="0" y="0" width=${c.width} height=${c.height}
@@ -338,6 +331,7 @@ export class FloorplanCard extends LitElement {
             ${active.texts.map((t) => this._renderText(t, c))}
             ${active.items.map((it) => this._renderItem(it, c))}
           </div>
+          </div>
           ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
         </div>
       </ha-card>
@@ -374,6 +368,8 @@ export class FloorplanCard extends LitElement {
       position: relative;
       width: 100%;
       padding: 0;
+      container-type: size;
+      overflow: hidden;
     }
     .floor-switcher {
       position: absolute;
@@ -411,6 +407,18 @@ export class FloorplanCard extends LitElement {
       width: 100%;
       height: 100%;
       display: block;
+    }
+    /* The plate always has the natural W/H ratio, is centred, and is sized by
+       min() to the largest natural-ratio box that fits the stage -- a letterbox
+       that holds even when the stage box is overridden. */
+    .plate {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      aspect-ratio: var(--fp-arw);
+      width: min(100cqw, 100cqh * var(--fp-arw));
+      transform: translate(-50%, -50%);
+      transform-origin: center;
     }
     .wall {
       stroke: var(--primary-text-color);
