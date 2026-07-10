@@ -15,6 +15,7 @@ import {
   renderOpening,
   renderWallMask,
   resolveOpeningAmount,
+  openingIsActive,
   openingClickAction,
   renderRipple,
   renderFurniture,
@@ -112,6 +113,12 @@ export class FloorplanCard extends LitElement {
   private _openingAmount(o: Opening): number {
     const state = o.entity ? this.hass?.states[o.entity] : undefined;
     return resolveOpeningAmount(o, state);
+  }
+
+  /** Whether an opening wears its accent: drawn open, or a cover still in transit. */
+  private _openingActive(o: Opening): boolean {
+    const state = o.entity ? this.hass?.states[o.entity] : undefined;
+    return openingIsActive(o, state);
   }
 
   /** Formatted "state unit" for a single entity, or "—" when unavailable. */
@@ -297,7 +304,7 @@ export class FloorplanCard extends LitElement {
                 color: "var(--primary-text-color)",
                 open: amount > 0,
                 amount,
-                active: !!o.entity && amount > 0,
+                active: this._openingActive(o),
                 accent: o.activeColor ?? "var(--primary-color, #03a9f4)",
               });
               if (!o.entity) return symbol;
