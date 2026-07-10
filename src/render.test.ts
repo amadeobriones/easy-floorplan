@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { FurnitureType, ItemKind } from "./types";
-import { FURNITURE_DEFAULT_SIZE } from "./types";
+import { FURNITURE_DEFAULT_SIZE, FURNITURE_COLOR } from "./types";
 import {
   snapToWall,
   openingDefaultOpen,
@@ -637,6 +637,58 @@ describe("every furniture type renders and has a default size", () => {
   });
 });
 
+describe("renderFurniture stateStyles tint (smart furniture)", () => {
+  const f = { id: "w", type: "washer" as const, x: 120, y: 80, w: 60, h: 60 };
+
+  // Full recursive serialization (strings interleaved with values, including
+  // nested SVGTemplateResults) -- unlike the renderRoom `values()` helper this
+  // also surfaces literal markup such as a wrapper's class="fp-furn ...".
+  interface TplLike { strings: readonly string[]; values: unknown[] }
+  const isTpl = (v: unknown): v is TplLike =>
+    !!v && typeof v === "object" && "strings" in v && "values" in v;
+  const serialize = (t: unknown): string => {
+    const tpl = t as TplLike;
+    let out = tpl.strings[0];
+    for (let i = 0; i < tpl.values.length; i++) {
+      const v = tpl.values[i];
+      out += isTpl(v) ? serialize(v) : String(v);
+      out += tpl.strings[i + 1];
+    }
+    return out;
+  };
+
+  it("with no resolved style, is byte-identical to today: FURNITURE_COLOR, no fp-furn wrapper", () => {
+    const v = serialize(renderFurniture(f));
+    expect(v).toContain(FURNITURE_COLOR);
+    expect(v).not.toContain("fp-furn");
+  });
+
+  it("with no resolved style, the markup is pinned to a snapshot (idle byte-identity guard)", () => {
+    // A regression guard, not a design assertion: any change to idle furniture
+    // markup -- structure, attribute order, whitespace -- fails this and must
+    // be reviewed, since Task 4's contract is that idle plans render unchanged.
+    expect(serialize(renderFurniture(f))).toMatchSnapshot();
+  });
+
+  it("with a resolved colour, tints the shape and wraps it in g.fp-furn", () => {
+    const v = serialize(renderFurniture(f, { color: "orange" }));
+    expect(v).toContain("orange");
+    expect(v).toContain("fp-furn");
+  });
+
+  it("a matched rule with no colour keeps the idle grey but still wraps (animation-only)", () => {
+    const v = serialize(renderFurniture(f, { animation: "pulse" }));
+    expect(v).toContain(FURNITURE_COLOR);
+    expect(v).toContain("fp-furn-anim-pulse");
+  });
+
+  it("steps up fill-opacity to 0.30 when tinted (0.20 for a rug)", () => {
+    expect(serialize(renderFurniture(f, { color: "orange" }))).toContain("0.3");
+    const rug = { id: "r", type: "rug" as const, x: 0, y: 0, w: 180, h: 120 };
+    expect(serialize(renderFurniture(rug, { color: "orange" }))).toContain("0.2");
+  });
+});
+
 
 describe("isEntityOn / resolveItemIcon", () => {
   it("treats on/open/home/playing as on", () => {
@@ -696,6 +748,32 @@ describe("collectWatchedEntities", () => {
     } as unknown as FloorplanCardConfig);
     expect(got.has("light.legacy")).toBe(true);
     expect(got.size).toBe(1);
+  });
+
+  it("watches a smart furniture piece's entity, and any entity a rule names (smart furniture)", () => {
+    const cfg = {
+      floors: [
+        {
+          id: "f1",
+          name: "F1",
+          walls: [],
+          openings: [],
+          items: [],
+          texts: [],
+          trackers: [],
+          furniture: [
+            {
+              id: "w", type: "washer", x: 0, y: 0, w: 60, h: 60,
+              entity: "switch.washer",
+              stateStyles: [{ entity: "sensor.washer_cycle", state: "running", color: "orange" }],
+            },
+          ],
+        },
+      ],
+    } as unknown as FloorplanCardConfig;
+    const got = collectWatchedEntities(cfg);
+    expect(got.has("switch.washer")).toBe(true);
+    expect(got.has("sensor.washer_cycle")).toBe(true);
   });
 });
 

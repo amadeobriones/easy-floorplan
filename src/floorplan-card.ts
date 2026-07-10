@@ -1,6 +1,8 @@
 import { LitElement, html, css, svg, nothing, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, FloorplanCardConfig, FloorItem, FloorText, Floor, Rotation } from "./types";
+import type {
+  HomeAssistant, FloorplanCardConfig, FloorItem, FloorText, Floor, Rotation, Furniture, ItemKind,
+} from "./types";
 import {
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
@@ -126,7 +128,12 @@ export class FloorplanCard extends LitElement {
     return resolveStateStyle(item.stateStyles, this.hass, item.entity);
   }
 
-  private _itemIcon(item: FloorItem): string {
+  /**
+   * Widened past `FloorItem` so a furniture-badge adapter (no domain `kind`
+   * of its own; `_renderFurnitureBadge` passes `"generic"`) shares this and
+   * `_renderBadge` verbatim with items.
+   */
+  private _itemIcon(item: { entity?: string; kind: ItemKind; icon?: string }): string {
     // No entity: no state to read and no registry entry to override the icon.
     const e = item.entity;
     return resolveItemIcon(
@@ -153,6 +160,14 @@ export class FloorplanCard extends LitElement {
     executeAction(this, this.hass, item, actionForGesture(item, ev.detail.action));
   }
 
+  private _handleFurnitureAction(
+    ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>,
+    f: Furniture
+  ): void {
+    if (!this.hass) return;
+    executeAction(this, this.hass, f, actionForGesture(f, ev.detail.action));
+  }
+
   /**
    * Tapping an entity-bound opening: toggle a controllable `cover`, otherwise
    * open the entity's more-info dialog (read-only `binary_sensor`s and
@@ -174,7 +189,10 @@ export class FloorplanCard extends LitElement {
     }
   }
 
-  private _renderBadge(item: FloorItem, style?: ResolvedStyle): TemplateResult {
+  private _renderBadge(
+    item: { entity?: string; kind: ItemKind; icon?: string; size?: number; angle?: number },
+    style?: ResolvedStyle,
+  ): TemplateResult {
     const size = item.size ?? DEFAULT_ITEM_SIZE;
     // A matched rule's icon beats the item's own: it is the more specific one.
     const icon = style?.icon ?? this._itemIcon(item);
@@ -249,6 +267,49 @@ export class FloorplanCard extends LitElement {
     `;
   }
 
+  /**
+   * A furniture piece's state badge: 22px, straddling the piece's top-right
+   * corner (post-rotation), upright regardless of the piece's own angle or
+   * the floor's rotation. Shown for entity-bound furniture that shows its
+   * state, or whose matched rule resolves an icon. Reuses `_renderBadge` and
+   * the `.item`/`.badge`/`.label` styles verbatim -- see
+   * docs/superpowers/specs/smart-furniture-look.md §2.
+   */
+  private _renderFurnitureBadge(
+    f: Furniture,
+    style: ResolvedStyle | undefined,
+    c: FloorplanCardConfig,
+    rot: Rotation,
+  ): TemplateResult | typeof nothing {
+    if (!f.entity || !(f.showState || style?.icon)) return nothing;
+    const theta = ((f.angle ?? 0) * Math.PI) / 180;
+    const hw = f.w / 2;
+    const hh = f.h / 2;
+    const badgeX = f.x + hw * Math.cos(theta) + hh * Math.sin(theta);
+    const badgeY = f.y + hw * Math.sin(theta) - hh * Math.cos(theta);
+    return html`
+      <div
+        class="item ${
+          style?.animation && style.animation !== "none" ? `anim-${style.animation}` : ""
+        }"
+        style="left:${(badgeX / c.width) * 100}%; top:${(badgeY / c.height) * 100}%;${
+          rot ? ` transform: translate(-50%, -50%) rotate(${counterRotate(0, rot)}deg);` : ""
+        }"
+        role="button"
+        tabindex="0"
+        @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
+          this._handleFurnitureAction(ev, f)}
+        .actionHandler=${actionHandler({
+          hasHold: hasAction(f.hold_action),
+          hasDoubleClick: hasAction(f.double_tap_action),
+        })}
+      >
+        ${this._renderBadge({ entity: f.entity, kind: "generic", size: 22 }, style)}
+        ${f.showState ? html`<span class="label">${itemStateText(this.hass, f)}</span>` : nothing}
+      </div>
+    `;
+  }
+
   private _renderText(t: FloorText, c: FloorplanCardConfig, rot: Rotation): TemplateResult {
     return html`
       <div
@@ -294,7 +355,29 @@ export class FloorplanCard extends LitElement {
             ${(active.rooms ?? []).map((r) =>
               renderRoom(r, resolveStateStyle(r.stateStyles, this.hass, undefined)),
             )}
-            ${active.furniture.map((f) => renderFurniture(f))}
+            ${active.furniture.map((f) => {
+              const style = resolveStateStyle(f.stateStyles, this.hass, f.entity);
+              const shape = renderFurniture(f, style);
+              if (!f.entity) return shape;
+              // Entity-bound furniture is tappable -- a transparent rect over the
+              // piece's oriented bounding box gives a reliable hit target even
+              // where the drawing itself is a thin stroke (a rug's dashed border,
+              // a TV's single line). The shape stays decoration; this is the
+              // functional tap target, mirroring .fp-opening-hit.
+              const hw = f.w / 2;
+              const hh = f.h / 2;
+              return svg`<g class="fp-furn-tap"
+                  @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
+                    this._handleFurnitureAction(ev, f)}
+                  .actionHandler=${actionHandler({
+                    hasHold: hasAction(f.hold_action),
+                    hasDoubleClick: hasAction(f.double_tap_action),
+                  })}>
+                  ${shape}
+                  <rect class="fp-furn-hit" x=${-hw} y=${-hh} width=${f.w} height=${f.h}
+                        transform="translate(${f.x} ${f.y}) rotate(${f.angle ?? 0})" />
+                </g>`;
+            })}
             ${renderWallMask(active.openings, c.width, c.height, this._wallMaskId)}
             <g mask=${`url(#${this._wallMaskId})`}>
               ${active.walls.map(
@@ -338,6 +421,9 @@ export class FloorplanCard extends LitElement {
           <div class="items">
             ${active.texts.map((t) => this._renderText(t, c, rot))}
             ${active.items.map((it) => this._renderItem(it, c, rot))}
+            ${active.furniture.map((f) =>
+              this._renderFurnitureBadge(f, resolveStateStyle(f.stateStyles, this.hass, f.entity), c, rot),
+            )}
           </div>
           </div>
           ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
@@ -469,6 +555,13 @@ export class FloorplanCard extends LitElement {
     .fp-slide-panel rect {
       transition: fill 0.5s ease;
     }
+    .fp-furn-tap {
+      cursor: pointer;
+    }
+    .fp-furn-hit {
+      fill: transparent;
+      pointer-events: all;
+    }
     .items {
       position: absolute;
       inset: 0;
@@ -527,10 +620,39 @@ export class FloorplanCard extends LitElement {
       0%, 49% { opacity: 1; }
       50%, 100% { opacity: 0.25; }
     }
+    /*
+     * Smart furniture (stateStyles matched). Tint lives in renderFurniture's
+     * inline fill/stroke; this only carries the animation, on the inner group
+     * so the placement transform (translate + rotate) is never touched.
+     */
+    .fp-furn {
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    /* Breathing: the appliance inhales -- same 1.6s period as fp-item-pulse, so
+       a badge and its shape pulse in phase. Scale is gentle (1.03): these are
+       big shapes; the badge's 1.18 would look like the sofa levitating. */
+    .fp-furn-anim-pulse {
+      animation: fp-furn-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes fp-furn-pulse {
+      0%, 100% { scale: 1; opacity: 0.78; }
+      50% { scale: 1.03; opacity: 1; }
+    }
+    /* Blink: alert language, identical timing/curve to fp-item-blink. */
+    .fp-furn-anim-blink {
+      animation: fp-furn-blink 1s steps(1, end) infinite;
+    }
+    @keyframes fp-furn-blink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0.25; }
+    }
     @media (prefers-reduced-motion: reduce) {
       /* Every animation this card draws, not just the conditional ones. */
       .item.anim-pulse .badge,
       .item.anim-blink .badge,
+      .fp-furn-anim-pulse,
+      .fp-furn-anim-blink,
       .ripple.active .ring,
       .tracker-dot,
       .tracker-ring,

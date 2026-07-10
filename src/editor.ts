@@ -3612,6 +3612,37 @@ export class FloorplanCardEditor extends LitElement {
       stroke-dasharray: 6 4;
       pointer-events: none;
     }
+    /*
+     * Smart furniture (stateStyles matched) -- see
+     * docs/superpowers/specs/smart-furniture-look.md. The editor's own
+     * renderFurniture() calls are always idle (no resolved style), but these
+     * rules are per-shadow-root, so they belong here too for anything that
+     * later renders a resolved preview.
+     */
+    .fp-furn {
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    .fp-furn-anim-pulse {
+      animation: fp-furn-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes fp-furn-pulse {
+      0%, 100% { scale: 1; opacity: 0.78; }
+      50% { scale: 1.03; opacity: 1; }
+    }
+    .fp-furn-anim-blink {
+      animation: fp-furn-blink 1s steps(1, end) infinite;
+    }
+    @keyframes fp-furn-blink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0.25; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .fp-furn-anim-pulse,
+      .fp-furn-anim-blink {
+        animation: none;
+      }
+    }
     /* Toolbar icons sit inline with their labels; smaller than content icons. */
     .toolbar ha-icon {
       --mdc-icon-size: 16px;

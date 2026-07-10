@@ -65,6 +65,12 @@ export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
       // render for anything it is not watching.
       for (const id of stateStyleEntities(it.stateStyles, it.entity)) ids.add(id);
     }
+    for (const fu of f.furniture) {
+      if (fu.entity) ids.add(fu.entity);
+      // Same reasoning as items: a rule may watch an entity the piece itself
+      // does not, and the card only re-renders for what it watches.
+      for (const id of stateStyleEntities(fu.stateStyles, fu.entity)) ids.add(id);
+    }
     for (const tr of f.trackers) {
       for (const s of [tr.xSensor, tr.ySensor]) {
         if (s?.entity) ids.add(s.entity);
@@ -816,8 +822,21 @@ export function renderRoom(r: Room, style?: ResolvedStyle): SVGTemplateResult {
   />`;
 }
 
-export function renderFurniture(f: Furniture): SVGTemplateResult {
-  const color = f.color ?? FURNITURE_COLOR;
+/**
+ * A furniture/fixture diagram. Idle line art by default; when `resolved`
+ * carries a matched {@link StateStyle} rule the base + detail lines are
+ * wrapped in an inner `g.fp-furn` (tint + animation), *inside* the placement
+ * transform, so nothing this adds can move the piece. With no `resolved` the
+ * output is byte-identical to the pre-smart-furniture render — see
+ * docs/superpowers/specs/smart-furniture-look.md.
+ */
+export function renderFurniture(f: Furniture, resolved?: ResolvedStyle): SVGTemplateResult {
+  const color = resolved?.color ?? f.color ?? FURNITURE_COLOR;
+  // A matched rule's colour is the one thing that steps up fill-opacity — an
+  // animation-only rule (no colour) keeps the idle grey and idle opacity.
+  const tinted = !!resolved?.color;
+  const fillOpacity = tinted ? 0.3 : 0.12;
+  const rugFillOpacity = tinted ? 0.2 : 0.08;
   const w = f.w;
   const h = f.h;
   const hw = w / 2;
@@ -827,17 +846,17 @@ export function renderFurniture(f: Furniture): SVGTemplateResult {
     f.type === "roundTable" || f.type === "plant" || f.type === "waterHeater";
   const base = f.type === "sectional"
     ? svg`<polygon points=${sectionalPoints(w, h, f.hand).map((p) => p.join(",")).join(" ")}
-                   fill=${color} fill-opacity="0.12" stroke=${color} stroke-width="2"
+                   fill=${color} fill-opacity=${fillOpacity} stroke=${color} stroke-width="2"
                    stroke-linejoin="round" />`
     : roundBase
     ? svg`<ellipse cx="0" cy="0" rx=${hw} ry=${hh}
-                   fill=${color} fill-opacity="0.12" stroke=${color} stroke-width="2" />`
+                   fill=${color} fill-opacity=${fillOpacity} stroke=${color} stroke-width="2" />`
     : f.type === "rug"
       ? svg`<rect x=${-hw} y=${-hh} width=${w} height=${h} rx=${Math.min(w, h) * 0.12}
-                  fill=${color} fill-opacity="0.08" stroke=${color} stroke-width="2"
+                  fill=${color} fill-opacity=${rugFillOpacity} stroke=${color} stroke-width="2"
                   stroke-dasharray="8 5" />`
       : svg`<rect x=${-hw} y=${-hh} width=${w} height=${h} rx="4"
-                  fill=${color} fill-opacity="0.12" stroke=${color} stroke-width="2" />`;
+                  fill=${color} fill-opacity=${fillOpacity} stroke=${color} stroke-width="2" />`;
 
   let detail: SVGTemplateResult;
   switch (f.type) {
@@ -1004,7 +1023,16 @@ export function renderFurniture(f: Furniture): SVGTemplateResult {
       detail = svg``;
       break;
   }
-  return svg`<g transform="translate(${f.x} ${f.y}) rotate(${f.angle ?? 0})">${base}${detail}</g>`;
+  // No matched rule: identical to the pre-smart-furniture markup, so idle
+  // plans render byte-for-byte the same.
+  if (!resolved) {
+    return svg`<g transform="translate(${f.x} ${f.y}) rotate(${f.angle ?? 0})">${base}${detail}</g>`;
+  }
+  const anim =
+    resolved.animation && resolved.animation !== "none" ? resolved.animation : undefined;
+  return svg`<g transform="translate(${f.x} ${f.y}) rotate(${f.angle ?? 0})">
+    <g class="fp-furn${anim ? ` fp-furn-anim-${anim}` : ""}">${base}${detail}</g>
+  </g>`;
 }
 
 /**
