@@ -326,3 +326,22 @@ describe("getFloors carries rooms (#6)", () => {
     expect(b.rooms).toBeUndefined();
   });
 });
+
+describe("getFloors — rotation round-trip", () => {
+  const floor = (extra: Record<string, unknown>) => ({
+    id: "f1", name: "F1", walls: [], openings: [], items: [], texts: [],
+    furniture: [], trackers: [], ...extra,
+  });
+
+  it("preserves a floor's rotation", () => {
+    const c = { type: "custom:floorplan-card", width: 1000, height: 600,
+                floors: [floor({ rotation: 270 })] } as never;
+    expect(getFloors(c)[0].rotation).toBe(270);
+  });
+
+  it("never injects rotation onto a floor that lacks it", () => {
+    const c = { type: "custom:floorplan-card", width: 1000, height: 600,
+                floors: [floor({})] } as never;
+    expect("rotation" in getFloors(c)[0]).toBe(false);
+  });
+});
