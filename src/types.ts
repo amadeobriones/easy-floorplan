@@ -407,6 +407,9 @@ export const FURNITURE_DEFAULT_SIZE: Record<FurnitureType, { w: number; h: numbe
   sectional: { w: 230, h: 180 },
 };
 
+/** A quarter-turn display rotation for a floor. Absent means 0. */
+export type Rotation = 0 | 90 | 180 | 270;
+
 /**
  * A single floor/level. Each floor owns its own set of elements. The canvas
  * size, grid and background are shared across floors (config-level).
@@ -432,6 +435,12 @@ export interface Floor {
   imageOpacity?: number;
   /** Room polygons, drawn beneath the walls. Optional: older configs have none. */
   rooms?: Room[];
+  /**
+   * Display-only quarter-turn rotation. Coordinates are always canonical; this
+   * rotates the drawn plan (and swaps the stage footprint at 90/270). The editor
+   * edits unrotated and preserves this field untouched.
+   */
+  rotation?: Rotation;
   walls: Wall[];
   openings: Opening[];
   items: FloorItem[];

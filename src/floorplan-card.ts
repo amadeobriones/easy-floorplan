@@ -1,6 +1,6 @@
 import { LitElement, html, css, svg, nothing, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, FloorplanCardConfig, FloorItem, FloorText, Floor } from "./types";
+import type { HomeAssistant, FloorplanCardConfig, FloorItem, FloorText, Floor, Rotation } from "./types";
 import {
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
@@ -33,6 +33,7 @@ import {
 import type { Opening } from "./types";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
+import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
 
 @customElement("easy-floorplan-card")
 export class FloorplanCard extends LitElement {
@@ -190,7 +191,11 @@ export class FloorplanCard extends LitElement {
     `;
   }
 
-  private _renderItem(item: FloorItem, c: FloorplanCardConfig): TemplateResult | typeof nothing {
+  private _renderItem(
+    item: FloorItem,
+    c: FloorplanCardConfig,
+    rot: Rotation,
+  ): TemplateResult | typeof nothing {
     const style = this._itemStyle(item);
     const on = this._isOn(item);
     // No entity, no reading to show -- an explicit showState cannot conjure one.
@@ -225,7 +230,9 @@ export class FloorplanCard extends LitElement {
         class="item ${on ? "on" : "off"} ${labelOnly ? "label-only" : ""} ${
           style?.animation && style.animation !== "none" ? `anim-${style.animation}` : ""
         }"
-        style="left:${(item.x / c.width) * 100}%; top:${(item.y / c.height) * 100}%;"
+        style="left:${(item.x / c.width) * 100}%; top:${(item.y / c.height) * 100}%;${
+          rot ? ` transform: translate(-50%, -50%) rotate(${counterRotate(0, rot)}deg);` : ""
+        }"
         title=${this._label(item)}
         role="button"
         tabindex="0"
@@ -242,14 +249,14 @@ export class FloorplanCard extends LitElement {
     `;
   }
 
-  private _renderText(t: FloorText, c: FloorplanCardConfig): TemplateResult {
+  private _renderText(t: FloorText, c: FloorplanCardConfig, rot: Rotation): TemplateResult {
     return html`
       <div
         class="text"
         style="left:${(t.x / c.width) * 100}%; top:${(t.y / c.height) * 100}%;
                font-size:${t.size ?? DEFAULT_TEXT_SIZE}px;
                color:${t.color ?? "var(--primary-text-color)"};
-               transform:translate(-50%,-50%) rotate(${t.angle ?? 0}deg);"
+               transform:translate(-50%,-50%) rotate(${counterRotate(t.angle ?? 0, rot)}deg);"
       >
         ${t.text}
       </div>
@@ -264,27 +271,21 @@ export class FloorplanCard extends LitElement {
       floors.find((f) => f.id === this._activeFloorId) ??
       floors.find((f) => f.id === c.defaultFloor) ??
       floors[0];
+    const rot = normalizeRotation(active.rotation);
     return html`
       <ha-card .header=${c.title ?? nothing}>
         <div
           class="stage"
-          style="aspect-ratio: ${c.width} / ${c.height}; background:${c.background ??
+          style="aspect-ratio: ${stageAspect(c.width, c.height, rot)}; background:${c.background ??
           "var(--card-background-color, #fff)"};"
         >
-<!-- preserveAspectRatio="none" is correct here, and it took a wrong fix to
-               see why. .stage pins aspect-ratio: width / height inline, so the
-               SVG's box already matches its viewBox and "none" never distorts.
-
-               "meet" letterboxes the SVG inside its box. The .items overlay is
-               HTML, positioned with raw left/top percentages of .stage, and it
-               does not letterbox. So the moment anything overrides the stage's
-               ratio (card-mod, a grid row count) the drawing shrinks away from
-               the badges and every icon drifts off the wall it was placed on.
-               "none" stretches both layers identically: distorted, but aligned.
-
-               The real fix letterboxes both layers together -- wrap the svg and
-               the overlay in one aspect-ratio box and centre it. Until then, do
-               not "fix" this line. -->
+          <div class="plate ${plateClass(rot)}" style="${plateVars(c.width, c.height, rot)}">
+<!-- preserveAspectRatio="none" is correct, and now provably so. The .plate box
+               always carries the natural width/height ratio (aspect-ratio: var(--fp-arw)),
+               so the SVG's box equals its viewBox and "none" never distorts. .plate also
+               holds the .items HTML overlay, so both layers letterbox and rotate as one
+               unit -- the badges can no longer drift off their walls when card-mod or a
+               grid row-count overrides the .stage box. Do not change this to "meet". -->
           <svg viewBox="0 0 ${c.width} ${c.height}" preserveAspectRatio="none">
             ${active.image
               ? svg`<image href=${active.image} x="0" y="0" width=${c.width} height=${c.height}
@@ -335,8 +336,9 @@ export class FloorplanCard extends LitElement {
             )}
           </svg>
           <div class="items">
-            ${active.texts.map((t) => this._renderText(t, c))}
-            ${active.items.map((it) => this._renderItem(it, c))}
+            ${active.texts.map((t) => this._renderText(t, c, rot))}
+            ${active.items.map((it) => this._renderItem(it, c, rot))}
+          </div>
           </div>
           ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
         </div>
@@ -374,6 +376,8 @@ export class FloorplanCard extends LitElement {
       position: relative;
       width: 100%;
       padding: 0;
+      container-type: size;
+      overflow: hidden;
     }
     .floor-switcher {
       position: absolute;
@@ -411,6 +415,24 @@ export class FloorplanCard extends LitElement {
       width: 100%;
       height: 100%;
       display: block;
+    }
+    /* The plate always has the natural W/H ratio, is centred, and is sized by
+       min() to the largest natural-ratio box that fits the stage -- a letterbox
+       that holds even when the stage box is overridden. */
+    .plate {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      aspect-ratio: var(--fp-arw);
+      width: min(100cqw, 100cqh * var(--fp-arw));
+      transform: translate(-50%, -50%) rotate(var(--fp-rot, 0deg));
+      transform-origin: center;
+    }
+    /* At 90/270 the plate's rotated box must fill the swapped stage footprint,
+       so bound the natural-ratio width by the stage's height instead. */
+    .plate.rot90,
+    .plate.rot270 {
+      width: min(100cqh, 100cqw * var(--fp-arw));
     }
     .wall {
       stroke: var(--primary-text-color);
