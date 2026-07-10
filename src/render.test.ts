@@ -11,6 +11,7 @@ import {
   resolveOpeningAmount,
   kindFromEntity,
   defaultIcon,
+  entityDefaultIcon,
   trackerSensorReading,
 } from "./render";
 import type { Opening } from "./types";
@@ -248,6 +249,37 @@ describe("trackerSensorReading", () => {
     expect(trackerSensorReading(states, "sensor.missing")).toBeNull();
     expect(trackerSensorReading(states, "sensor.bad")).toBeNull();
     expect(trackerSensorReading(states, "sensor.text")).toBeNull();
+  });
+});
+
+describe("entityDefaultIcon", () => {
+  it("maps a binary_sensor shown as a Lock to lock icons per state (issue #29)", () => {
+    // on = unlocked for HA's lock device class
+    expect(entityDefaultIcon("binary_sensor.front_door_lock", "lock", true)).toBe("mdi:lock-open");
+    expect(entityDefaultIcon("binary_sensor.front_door_lock", "lock", false)).toBe("mdi:lock");
+  });
+
+  it("is state-aware for other binary_sensor device classes", () => {
+    expect(entityDefaultIcon("binary_sensor.d", "door", true)).toBe("mdi:door-open");
+    expect(entityDefaultIcon("binary_sensor.d", "door", false)).toBe("mdi:door-closed");
+    expect(entityDefaultIcon("binary_sensor.m", "motion", true)).toBe("mdi:motion-sensor");
+    expect(entityDefaultIcon("binary_sensor.w", "window", false)).toBe("mdi:window-closed");
+  });
+
+  it("maps sensor device classes (state-independent)", () => {
+    expect(entityDefaultIcon("sensor.t", "temperature", false)).toBe("mdi:thermometer");
+    expect(entityDefaultIcon("sensor.h", "humidity", true)).toBe("mdi:water-percent");
+  });
+
+  it("maps cover device classes per state", () => {
+    expect(entityDefaultIcon("cover.g", "garage", true)).toBe("mdi:garage-open");
+    expect(entityDefaultIcon("cover.g", "garage", false)).toBe("mdi:garage");
+  });
+
+  it("returns undefined for unknown device classes, missing class, or unmapped domains", () => {
+    expect(entityDefaultIcon("binary_sensor.x", "made_up", true)).toBeUndefined();
+    expect(entityDefaultIcon("binary_sensor.x", undefined, true)).toBeUndefined();
+    expect(entityDefaultIcon("light.x", "lock", true)).toBeUndefined();
   });
 });
 

@@ -139,6 +139,12 @@ By default it shows an icon badge:
 - **Live look** — the badge highlights when the entity is "on". Turn on **Show state**
   to display the current value next to it. Add a **2nd entity** to show two readings in
   one element — e.g. a temperature and a humidity sensor render together as `21 °C · 45 %`.
+- **Follows "show as"** — the icon and state label respect the entity's
+  **device class** (HA's *show as* setting): a `binary_sensor` shown as a Lock renders
+  `mdi:lock` / `mdi:lock-open` and reads "Locked" / "Unlocked", a door contact gets
+  door icons, a motion sensor gets motion icons, and so on — the same defaults HA
+  itself uses. An explicit icon on the entity, or an **icon** override on the device,
+  still wins.
 - **Make it yours** — override the **icon** (with autocomplete + live preview), set a
   custom **name**, change the **size**, **rotate** it, or hide the icon entirely.
 

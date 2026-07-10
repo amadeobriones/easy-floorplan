@@ -21,6 +21,7 @@ import {
   renderTracker,
   trackerSensorReading,
   defaultIcon,
+  entityDefaultIcon,
 } from "./render";
 import type { Opening } from "./types";
 
@@ -118,6 +119,18 @@ export class FloorplanCard extends LitElement {
     if (!entityId) return "—";
     const stateObj = this.hass?.states[entityId];
     if (!stateObj) return "—";
+    // Prefer HA's own formatter: it localizes and respects the entity's
+    // device_class ("show as"), so a binary_sensor shown as a Lock reads
+    // "Unlocked" instead of the raw "on" (issue #29).
+    const format = (this.hass as unknown as { formatEntityState?: (s: unknown) => string })
+      ?.formatEntityState;
+    if (format) {
+      try {
+        return format(stateObj);
+      } catch {
+        /* fall through to the raw state below */
+      }
+    }
     const unit = stateObj.attributes?.unit_of_measurement;
     return unit ? `${stateObj.state} ${unit}` : stateObj.state;
   }
@@ -130,8 +143,18 @@ export class FloorplanCard extends LitElement {
   }
 
   private _itemIcon(item: FloorItem): string {
+    // Precedence: config override → entity's explicit icon → the icon implied
+    // by its device_class ("show as", issue #29) → the generic kind default.
     if (item.icon) return item.icon;
-    return this.hass?.states[item.entity]?.attributes?.icon ?? defaultIcon(item.kind);
+    const st = this.hass?.states[item.entity];
+    if (st?.attributes?.icon) return st.attributes.icon;
+    return (
+      entityDefaultIcon(
+        item.entity,
+        st?.attributes?.device_class as string | undefined,
+        this._isOn(item)
+      ) ?? defaultIcon(item.kind)
+    );
   }
 
   private _label(item: FloorItem): string {

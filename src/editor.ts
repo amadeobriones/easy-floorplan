@@ -49,6 +49,7 @@ import {
   renderTracker,
   trackerSensorReading,
   defaultIcon,
+  entityDefaultIcon,
   kindFromEntity,
   snapToWall,
 } from "./render";
@@ -1860,7 +1861,16 @@ export class FloorplanCardEditor extends LitElement {
 
   private _renderItemOverlay(it: FloorItem, c: FloorplanCardConfig): TemplateResult {
     const selected = this._isSel("item", it.id);
-    const icon = it.icon ?? defaultIcon(it.kind);
+    // Same icon precedence as the live card: config override → entity's
+    // explicit icon → device_class-implied icon ("show as") → kind default.
+    const st = it.entity ? this.hass?.states[it.entity] : undefined;
+    const stateOn =
+      st?.state === "on" || st?.state === "open" || st?.state === "home" || st?.state === "playing";
+    const icon =
+      it.icon ??
+      (st?.attributes?.icon as string | undefined) ??
+      entityDefaultIcon(it.entity, st?.attributes?.device_class as string | undefined, stateOn) ??
+      defaultIcon(it.kind);
     const label = it.name || it.entity || it.kind;
     const size = it.size ?? DEFAULT_ITEM_SIZE;
     const showIcon = it.showIcon ?? true;

@@ -116,6 +116,12 @@ const hass = {
   states: {
     "binary_sensor.front_door": { state: "off", attributes: { friendly_name: "Front Door" } },
     "light.living_room": { state: "on", attributes: { friendly_name: "Living Room" } },
+    // "Show as" demo (issue #29): a binary_sensor with device_class lock should
+    // render mdi:lock / mdi:lock-open instead of the generic kind icon.
+    "binary_sensor.door_lock": {
+      state: "off",
+      attributes: { friendly_name: "Door Lock", device_class: "lock" },
+    },
   },
   locale: { language: "en" },
   themes: { darkMode: false },
@@ -127,7 +133,13 @@ const hass = {
     basement: { floor_id: "basement", name: "Basement", level: -1 },
   },
   callService: (...args: unknown[]) => console.log("[mock hass] callService", ...args),
-  formatEntityState: (s: { state: string }) => s.state,
+  // Crude stand-in for HA's localizing formatter so the "show as" state text
+  // (issue #29) is demonstrable in the harness: lock device_class reads
+  // Locked/Unlocked instead of the raw on/off.
+  formatEntityState: (s: { state: string; attributes?: Record<string, unknown> }) => {
+    if (s?.attributes?.device_class === "lock") return s.state === "on" ? "Unlocked" : "Locked";
+    return s.state;
+  },
   localize: (k: string) => k,
 } as unknown;
 

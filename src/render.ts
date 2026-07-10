@@ -24,6 +24,97 @@ export function defaultIcon(kind: ItemKind): string {
   }
 }
 
+/**
+ * State-aware icons per `binary_sensor` device class ("show as" in the HA UI),
+ * mirroring Home Assistant's own device-class icon set. `on` is the
+ * device-class's active state (open / detected / unlocked / …).
+ */
+const BINARY_SENSOR_CLASS_ICONS: Record<string, { on: string; off: string }> = {
+  battery: { on: "mdi:battery-alert", off: "mdi:battery" },
+  battery_charging: { on: "mdi:battery-charging", off: "mdi:battery" },
+  carbon_monoxide: { on: "mdi:smoke-detector-alert", off: "mdi:smoke-detector" },
+  cold: { on: "mdi:snowflake", off: "mdi:thermometer" },
+  connectivity: { on: "mdi:check-network-outline", off: "mdi:close-network-outline" },
+  door: { on: "mdi:door-open", off: "mdi:door-closed" },
+  garage_door: { on: "mdi:garage-open", off: "mdi:garage" },
+  gas: { on: "mdi:alert-circle", off: "mdi:check-circle" },
+  heat: { on: "mdi:fire", off: "mdi:thermometer" },
+  light: { on: "mdi:brightness-7", off: "mdi:brightness-5" },
+  lock: { on: "mdi:lock-open", off: "mdi:lock" },
+  moisture: { on: "mdi:water", off: "mdi:water-off" },
+  motion: { on: "mdi:motion-sensor", off: "mdi:motion-sensor-off" },
+  occupancy: { on: "mdi:home", off: "mdi:home-outline" },
+  opening: { on: "mdi:square-outline", off: "mdi:square" },
+  plug: { on: "mdi:power-plug", off: "mdi:power-plug-off" },
+  power: { on: "mdi:power-plug", off: "mdi:power-plug-off" },
+  presence: { on: "mdi:home", off: "mdi:home-outline" },
+  problem: { on: "mdi:alert-circle", off: "mdi:check-circle" },
+  running: { on: "mdi:play", off: "mdi:stop" },
+  safety: { on: "mdi:alert-circle", off: "mdi:check-circle" },
+  smoke: { on: "mdi:smoke-detector-variant-alert", off: "mdi:smoke-detector-variant" },
+  sound: { on: "mdi:music-note", off: "mdi:music-note-off" },
+  tamper: { on: "mdi:vibrate", off: "mdi:check-circle" },
+  vibration: { on: "mdi:vibrate", off: "mdi:crop-portrait" },
+  window: { on: "mdi:window-open", off: "mdi:window-closed" },
+};
+
+/** Icons per `sensor` device class (not state-dependent). */
+const SENSOR_CLASS_ICONS: Record<string, string> = {
+  temperature: "mdi:thermometer",
+  humidity: "mdi:water-percent",
+  battery: "mdi:battery",
+  power: "mdi:flash",
+  energy: "mdi:lightning-bolt",
+  illuminance: "mdi:brightness-5",
+  pressure: "mdi:gauge",
+  carbon_dioxide: "mdi:molecule-co2",
+  pm25: "mdi:air-filter",
+  signal_strength: "mdi:wifi",
+  voltage: "mdi:sine-wave",
+  current: "mdi:current-ac",
+};
+
+/** State-aware icons per `cover` device class. */
+const COVER_CLASS_ICONS: Record<string, { on: string; off: string }> = {
+  garage: { on: "mdi:garage-open", off: "mdi:garage" },
+  garage_door: { on: "mdi:garage-open", off: "mdi:garage" },
+  door: { on: "mdi:door-open", off: "mdi:door-closed" },
+  gate: { on: "mdi:gate-open", off: "mdi:gate" },
+  window: { on: "mdi:window-open", off: "mdi:window-closed" },
+  blind: { on: "mdi:blinds-open", off: "mdi:blinds" },
+  shade: { on: "mdi:roller-shade", off: "mdi:roller-shade-closed" },
+  shutter: { on: "mdi:window-shutter-open", off: "mdi:window-shutter" },
+  curtain: { on: "mdi:curtains", off: "mdi:curtains-closed" },
+  awning: { on: "mdi:awning-outline", off: "mdi:awning-outline" },
+};
+
+/**
+ * Icon implied by an entity's `device_class` — HA's "show as" setting (issue
+ * #29). A `binary_sensor` shown as a Lock gets `mdi:lock` / `mdi:lock-open`,
+ * matching what HA itself renders. Returns `undefined` when the domain /
+ * device class has no mapping so callers can fall back to the kind default.
+ * An explicit config `icon` or a per-entity `attributes.icon` still wins —
+ * this only replaces the generic kind fallback.
+ */
+export function entityDefaultIcon(
+  entityId: string,
+  deviceClass: string | undefined,
+  on: boolean,
+): string | undefined {
+  if (!deviceClass) return undefined;
+  const domain = entityId.split(".")[0];
+  if (domain === "binary_sensor") {
+    const m = BINARY_SENSOR_CLASS_ICONS[deviceClass];
+    return m ? (on ? m.on : m.off) : undefined;
+  }
+  if (domain === "sensor") return SENSOR_CLASS_ICONS[deviceClass];
+  if (domain === "cover") {
+    const m = COVER_CLASS_ICONS[deviceClass];
+    return m ? (on ? m.on : m.off) : undefined;
+  }
+  return undefined;
+}
+
 /** Infer a sensible item kind from an entity id's domain. */
 export function kindFromEntity(entity: string): ItemKind {
   const domain = entity.split(".")[0];
