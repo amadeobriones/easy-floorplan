@@ -1,4 +1,5 @@
 import { isTypingTarget, pathTags } from "./editor-keys";
+import { clampZoom, zoomAnchoredScroll } from "./editor-zoom";
 import { LitElement, html, css, svg, nothing, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type {
@@ -1463,15 +1464,37 @@ export class FloorplanCardEditor extends LitElement {
 
   // ---- zoom ----------------------------------------------------------------
 
-  private _setZoom(z: number): void {
-    this._zoom = Math.min(3, Math.max(0.5, Math.round(z * 100) / 100));
+  /**
+   * Zoom the drawing inside the viewport. `anchor` is a point in viewport
+   * coordinates that should stay put -- the cursor for a wheel zoom, the centre
+   * for a button. Without it the drawing slides toward the top-left as it grows.
+   */
+  private _setZoom(z: number, anchor?: { x: number; y: number }): void {
+    const prev = this._zoom;
+    const next = clampZoom(z);
+    if (next === prev) return;
+    this._zoom = next;
+
+    const wrap = this._canvasWrap;
+    if (!wrap) return;
+    const at = anchor ?? { x: wrap.clientWidth / 2, y: wrap.clientHeight / 2 };
+    const { left, top } = zoomAnchoredScroll(
+      prev,
+      next,
+      { left: wrap.scrollLeft, top: wrap.scrollTop },
+      at,
+    );
+    // The stage has not grown yet: it resizes on the next render.
+    this.updateComplete.then(() => wrap.scrollTo({ left, top }));
   }
 
   /** Ctrl/Cmd + wheel zooms the canvas (also catches trackpad pinch); plain wheel scrolls. */
   private _onCanvasWheel(ev: WheelEvent): void {
     if (!ev.ctrlKey && !ev.metaKey) return;
     ev.preventDefault();
-    this._setZoom(this._zoom - Math.sign(ev.deltaY) * 0.1);
+    const r = this._canvasWrap?.getBoundingClientRect();
+    const anchor = r ? { x: ev.clientX - r.left, y: ev.clientY - r.top } : undefined;
+    this._setZoom(this._zoom - Math.sign(ev.deltaY) * 0.1, anchor);
   }
 
   /** Reset to 100% (where the stage fits the wrap width) and scroll home. */
@@ -1837,7 +1860,12 @@ export class FloorplanCardEditor extends LitElement {
 
         <div class="workspace">
         <div class="canvas-outer">
-        <div class="canvas-wrap" tabindex="0" @wheel=${this._onCanvasWheel}>
+        <div
+          class="canvas-wrap"
+          tabindex="0"
+          style="--fp-canvas-ratio: ${c.width} / ${c.height};"
+          @wheel=${this._onCanvasWheel}
+        >
           <div class="stage" style="aspect-ratio: ${c.width} / ${c.height}; width:${this._zoom * 100}%;">
             <svg
               viewBox="0 0 ${c.width} ${c.height}"
@@ -2829,6 +2857,8 @@ export class FloorplanCardEditor extends LitElement {
       min-height: 0;
       height: auto;
       resize: none;
+      /* Fullscreen gives the workspace the screen; take the height, not the ratio. */
+      aspect-ratio: auto;
     }
     /* Docked inspector — fixed, scrollable column beside the canvas. */
     .editor.fullscreen .side {
@@ -2993,6 +3023,15 @@ export class FloorplanCardEditor extends LitElement {
       border-radius: 8px;
       overflow: auto;
       resize: both;
+      /*
+       * The viewport's height comes from the canvas's aspect ratio, NOT from the
+       * zoomed stage inside it. Without this the wrap has no definite height, so a
+       * stage at 200% simply makes the wrap twice as tall: overflow:auto never
+       * engages and zooming inflates the whole editor panel instead of scrolling
+       * the drawing. resize:both still wins, because dragging the corner sets an
+       * explicit height.
+       */
+      aspect-ratio: var(--fp-canvas-ratio, 5 / 3);
       /* Size to the canvas's own aspect ratio rather than forcing a fixed
          viewport-relative height. This avoids the empty band above and below
          the grid that used to appear with the default 1000×600 canvas, and
