@@ -1367,35 +1367,43 @@ export class FloorplanCardEditor extends LitElement {
     this._commitFloor({ items: [...this._floor().items, ...items] });
   }
 
-  private _stateElement(kind: "room" | "item", id: string): Room | FloorItem | undefined {
+  private _stateElement(
+    kind: "room" | "item" | "furniture",
+    id: string
+  ): Room | FloorItem | Furniture | undefined {
     return kind === "room"
       ? (this._floor().rooms ?? []).find((r) => r.id === id)
-      : this._floor().items.find((x) => x.id === id);
+      : kind === "furniture"
+        ? this._floor().furniture.find((x) => x.id === id)
+        : this._floor().items.find((x) => x.id === id);
   }
 
   private _patchStateStyles(
-    kind: "room" | "item",
+    kind: "room" | "item" | "furniture",
     id: string,
     stateStyles: StateStyle[] | undefined,
     live: boolean
   ): void {
     if (kind === "room") this._updateRoom(id, { stateStyles }, live);
-    else if (live) this._updateItemLive(id, { stateStyles });
+    else if (kind === "furniture") {
+      if (live) this._updateFurnitureLive(id, { stateStyles });
+      else this._updateFurniture(id, { stateStyles });
+    } else if (live) this._updateItemLive(id, { stateStyles });
     else this._updateItem(id, { stateStyles });
   }
 
-  private _addStateStyleRule(kind: "room" | "item", id: string): void {
+  private _addStateStyleRule(kind: "room" | "item" | "furniture", id: string): void {
     const el = this._stateElement(kind, id);
     if (el) this._patchStateStyles(kind, id, addRule(el.stateStyles), false);
   }
 
-  private _removeStateStyleRule(kind: "room" | "item", id: string, i: number): void {
+  private _removeStateStyleRule(kind: "room" | "item" | "furniture", id: string, i: number): void {
     const el = this._stateElement(kind, id);
     if (el) this._patchStateStyles(kind, id, removeRule(el.stateStyles ?? [], i), false);
   }
 
   private _updateStateStyleRule(
-    kind: "room" | "item",
+    kind: "room" | "item" | "furniture",
     id: string,
     i: number,
     patch: Partial<StateStyle>,
@@ -2483,7 +2491,7 @@ export class FloorplanCardEditor extends LitElement {
 
   private _renderStateStyleRows(
     rules: StateStyle[],
-    kind: "room" | "item",
+    kind: "room" | "item" | "furniture",
     id: string,
     defaultEntity?: string,
     areaEntities?: string[]
@@ -2501,7 +2509,7 @@ export class FloorplanCardEditor extends LitElement {
 
   private _renderStateStyleRule(
     rule: StateStyle,
-    kind: "room" | "item",
+    kind: "room" | "item" | "furniture",
     id: string,
     i: number,
     defaultEntity?: string,
