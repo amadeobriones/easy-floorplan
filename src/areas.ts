@@ -1,3 +1,6 @@
+import type { ItemKind, Room } from "./types";
+import { kindFromEntity } from "./render";
+
 /** A Home Assistant area-registry entry (the subset this card uses). */
 export interface HaAreaInfo {
   area_id: string;
@@ -67,4 +70,33 @@ export function gridLayout(count: number, bbox: Bbox, gap = 0.15): Array<[number
     out.push([Math.round(x), Math.round(y)]);
   }
   return out;
+}
+
+const SKIP_CATEGORY = new Set(["diagnostic", "config"]);
+
+/**
+ * The placeable, primary entities in an area that are not already on the plan,
+ * each with a grid position inside the room. Deterministic (sorted, no random);
+ * the caller assigns the id and item defaults.
+ */
+export function devicesToAdd(
+  hass: unknown,
+  areaId: string,
+  room: Room,
+  placed: Set<string>
+): Array<{ entity: string; x: number; y: number; kind: ItemKind }> {
+  const { entities } = registries(hass);
+  const ids = entitiesInArea(hass, areaId).filter((id) => {
+    if (placed.has(id)) return false;
+    if (kindFromEntity(id) === "generic") return false;
+    const e = entities[id];
+    if (e?.entity_category && SKIP_CATEGORY.has(e.entity_category)) return false;
+    if (e?.hidden_by || e?.disabled_by) return false;
+    return true;
+  });
+  const xs = room.points.map((p) => p[0]);
+  const ys = room.points.map((p) => p[1]);
+  const bbox = { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+  const pts = gridLayout(ids.length, bbox);
+  return ids.map((entity, i) => ({ entity, x: pts[i][0], y: pts[i][1], kind: kindFromEntity(entity) }));
 }
