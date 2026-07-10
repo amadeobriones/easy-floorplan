@@ -247,7 +247,12 @@ export function openingForm(o: Opening): FormSpec {
 export function itemForm(it: FloorItem): FormSpec {
   const display = it.display ?? "badge";
   const fields: FormField[] = [
-    { name: "entity", label: "Entity", required: true, selector: { entity: {} } },
+    {
+      name: "entity",
+      label: "Entity",
+      helper: "Optional. Without one the item is a static marker: icon only, no state, no action.",
+      selector: { entity: {} },
+    },
     {
       name: "secondaryEntity",
       label: "Second entity",

@@ -5,7 +5,9 @@ const TOGGLE_DOMAINS = new Set(["light", "switch", "cover", "fan", "input_boolea
 
 /** The action an item performs when no tap_action is configured. */
 export function defaultItemAction(entity: string | undefined): ActionConfig {
-  const domain = entity?.split(".")[0] ?? "";
+  // Nothing to toggle and nothing to show: an item with no entity is a marker.
+  if (!entity) return { action: "none" };
+  const domain = entity.split(".")[0];
   return TOGGLE_DOMAINS.has(domain) ? { action: "toggle" } : { action: "more-info" };
 }
 

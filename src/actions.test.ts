@@ -35,7 +35,11 @@ describe("defaultItemAction", () => {
     }
     expect(defaultItemAction("sensor.a")).toEqual({ action: "more-info" });
     expect(defaultItemAction("binary_sensor.a")).toEqual({ action: "more-info" });
-    expect(defaultItemAction(undefined)).toEqual({ action: "more-info" });
+  });
+
+  // Was `more-info`, which opened the dialog for an entity that does not exist.
+  it("does nothing when there is no entity", () => {
+    expect(defaultItemAction(undefined)).toEqual({ action: "none" });
   });
 });
 
@@ -132,5 +136,22 @@ describe("executeAction", () => {
     executeAction(n, hass, { entity: "light.a" }, { action: "none" });
     expect(hass.calls.length).toBe(0);
     expect(n.events.length).toBe(0);
+  });
+});
+
+describe("an item with no entity has nothing to do (#39)", () => {
+  it("defaults to no action, not more-info on nothing", () => {
+    expect(defaultItemAction(undefined)).toEqual({ action: "none" });
+    expect(defaultItemAction("")).toEqual({ action: "none" });
+  });
+
+  it("still honours an explicit tap_action", () => {
+    const item = { tap_action: { action: "navigate", navigation_path: "/x" } } as const;
+    expect(actionForGesture(item, "tap")).toEqual(item.tap_action);
+  });
+
+  it("reports the default tap as inert, so no hand cursor is promised", () => {
+    expect(hasAction(defaultItemAction(undefined))).toBe(false);
+    expect(hasAction(defaultItemAction("light.a"))).toBe(true);
   });
 });

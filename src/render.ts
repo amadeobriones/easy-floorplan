@@ -71,7 +71,7 @@ export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
 /** State text for an item: primary entity, plus secondary (e.g. humidity) when set. */
 export function itemStateText(
   hass: RenderHass | undefined,
-  item: { entity: string; secondaryEntity?: string },
+  item: { entity?: string; secondaryEntity?: string },
 ): string {
   const primary = entityStateText(hass, item.entity);
   if (!item.secondaryEntity) return primary;
@@ -230,19 +230,20 @@ export function isEntityOn(state: string | undefined): boolean {
  * explicit icon → device_class-implied icon ("show as") → the kind default.
  */
 export function resolveItemIcon(
-  item: { entity: string; kind: ItemKind; icon?: string },
+  item: { entity?: string; kind: ItemKind; icon?: string },
   st: { state: string; attributes: Record<string, unknown> } | undefined,
 ): string {
   if (item.icon) return item.icon;
   const attrIcon = st?.attributes?.icon as string | undefined;
   if (attrIcon) return attrIcon;
-  return (
-    entityDefaultIcon(
-      item.entity,
-      st?.attributes?.device_class as string | undefined,
-      isEntityOn(st?.state),
-    ) ?? defaultIcon(item.kind)
-  );
+  const byDomain = item.entity
+    ? entityDefaultIcon(
+        item.entity,
+        st?.attributes?.device_class as string | undefined,
+        isEntityOn(st?.state),
+      )
+    : undefined;
+  return byDomain ?? defaultIcon(item.kind);
 }
 
 /** Infer a sensible item kind from an entity id's domain. */

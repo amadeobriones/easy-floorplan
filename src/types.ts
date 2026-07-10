@@ -111,7 +111,12 @@ export type ItemKind =
 /** An entity icon placed on the plan. */
 export interface FloorItem {
   id: string;
-  entity: string;
+  /**
+   * The entity this item reflects. Optional: a device with no entity in Home
+   * Assistant still belongs on the plan as a static marker — it draws its icon,
+   * shows no state, and performs no action.
+   */
+  entity?: string;
   /**
    * Optional second entity (e.g. a humidity sensor paired with a temperature
    * entity). When set and the state is shown, both values are displayed in the

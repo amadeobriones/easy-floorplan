@@ -102,7 +102,7 @@ export class FloorplanCard extends LitElement {
   }
 
   private _isOn(item: FloorItem): boolean {
-    return isEntityOn(this.hass?.states[item.entity]?.state);
+    return item.entity ? isEntityOn(this.hass?.states[item.entity]?.state) : false;
   }
 
   /** How far open an opening should be drawn (0..1), from its entity (or default). */
@@ -118,12 +118,15 @@ export class FloorplanCard extends LitElement {
   }
 
   private _itemIcon(item: FloorItem): string {
-    return resolveItemIcon(item, this.hass?.states[item.entity]);
+    return resolveItemIcon(item, item.entity ? this.hass?.states[item.entity] : undefined);
   }
 
   private _label(item: FloorItem): string {
+    if (item.name) return item.name;
+    if (!item.entity) return "";
     return (
-      item.name ?? this.hass?.states[item.entity]?.attributes?.friendly_name ?? item.entity ?? ""
+      (this.hass?.states[item.entity]?.attributes?.friendly_name as string | undefined) ??
+      item.entity
     );
   }
 
@@ -173,7 +176,8 @@ export class FloorplanCard extends LitElement {
 
   private _renderItem(item: FloorItem, c: FloorplanCardConfig): TemplateResult {
     const on = this._isOn(item);
-    const showState = item.showState ?? item.kind === "sensor";
+    // No entity, no reading to show -- an explicit showState cannot conjure one.
+    const showState = !!item.entity && (item.showState ?? item.kind === "sensor");
     const showIcon = item.showIcon ?? true;
     const display = item.display ?? "badge";
     const rippleColor = item.rippleColor ?? "var(--primary-color, #03a9f4)";
@@ -293,7 +297,7 @@ export class FloorplanCard extends LitElement {
           </svg>
           <div class="items">
             ${active.texts.map((t) => this._renderText(t, c))}
-            ${active.items.filter((it) => it.entity).map((it) => this._renderItem(it, c))}
+            ${active.items.map((it) => this._renderItem(it, c))}
           </div>
           ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
         </div>

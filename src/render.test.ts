@@ -692,3 +692,24 @@ describe("collectWatchedEntities", () => {
   });
 });
 
+
+describe("an item with no entity (#39)", () => {
+  it("falls back to the kind's icon rather than guessing from a domain it hasn't got", () => {
+    expect(resolveItemIcon({ kind: "light" }, undefined)).toBe(defaultIcon("light"));
+    expect(resolveItemIcon({ kind: "camera", icon: "mdi:cctv" }, undefined)).toBe("mdi:cctv");
+  });
+
+  it("has no state to show", () => {
+    expect(itemStateText(undefined, {})).toBe(itemStateText(undefined, { entity: "light.missing" }));
+  });
+
+  it("is not watched, and does not drag its floor into a re-render", () => {
+    const cfg = {
+      items: [
+        { id: "a", kind: "light", x: 0, y: 0 },
+        { id: "b", kind: "light", x: 0, y: 0, entity: "light.real" },
+      ],
+    } as unknown as FloorplanCardConfig;
+    expect([...collectWatchedEntities(cfg)]).toEqual(["light.real"]);
+  });
+});
