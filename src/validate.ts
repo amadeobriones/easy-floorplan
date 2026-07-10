@@ -54,7 +54,10 @@ const item = shape(
   { entity: str, secondaryEntity: str, name: str, icon: str, size: num, angle: num, showState: bool, showIcon: bool }
 );
 const text = shape({ id: str, x: num, y: num, text: str }, { size: num, color: str, angle: num });
-const furniture = shape({ id: str, type: oneOf(...FURNITURE_TYPES), x: num, y: num, w: num, h: num }, { angle: num });
+const furniture = shape(
+  { id: str, type: oneOf(...FURNITURE_TYPES), x: num, y: num, w: num, h: num },
+  { angle: num, entity: str, secondaryEntity: str, showState: bool }
+);
 const tracker = shape({ id: str, x: num, y: num, w: num, h: num }, { angle: num });
 const room = shape({ id: str, points: arrayOf(point) }, { name: str, areaId: str, fill: str, fillOpacity: num });
 

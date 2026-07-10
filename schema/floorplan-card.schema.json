@@ -278,6 +278,14 @@
                     "description": "Stroke/fill color. Defaults to gray so it reads differently from walls.",
                     "type": "string"
                 },
+                "double_tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
+                "entity": {
+                    "description": "Optional entity. With one, the piece is a live, controllable appliance.",
+                    "type": "string"
+                },
                 "h": {
                     "type": "number"
                 },
@@ -289,8 +297,30 @@
                     ],
                     "type": "string"
                 },
+                "hold_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
                 "id": {
                     "type": "string"
+                },
+                "secondaryEntity": {
+                    "type": "string"
+                },
+                "showState": {
+                    "description": "Show the entity's state text on the piece.",
+                    "type": "boolean"
+                },
+                "stateStyles": {
+                    "description": "Conditional colour/animation/icon, first match wins (same engine as rooms/items).",
+                    "items": {
+                        "$ref": "#/definitions/StateStyle"
+                    },
+                    "type": "array"
+                },
+                "tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
                 },
                 "type": {
                     "$ref": "#/definitions/FurnitureType"

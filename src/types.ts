@@ -294,6 +294,16 @@ export interface Furniture {
   angle?: number;
   /** Stroke/fill color. Defaults to gray so it reads differently from walls. */
   color?: string;
+  /** Optional entity. With one, the piece is a live, controllable appliance. */
+  entity?: string;
+  secondaryEntity?: string;
+  /** Conditional colour/animation/icon, first match wins (same engine as rooms/items). */
+  stateStyles?: StateStyle[];
+  /** Show the entity's state text on the piece. */
+  showState?: boolean;
+  tap_action?: ActionConfig;
+  hold_action?: ActionConfig;
+  double_tap_action?: ActionConfig;
 }
 
 /**
