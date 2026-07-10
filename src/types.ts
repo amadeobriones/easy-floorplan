@@ -622,6 +622,7 @@ export function getFloors(c: FloorplanCardConfig): Floor[] {
     {
       id: "floor_main",
       name: "Floor 1",
+      rooms: c.rooms ?? [],
       walls: c.walls ?? [],
       openings: c.openings ?? [],
       items: c.items ?? [],

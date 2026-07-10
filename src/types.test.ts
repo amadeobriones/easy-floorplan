@@ -297,3 +297,32 @@ describe("configsEqual", () => {
     expect(configsEqual("a", "b")).toBe(false);
   });
 });
+
+describe("getFloors carries rooms (#6)", () => {
+  // The render tests all passed while the real dashboard drew no rooms: they built
+  // configs with an explicit `floors: [...]`, and every real config is the flat
+  // legacy shape, where getFloors synthesises the floor -- and dropped `rooms`.
+  it("a flat config's rooms reach the synthesised floor", () => {
+    const rooms = [{ id: "r", points: [[0, 0], [1, 0], [1, 1]] as Array<[number, number]> }];
+    const [floor] = getFloors({ rooms } as unknown as FloorplanCardConfig);
+    expect(floor.rooms).toEqual(rooms);
+  });
+
+  it("a flat config with no rooms gets an empty list, not undefined", () => {
+    expect(getFloors({} as FloorplanCardConfig)[0].rooms).toEqual([]);
+  });
+
+  // normalizeFloor deliberately does NOT backfill `rooms: []`: it would add the key
+  // to every floor the editor writes back, on configs that never had a room.
+  it("an explicit floor keeps its own rooms, and one without stays without", () => {
+    const cfg = {
+      floors: [
+        { id: "a", name: "A", rooms: [{ id: "r", points: [] }], walls: [], openings: [], items: [], texts: [], furniture: [] },
+        { id: "b", name: "B", walls: [], openings: [], items: [], texts: [], furniture: [] },
+      ],
+    } as unknown as FloorplanCardConfig;
+    const [a, b] = getFloors(cfg);
+    expect(a.rooms).toHaveLength(1);
+    expect(b.rooms).toBeUndefined();
+  });
+});
