@@ -1,4 +1,4 @@
-import { haAreasOf, entitiesInArea } from "./areas";
+import { haAreasOf, entitiesInArea, devicesToAdd } from "./areas";
 import { isTypingTarget, pathTags } from "./editor-keys";
 import { clampZoom, zoomAnchoredScroll } from "./editor-zoom";
 import { detectRooms, centroid, pointInPolygon } from "./rooms-from-walls";
@@ -1303,6 +1303,42 @@ export class FloorplanCardEditor extends LitElement {
     const rooms = (this._floor().rooms ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r));
     if (live) this._emitFloor({ rooms });
     else this._commitFloor({ rooms });
+  }
+
+  /** "Add devices in this area" — shown when the room links an HA area. */
+  private _renderAddDevicesRow(r: Room): TemplateResult {
+    const areas = haAreasOf(this.hass);
+    if (!areas.length || !r.areaId) return html`${nothing}`;
+    const areaName = areas.find((a) => a.area_id === r.areaId)?.name ?? r.areaId;
+    const placed = new Set(
+      this._floor().items.map((it) => it.entity).filter((e): e is string => !!e)
+    );
+    const n = devicesToAdd(this.hass, r.areaId, r, placed).length;
+    return html`<div class="row">
+      <button ?disabled=${!n} @click=${() => this._addDevicesFromArea(r)}>
+        ${n ? `Add ${n} device${n === 1 ? "" : "s"} from ${areaName}` : `No new devices in ${areaName}`}
+      </button>
+    </div>`;
+  }
+
+  private _addDevicesFromArea(r: Room): void {
+    if (!r.areaId) return;
+    const placed = new Set(
+      this._floor().items.map((it) => it.entity).filter((e): e is string => !!e)
+    );
+    const toAdd = devicesToAdd(this.hass, r.areaId, r, placed);
+    if (!toAdd.length) return;
+    const items: FloorItem[] = toAdd.map((d) => ({
+      id: uid("item"),
+      entity: d.entity,
+      x: d.x,
+      y: d.y,
+      kind: d.kind,
+      showState: d.kind === "sensor",
+      showIcon: true,
+      size: DEFAULT_ITEM_SIZE,
+    }));
+    this._commitFloor({ items: [...this._floor().items, ...items] });
   }
 
   private _deleteSelected(): void {
@@ -2773,6 +2809,7 @@ export class FloorplanCardEditor extends LitElement {
         ${this._renderForm(roomForm(r, areaEntities), (patch, live) =>
           this._updateRoom(r.id, patch as Partial<Room>, live),
         )}
+        ${this._renderAddDevicesRow(r)}
       `;
     }
 
