@@ -1036,6 +1036,37 @@ describe("collectWatchedEntities", () => {
     expect(got.size).toBe(1);
   });
 
+  it("does not watch sun.sun when dayNightTheme is off or unset", () => {
+    const off = collectWatchedEntities({
+      items: [{ id: "i", kind: "light", x: 0, y: 0, entity: "light.legacy" }],
+    } as unknown as FloorplanCardConfig);
+    expect(off.has("sun.sun")).toBe(false);
+
+    const explicitOff = collectWatchedEntities({
+      items: [],
+      features: { dayNightTheme: false },
+    } as unknown as FloorplanCardConfig);
+    expect(explicitOff.has("sun.sun")).toBe(false);
+  });
+
+  it("watches sun.sun when dayNightTheme is on", () => {
+    const got = collectWatchedEntities({
+      items: [],
+      features: { dayNightTheme: true },
+    } as unknown as FloorplanCardConfig);
+    expect(got.has("sun.sun")).toBe(true);
+  });
+
+  it("watches the configured dayNightEntity instead of sun.sun when set", () => {
+    const got = collectWatchedEntities({
+      items: [],
+      features: { dayNightTheme: true },
+      dayNightEntity: "sensor.porch_darkness",
+    } as unknown as FloorplanCardConfig);
+    expect(got.has("sensor.porch_darkness")).toBe(true);
+    expect(got.has("sun.sun")).toBe(false);
+  });
+
   it("watches a smart furniture piece's entity, and any entity a rule names (smart furniture)", () => {
     const cfg = {
       floors: [

@@ -7,6 +7,7 @@ import {
   FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, getFloors, trackerAxisFraction,
 } from "./types";
 import { featureEnabled } from "./features";
+import { DEFAULT_SUN_ENTITY } from "./theme";
 import { hasAnyAction } from "./actions";
 
 export const WALL_THICKNESS = 8;
@@ -55,6 +56,7 @@ export function hassRenderInputsChanged(
 /** Every entity id whose state can change what a plan draws (all floors). */
 export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
   const ids = new Set<string>();
+  if (featureEnabled(c, "dayNightTheme")) ids.add(c.dayNightEntity ?? DEFAULT_SUN_ENTITY);
   for (const f of getFloors(c)) {
     for (const r of f.rooms ?? []) {
       for (const id of stateStyleEntities(r.stateStyles, undefined)) ids.add(id);
