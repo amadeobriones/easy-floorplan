@@ -24,10 +24,12 @@ import {
   entityStateText,
   itemStateText,
   hassRenderInputsChanged,
+  collectWatchedEntities,
   isEntityOn,
   entityIsActive,
+  resolveItemIcon,
 } from "./render";
-import type { Opening, RenderHass } from "./types";
+import type { FloorplanCardConfig, Opening, RenderHass } from "./types";
 
 describe("snapToWall", () => {
   const hWall = { x1: 0, y1: 0, x2: 100, y2: 0 }; // horizontal
@@ -531,6 +533,67 @@ describe("hassRenderInputsChanged", () => {
   it("ignores entities the plan does not watch", () => {
     const next = { ...base(), states: { [TEMP]: tempState, [HUMIDITY]: { state: "50.0" } } };
     expect(hassRenderInputsChanged(base(), next, watched)).toBe(false);
+  });
+});
+
+describe("isEntityOn / resolveItemIcon", () => {
+  it("treats on/open/home/playing as on", () => {
+    for (const s of ["on", "open", "home", "playing"]) expect(isEntityOn(s)).toBe(true);
+    for (const s of ["off", "closed", "idle", undefined]) expect(isEntityOn(s)).toBe(false);
+  });
+
+  it("resolves icon precedence: override → entity icon → device_class → kind default", () => {
+    const item = { entity: "binary_sensor.a", kind: "sensor" as const };
+    expect(resolveItemIcon({ ...item, icon: "mdi:override" }, undefined)).toBe("mdi:override");
+    expect(
+      resolveItemIcon(item, { state: "on", attributes: { icon: "mdi:from-entity" } })
+    ).toBe("mdi:from-entity");
+    expect(
+      resolveItemIcon(item, { state: "on", attributes: { device_class: "door" } })
+    ).toBe(entityDefaultIcon("binary_sensor.a", "door", true));
+    expect(resolveItemIcon(item, undefined)).toBe(defaultIcon("sensor"));
+  });
+});
+
+describe("collectWatchedEntities", () => {
+  it("collects opening, item, secondary, and tracker entities across floors", () => {
+    const cfg = {
+      floors: [
+        {
+          id: "f1",
+          name: "F1",
+          walls: [],
+          texts: [],
+          furniture: [],
+          openings: [{ id: "o1", type: "door", x: 0, y: 0, entity: "cover.door" }],
+          items: [
+            { id: "i1", kind: "light", x: 0, y: 0, entity: "light.a", secondaryEntity: "sensor.b" },
+          ],
+          trackers: [
+            {
+              id: "t1",
+              x: 0,
+              y: 0,
+              w: 10,
+              h: 10,
+              xSensor: { entity: "sensor.x", min: 0, max: 5, presence: { entity: "binary_sensor.p" } },
+            },
+          ],
+        },
+      ],
+    } as unknown as FloorplanCardConfig;
+    const got = collectWatchedEntities(cfg);
+    for (const id of ["cover.door", "light.a", "sensor.b", "sensor.x", "binary_sensor.p"]) {
+      expect(got.has(id)).toBe(true);
+    }
+  });
+
+  it("skips unset entities and handles a legacy flat config", () => {
+    const got = collectWatchedEntities({
+      items: [{ id: "i", kind: "light", x: 0, y: 0, entity: "light.legacy" }],
+    } as unknown as FloorplanCardConfig);
+    expect(got.has("light.legacy")).toBe(true);
+    expect(got.size).toBe(1);
   });
 });
 
