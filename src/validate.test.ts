@@ -182,3 +182,27 @@ describe("configToText round-trip", () => {
     if (r.ok) expect(r.config).toEqual(valid);
   });
 });
+
+it("accepts an awareness marker list", () => {
+  const r = validateConfig({
+    type: "x", width: 10, height: 10,
+    awareness: [{ id: "m1", x: 1, y: 2, entity: "binary_sensor.hall_motion", kind: "motion" }],
+  });
+  expect(r.ok).toBe(true);
+});
+
+it("rejects an awareness marker with an unknown kind", () => {
+  const r = validateConfig({
+    type: "x", width: 10, height: 10,
+    awareness: [{ id: "m1", x: 1, y: 2, entity: "binary_sensor.hall_motion", kind: "sideways" }],
+  });
+  expect(r.ok).toBe(false);
+});
+
+it("rejects an awareness marker missing its entity", () => {
+  const r = validateConfig({
+    type: "x", width: 10, height: 10,
+    awareness: [{ id: "m1", x: 1, y: 2, kind: "safety" }],
+  });
+  expect(r.ok).toBe(false);
+});

@@ -474,6 +474,25 @@ export const FURNITURE_DEFAULT_SIZE: Record<FurnitureType, { w: number; h: numbe
   smartSpeaker: { w: 28, h: 28 },
 };
 
+/** What a placement marker on the awareness/security layer watches for. */
+export type AwarenessKind = "motion" | "safety";
+
+/**
+ * A placement point for the awareness/security layer (feature flag
+ * "awarenessLayer", see src/features.ts): a motion marker pings a ripple
+ * where its sensor fires; a safety marker (leak, smoke, door left open)
+ * blinks in an alert palette when its sensor trips. One entity per marker;
+ * `kind` selects which visual and which trip rule apply — see
+ * isMarkerTripped in awareness.ts.
+ */
+export interface AwarenessMarker {
+  id: string;
+  x: number;
+  y: number;
+  entity: string;
+  kind: AwarenessKind;
+}
+
 /** A quarter-turn display rotation for a floor. Absent means 0. */
 export type Rotation = 0 | 90 | 180 | 270;
 
@@ -514,6 +533,13 @@ export interface Floor {
   texts: FloorText[];
   furniture: Furniture[];
   trackers: Tracker[];
+  /**
+   * Awareness/security markers (feature flag "awarenessLayer"): motion pings
+   * and safety alerts. Optional, like `rooms` — an older config simply has
+   * none, and normalizeFloor deliberately does not backfill an empty array
+   * here (see the `rooms` handling in normalizeFloor, unchanged by this).
+   */
+  awareness?: AwarenessMarker[];
 }
 
 /**
@@ -579,6 +605,7 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   texts?: FloorText[];
   furniture?: Furniture[];
   trackers?: Tracker[];
+  awareness?: AwarenessMarker[];
   /** Optional feature toggles; every flag defaults to off. See {@link FeaturesConfig}. */
   features?: FeaturesConfig;
 }
@@ -735,6 +762,7 @@ export function getFloors(c: FloorplanCardConfig): Floor[] {
       texts: c.texts ?? [],
       furniture: c.furniture ?? [],
       trackers: c.trackers ?? [],
+      awareness: c.awareness ?? [],
     },
   ];
 }

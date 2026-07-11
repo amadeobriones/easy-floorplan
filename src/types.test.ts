@@ -327,6 +327,36 @@ describe("getFloors carries rooms (#6)", () => {
   });
 });
 
+describe("getFloors carries awareness markers", () => {
+  const awareness = [
+    { id: "m1", x: 10, y: 20, entity: "binary_sensor.hall_motion", kind: "motion" as const },
+  ];
+
+  it("a flat config's awareness markers reach the synthesised floor", () => {
+    const [floor] = getFloors({ awareness } as unknown as FloorplanCardConfig);
+    expect(floor.awareness).toEqual(awareness);
+  });
+
+  it("a flat config with no awareness markers gets an empty list, not undefined", () => {
+    expect(getFloors({} as FloorplanCardConfig)[0].awareness).toEqual([]);
+  });
+
+  // normalizeFloor deliberately does NOT backfill `awareness: []`, matching the
+  // existing `rooms` behaviour: it would add the key to every explicit floor
+  // that saved without one, drifting a hand-written config on every load.
+  it("an explicit floor keeps its own markers, and one without stays without", () => {
+    const cfg = {
+      floors: [
+        { id: "a", name: "A", awareness, walls: [], openings: [], items: [], texts: [], furniture: [] },
+        { id: "b", name: "B", walls: [], openings: [], items: [], texts: [], furniture: [] },
+      ],
+    } as unknown as FloorplanCardConfig;
+    const [a, b] = getFloors(cfg);
+    expect(a.awareness).toHaveLength(1);
+    expect(b.awareness).toBeUndefined();
+  });
+});
+
 describe("getFloors — rotation round-trip", () => {
   const floor = (extra: Record<string, unknown>) => ({
     id: "f1", name: "F1", walls: [], openings: [], items: [], texts: [],
