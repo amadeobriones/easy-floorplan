@@ -38,8 +38,9 @@ import {
   lightVisual,
   renderRoom,
   ROOM_FILL_OPACITY,
+  roomIsTappable,
 } from "./render";
-import type { FloorplanCardConfig, Opening, RenderHass } from "./types";
+import type { FloorplanCardConfig, Opening, RenderHass, Room } from "./types";
 
 describe("snapToWall", () => {
   const hWall = { x1: 0, y1: 0, x2: 100, y2: 0 }; // horizontal
@@ -1358,6 +1359,34 @@ describe("renderRoom (#6)", () => {
       ],
     } as unknown as FloorplanCardConfig;
     expect([...collectWatchedEntities(cfg)]).toEqual(["light.lamp"]);
+  });
+});
+
+describe("roomIsTappable (2a)", () => {
+  const tapRoom: Room = {
+    id: "r",
+    points: [[0, 0], [10, 0], [10, 10], [0, 10]],
+    tap_action: { action: "toggle-area-lights" },
+  };
+  const bareRoom: Room = { id: "r2", points: [[0, 0], [10, 0], [10, 10], [0, 10]] };
+  const cfgOff = { type: "x", width: 10, height: 10 } as FloorplanCardConfig;
+  const cfgOn = { type: "x", width: 10, height: 10, features: { roomTapScenes: true } } as FloorplanCardConfig;
+
+  it("off by default (no features block) even with an action configured", () => {
+    expect(roomIsTappable(cfgOff, tapRoom)).toBe(false);
+  });
+  it("feature on but no action configured stays untappable", () => {
+    expect(roomIsTappable(cfgOn, bareRoom)).toBe(false);
+  });
+  it("feature on + an explicit tap_action makes the room tappable", () => {
+    expect(roomIsTappable(cfgOn, tapRoom)).toBe(true);
+  });
+  it("feature on + only a hold_action is enough", () => {
+    expect(roomIsTappable(cfgOn, { ...bareRoom, hold_action: { action: "more-info" } })).toBe(true);
+  });
+  it("feature explicitly off overrides an action being configured", () => {
+    const cfgExplicitOff = { ...cfgOn, features: { roomTapScenes: false } };
+    expect(roomIsTappable(cfgExplicitOff, tapRoom)).toBe(false);
   });
 });
 

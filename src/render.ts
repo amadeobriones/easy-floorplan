@@ -7,6 +7,7 @@ import {
   FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, getFloors, trackerAxisFraction,
 } from "./types";
 import { featureEnabled } from "./features";
+import { hasAnyAction } from "./actions";
 
 export const WALL_THICKNESS = 8;
 
@@ -938,6 +939,16 @@ export function sectionalPoints(
     [-hw, -hh + seat],
   ];
   return hand === "left" ? pts.map(([x, y]) => [-x, y] as [number, number]) : pts;
+}
+
+/**
+ * Whether a room should get the tap-to-run-scene hit polygon (2a): the
+ * `roomTapScenes` feature is on AND the room explicitly configures at least
+ * one gesture. A room with the feature on but no action stays a plain,
+ * non-interactive shape -- nothing to tap means nothing should look tappable.
+ */
+export function roomIsTappable(c: FloorplanCardConfig, r: Room): boolean {
+  return featureEnabled(c, "roomTapScenes") && hasAnyAction(r);
 }
 
 /** Default tint: strong enough to read, weak enough not to fight the walls. */
