@@ -1,7 +1,7 @@
 import { LitElement, html, css, svg, nothing, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type {
-  HomeAssistant, FloorplanCardConfig, FloorItem, FloorText, Floor, Rotation, Furniture, ItemKind,
+  HomeAssistant, FloorplanCardConfig, FloorItem, FloorText, Floor, Rotation, Furniture, ItemKind, Room,
 } from "./types";
 import {
   DEFAULT_WIDTH,
@@ -22,6 +22,7 @@ import {
   renderRipple,
   renderFurniture,
   renderRoom,
+  roomIsTappable,
   renderTracker,
   trackerSensorReading,
   itemStateText,
@@ -56,6 +57,7 @@ import "./awareness-layer";
 import "./energy-layer";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
+import { resolveRoomAction } from "./areas";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
 
 @customElement("easy-floorplan-card")
@@ -196,6 +198,26 @@ export class FloorplanCard extends LitElement {
   ): void {
     if (!this.hass) return;
     executeAction(this, this.hass, f, actionForGesture(f, ev.detail.action));
+  }
+
+  /**
+   * Tapping a room (2a): resolve either the built-in "toggle area lights"
+   * convenience or a generic action, reusing `executeAction` exactly as
+   * furniture does for the generic path.
+   */
+  private _handleRoomAction(
+    ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>,
+    r: Room
+  ): void {
+    if (!this.hass) return;
+    const resolved = resolveRoomAction(r, ev.detail.action, this.hass);
+    if (resolved.kind === "toggle-lights") {
+      if (resolved.entityIds.length) {
+        this.hass.callService("homeassistant", "toggle", { entity_id: resolved.entityIds });
+      }
+      return;
+    }
+    executeAction(this, this.hass, { entity: undefined }, resolved.config);
   }
 
   /**
@@ -388,9 +410,26 @@ export class FloorplanCard extends LitElement {
               ? svg`<image href=${active.image} x="0" y="0" width=${c.width} height=${c.height}
                           preserveAspectRatio="none" opacity=${active.imageOpacity ?? 1} />`
               : nothing}
-            ${(active.rooms ?? []).map((r) =>
-              renderRoom(r, resolveStateStyle(r.stateStyles, this.hass, undefined)),
-            )}
+            ${(active.rooms ?? []).map((r) => {
+              const shape = renderRoom(r, resolveStateStyle(r.stateStyles, this.hass, undefined));
+              if (!roomIsTappable(c, r)) return shape;
+              // A transparent hit polygon over the room, mirroring .fp-furn-hit --
+              // the decoration polygon stays non-interactive (.room {pointer-events:
+              // none}), this sibling carries the click. Same points as the room
+              // itself: unlike furniture (a fixed local box), a room is an
+              // arbitrary polygon, so the hit target is its own outline.
+              const pts = r.points.map(([x, y]) => `${x},${y}`).join(" ");
+              return svg`<g class="fp-room-tap"
+                  @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
+                    this._handleRoomAction(ev, r)}
+                  .actionHandler=${actionHandler({
+                    hasHold: hasAction(r.hold_action),
+                    hasDoubleClick: hasAction(r.double_tap_action),
+                  })}>
+                  ${shape}
+                  <polygon class="fp-room-hit" points=${pts} />
+                </g>`;
+            })}
             ${hass && visibleLayers.length > 0
               ? svg`<g class="fp-layers">
                   ${visibleLayers.map((l) => l.render({ floor: active, hass, config: c }))}
@@ -709,6 +748,13 @@ export class FloorplanCard extends LitElement {
       cursor: pointer;
     }
     .fp-furn-hit {
+      fill: transparent;
+      pointer-events: all;
+    }
+    .fp-room-tap {
+      cursor: pointer;
+    }
+    .fp-room-hit {
       fill: transparent;
       pointer-events: all;
     }
