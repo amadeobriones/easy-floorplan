@@ -149,6 +149,13 @@ export interface Room {
   stateStyles?: StateStyle[];
   /** Home Assistant area id. Stored, not yet acted on (see Floor.haFloor). */
   areaId?: string;
+  /**
+   * Temperature-class entity (e.g. a `sensor` with `device_class: temperature`)
+   * that drives this room's thermal-layer tint. Unset = the room is not shaded
+   * by the thermal layer, even when the feature is on (see
+   * docs/superpowers/plans/2026-07-10-thermal-layer.md).
+   */
+  tempEntity?: string;
 }
 
 /** How a matched {@link StateStyle} animates its element. */
