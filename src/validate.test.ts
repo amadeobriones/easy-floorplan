@@ -27,6 +27,20 @@ describe("validateConfig", () => {
     const r = validateConfig({ type: "x", width: 10, height: 10, features: { thermalLayer: "yes" } });
     expect(r.ok).toBe(false);
   });
+  it("accepts a room's tempEntity", () => {
+    const cfg = {
+      type: "x", width: 10, height: 10,
+      rooms: [{ id: "r1", points: [[0, 0], [1, 1]], tempEntity: "sensor.living_room_temp" }],
+    };
+    expect(validateConfig(cfg).ok).toBe(true);
+  });
+  it("rejects a non-string tempEntity", () => {
+    const cfg = {
+      type: "x", width: 10, height: 10,
+      rooms: [{ id: "r1", points: [[0, 0], [1, 1]], tempEntity: 42 }],
+    };
+    expect(validateConfig(cfg).ok).toBe(false);
+  });
   it("accepts a valid config", () => {
     const r = validateConfig(valid);
     expect(r.ok).toBe(true);

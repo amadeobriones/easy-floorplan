@@ -601,6 +601,10 @@
                         "$ref": "#/definitions/StateStyle"
                     },
                     "type": "array"
+                },
+                "tempEntity": {
+                    "description": "Temperature-class entity (e.g. a `sensor` with `device_class: temperature`)\nthat drives this room's thermal-layer tint. Unset = the room is not shaded\nby the thermal layer, even when the feature is on (see\ndocs/superpowers/plans/2026-07-10-thermal-layer.md).",
+                    "type": "string"
                 }
             },
             "required": [

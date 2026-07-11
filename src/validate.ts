@@ -59,7 +59,10 @@ const furniture = shape(
   { angle: num, entity: str, secondaryEntity: str, showState: bool }
 );
 const tracker = shape({ id: str, x: num, y: num, w: num, h: num }, { angle: num });
-const room = shape({ id: str, points: arrayOf(point) }, { name: str, areaId: str, fill: str, fillOpacity: num });
+const room = shape(
+  { id: str, points: arrayOf(point) },
+  { name: str, areaId: str, fill: str, fillOpacity: num, tempEntity: str },
+);
 
 const elementLists = {
   walls: arrayOf(wall),
