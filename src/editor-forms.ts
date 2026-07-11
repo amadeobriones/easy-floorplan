@@ -225,6 +225,43 @@ export const FURNITURE_CATEGORIES: { label: string; types: FurnitureType[] }[] =
   { label: "Decor & misc", types: ["rug", "plant", "fireplace", "stairs"] },
 ];
 
+/** One FURNITURE_CATEGORIES group after the Add-menu search filter is applied. */
+export interface AddMenuGroup {
+  label: string;
+  types: FurnitureType[];
+  /** Types in this group matching the current query (or all of `types` when not searching). */
+  shown: FurnitureType[];
+}
+
+export interface AddMenuGroups {
+  /** Whether a non-empty query is active. */
+  searching: boolean;
+  /** Every category, each carrying its filtered `shown` list. */
+  visible: AddMenuGroup[];
+  /** Flat list of all matching types across categories; empty when not searching. */
+  matches: FurnitureType[];
+}
+
+/**
+ * Pure search/filter computation for the Add-menu: which FURNITURE_CATEGORIES
+ * groups and types match `query` (matched by label substring, case-insensitive).
+ * Extracted out of _renderAddMenu in editor.ts so it's independently testable;
+ * the template/DOM-event wiring stays in the editor.
+ */
+export function computeAddMenuGroups(
+  categories: { label: string; types: FurnitureType[] }[],
+  query: string
+): AddMenuGroups {
+  const q = query.trim().toLowerCase();
+  const searching = q.length > 0;
+  const visible: AddMenuGroup[] = categories.map((cat) => ({
+    ...cat,
+    shown: searching ? cat.types.filter((t) => FURNITURE_LABELS[t].toLowerCase().includes(q)) : cat.types,
+  }));
+  const matches = searching ? visible.flatMap((c) => c.shown) : [];
+  return { searching, visible, matches };
+}
+
 export function openingForm(o: Opening): FormSpec {
   const motion = openingMotion(o);
   const style = sliderStyleOf(o);
