@@ -557,6 +557,31 @@ export class FloorplanCard extends LitElement {
     .fp-slide-panel rect {
       transition: fill 0.5s ease;
     }
+    /* Garage panel: retracts toward the hinge-side jamb (scaleX about the left
+       jamb via fill-box left center; the group content is static so the box is
+       stable) and fades as the door rolls up out of the cut plane. */
+    .fp-garage-panel {
+      transform-box: fill-box;
+      transform-origin: left center;
+      transition: transform 0.5s ease, opacity 0.5s ease;
+    }
+    .fp-garage-panel rect {
+      transition: fill 0.5s ease;
+    }
+    .fp-garage-panel line {
+      transition: stroke 0.5s ease;
+    }
+    /* Bi-fold leaf: each group holds exactly one leaf rect, so fill-box left
+       center is the hinge end; the transform is the whole chained hinge list,
+       which transitions per-function -- every tween frame is a true fold pose. */
+    .fp-fold-panel {
+      transform-box: fill-box;
+      transform-origin: left center;
+      transition: transform 0.5s ease;
+    }
+    .fp-fold-panel rect {
+      transition: fill 0.5s ease;
+    }
     .fp-furn-tap {
       cursor: pointer;
     }

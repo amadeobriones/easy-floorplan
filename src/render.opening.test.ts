@@ -91,3 +91,113 @@ describe("renderOpening — sliding window", () => {
     expect(win).not.toContain("height=2.5"); // not a solid door panel
   });
 });
+
+const count = (s: string, needle: string): number => s.split(needle).length - 1;
+
+describe("renderOpening — double door (motion: swing, doorStyle: double)", () => {
+  it("renders two leaves and two swing arcs", () => {
+    const v = svgOf({ type: "door", motion: "swing", doorStyle: "double" });
+    expect(v).toContain("fp-door-leaf");
+    expect(v).toContain("fp-leaf-r");
+    expect(count(v, "fp-door-arc")).toBe(2);
+  });
+
+  it("a single door (doorStyle unset) has only the left leaf", () => {
+    const v = svgOf({ type: "door", motion: "swing" });
+    expect(v).toContain("fp-door-leaf");
+    expect(v).not.toContain("fp-leaf-r");
+  });
+});
+
+describe("renderOpening — swing window is unchanged by the double-door refactor", () => {
+  it("is byte-identical to the pre-refactor casement body (guards the doubleSwingBody extraction)", () => {
+    const win = svgOf({ type: "window", motion: "swing" });
+    expect(win).toBe(
+      '<g transform="translate(100 60) rotate(0)">' +
+        '\n      <g transform="scale(1 1)">' +
+        "\n        <!-- jambs -->" +
+        '\n        <line x1=-45 y1=-6 x2=-45 y2=6' +
+        '\n              stroke=#000 stroke-width="2" />' +
+        '\n        <line x1=45 y1=-6 x2=45 y2=6' +
+        '\n              stroke=#000 stroke-width="2" />' +
+        "\n        <!-- swing arcs, drawn from the middle outward -->" +
+        '\n        <path class="fp-door-arc" d="M 0 0 A 45 45 0 0 0 -45 -45"' +
+        '\n              fill="none" stroke-width="1.5" stroke-dasharray=70.68583470577035' +
+        '\n              style="stroke:#000;stroke-dashoffset:0;" />' +
+        '\n        <path class="fp-door-arc" d="M 0 0 A 45 45 0 0 1 45 -45"' +
+        '\n              fill="none" stroke-width="1.5" stroke-dasharray=70.68583470577035' +
+        '\n              style="stroke:#000;stroke-dashoffset:0;" />' +
+        "\n        <!-- left leaf, hinged at left jamb -->" +
+        '\n        <g transform="translate(-45 0)">' +
+        '\n          <g class="fp-door-leaf" style="transform:rotate(-90deg);">' +
+        '\n            <rect x="0" y="-1.25" width=45 height="2.5" style="fill:#000;" />' +
+        "\n          </g>" +
+        "\n        </g>" +
+        "\n        <!-- right leaf, hinged at right jamb -->" +
+        '\n        <g transform="translate(45 0)">' +
+        '\n          <g class="fp-leaf-r" style="transform:rotate(90deg);">' +
+        '\n            <rect x=-45 y="-1.25" width=45 height="2.5" style="fill:#000;" />' +
+        "\n          </g>" +
+        "\n        </g>" +
+        "\n      </g>" +
+        "\n    </g>",
+    );
+  });
+});
+
+describe("renderOpening — garage door (motion: roll)", () => {
+  it("renders a garage panel with 3 section ticks", () => {
+    const v = svgOf({ type: "door", motion: "roll" });
+    expect(v).toContain("fp-garage-panel");
+    // Ticks are the only lines drawn at y1="-2.5" (jambs use cutH/2, the
+    // overhead track line uses y="0").
+    expect(count(v, 'y1="-2.5"')).toBe(3);
+  });
+
+  it("is full and opaque when closed (amount 0)", () => {
+    const v = svgOf({ type: "door", motion: "roll" }, { amount: 0 });
+    expect(v).toContain("transform:scaleX(1);opacity:1;");
+  });
+
+  it("is cleared and transparent when open (amount 1)", () => {
+    const v = svgOf({ type: "door", motion: "roll" }, { amount: 1 });
+    expect(v).toContain("transform:scaleX(0);opacity:0;");
+  });
+});
+
+describe("renderOpening — bi-fold door (motion: fold)", () => {
+  it("defaults to 2 fold panels", () => {
+    const v = svgOf({ type: "door", motion: "fold" });
+    expect(count(v, 'class="fp-fold-panel"')).toBe(2);
+  });
+
+  it("renders 4 panels when foldPanels: 4", () => {
+    const v = svgOf({ type: "door", motion: "fold", foldPanels: 4 });
+    expect(count(v, 'class="fp-fold-panel"')).toBe(4);
+  });
+
+  it("the fold angle is 0 closed and FOLD_MAX_DEG (80) open", () => {
+    const closed = svgOf({ type: "door", motion: "fold" }, { amount: 0 });
+    const open = svgOf({ type: "door", motion: "fold" }, { amount: 1 });
+    expect(closed).toContain("rotate(0deg)");
+    expect(open).toContain("rotate(-80deg)");
+    expect(closed).not.toEqual(open);
+  });
+});
+
+describe("renderOpening — existing symbols are unaffected", () => {
+  it("a plain single swing door still renders only fp-door-leaf", () => {
+    const v = svgOf({ type: "door" });
+    expect(v).toContain("fp-door-leaf");
+    expect(v).not.toContain("fp-leaf-r");
+    expect(v).not.toContain("fp-garage-panel");
+    expect(v).not.toContain("fp-fold-panel");
+  });
+
+  it("a slider still renders fp-slide-panel", () => {
+    const v = svgOf({ type: "door", motion: "slide" });
+    expect(v).toContain("fp-slide-panel");
+    expect(v).not.toContain("fp-garage-panel");
+    expect(v).not.toContain("fp-fold-panel");
+  });
+});

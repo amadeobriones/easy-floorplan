@@ -607,30 +607,25 @@ export interface OpeningStyle {
   accent?: string;
 }
 
-/**
- * Render a door or window as an SVG group centered at the origin, then translated
- * and rotated into place. The wall behind the opening is cut away by the host via
- * an SVG mask (see {@link renderWallMask}), so this draws only the symbol — jambs,
- * swing arc and the moving leaf/sash, which carry CSS classes so the host's styles
- * can transition them smoothly between open and closed.
- */
-export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResult {
-  const { color, open = true, active = false, accent = "var(--primary-color, #03a9f4)" } = style;
-  const half = o.length / 2;
-  const cutH = WALL_THICKNESS + 4;
-  // The moving parts take the accent color when actively open (sensor-driven).
-  const tone = active ? accent : color;
-  // Fraction open (0..1) drives partial swing/slide. Defaults to the binary
-  // `open` so callers that don't pass `amount` render exactly as before.
-  const amt = Math.max(0, Math.min(1, style.amount ?? (open ? 1 : 0)));
+/** Bi-fold full-open fold angle. See {@link renderOpening} §3 (reactive-doors spec). */
+const FOLD_MAX_DEG = 80; // full open keeps a legible zigzag, not a flat bar
 
-  let body: SVGTemplateResult;
-  if (o.type === "window" && openingMotion(o) === "swing") {
-    // Two casement leaves hinged at each jamb. Closed, they meet in the middle
-    // along the wall; open, they swing outward (up) like double doors, each
-    // tracing a quarter-circle arc (radius = half) that draws on as it opens.
-    const arcLen = (Math.PI / 2) * half;
-    body = svg`
+/**
+ * Two leaves hinged one at each jamb, meeting at the centre when closed and
+ * swinging outward (a butterfly) as `amt` goes to 1. Shared by the swing
+ * *window* body (a casement pair) and the swing *double door* body (French
+ * doors) — the two are the same plan symbol, so this must stay the single
+ * source of truth for both.
+ */
+function doubleSwingBody(
+  half: number,
+  cutH: number,
+  amt: number,
+  tone: string,
+  color: string,
+): SVGTemplateResult {
+  const arcLen = (Math.PI / 2) * half;
+  return svg`
         <!-- jambs -->
         <line x1=${-half} y1=${-cutH / 2} x2=${-half} y2=${cutH / 2}
               stroke=${color} stroke-width="2" />
@@ -656,6 +651,37 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
           </g>
         </g>
       `;
+}
+
+/**
+ * Render a door or window as an SVG group centered at the origin, then translated
+ * and rotated into place. The wall behind the opening is cut away by the host via
+ * an SVG mask (see {@link renderWallMask}), so this draws only the symbol — jambs,
+ * swing arc and the moving leaf/sash, which carry CSS classes so the host's styles
+ * can transition them smoothly between open and closed.
+ */
+export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResult {
+  const { color, open = true, active = false, accent = "var(--primary-color, #03a9f4)" } = style;
+  const half = o.length / 2;
+  const cutH = WALL_THICKNESS + 4;
+  // The moving parts take the accent color when actively open (sensor-driven).
+  const tone = active ? accent : color;
+  // Fraction open (0..1) drives partial swing/slide. Defaults to the binary
+  // `open` so callers that don't pass `amount` render exactly as before.
+  const amt = Math.max(0, Math.min(1, style.amount ?? (open ? 1 : 0)));
+
+  let body: SVGTemplateResult;
+  if (o.type === "window" && openingMotion(o) === "swing") {
+    // Two casement leaves hinged at each jamb. Closed, they meet in the middle
+    // along the wall; open, they swing outward (up) like double doors, each
+    // tracing a quarter-circle arc (radius = half) that draws on as it opens.
+    body = doubleSwingBody(half, cutH, amt, tone, color);
+  } else if (openingMotion(o) === "swing" && doorStyleOf(o) === "double") {
+    // Double door: two half-width leaves, one hinged at each jamb, meeting at
+    // the centre (French doors). Geometrically identical to the casement
+    // window body above -- a French door and a casement pair are the same
+    // plan symbol.
+    body = doubleSwingBody(half, cutH, amt, tone, color);
   } else if (openingMotion(o) === "slide") {
     // A sliding door / window: panel(s) sit in the opening and travel *along* the
     // wall. Closed, they fill the gap; open, they slide aside (single), stack
@@ -713,6 +739,61 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
           <rect x=${-half} y=${-t / 2} width=${o.length} height=${t} style="fill:${tone};" />
         </g>`;
     }
+  } else if (openingMotion(o) === "roll") {
+    // Sectional roll-up door (garage). Closed: a full-span panel with section
+    // joints. Open: the panel rolls up out of the cut plane -- drawn as a
+    // retract-toward-the-jamb + fade, uncovering the dashed overhead-track line.
+    const seg = o.length / 4;
+    const clear = 1 - amt;
+    body = svg`
+        <!-- jambs -->
+        <line x1=${-half} y1=${-cutH / 2} x2=${-half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <line x1=${half} y1=${-cutH / 2} x2=${half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <!-- overhead track: dashed = above the cut plane; shows once the panel clears -->
+        <line x1=${-half} y1="0" x2=${half} y2="0" stroke=${color}
+              stroke-width="0.75" stroke-dasharray="4 3" opacity="0.35" />
+        <!-- sectional panel: joints ride inside so the sections clear with it -->
+        <g class="fp-garage-panel" style="transform:scaleX(${clear});opacity:${clear};">
+          <rect x=${-half} y="-1.25" width=${o.length} height="2.5" style="fill:${tone};" />
+          ${[1, 2, 3].map(
+            (k) => svg`<line x1=${-half + k * seg} y1="-2.5" x2=${-half + k * seg}
+              y2="2.5" stroke-width="1" style="stroke:${tone};" />`
+          )}
+        </g>
+      `;
+  } else if (openingMotion(o) === "fold") {
+    // Bi-fold: n equal leaves hinged in a chain, concertina against the left
+    // jamb. Each leaf is a flat sibling whose CSS transform is the full hinge
+    // chain up to that leaf; matching list structures make the 0.5s transition
+    // interpolate every frame as an exact fold pose (see reactive-doors spec).
+    const n = foldPanelsOf(o); // 2 | 4
+    const L = o.length / n;
+    const a = FOLD_MAX_DEG * amt;
+    let chain = "";
+    const leaves: SVGTemplateResult[] = [];
+    for (let k = 1; k <= n; k++) {
+      chain +=
+        k === 1
+          ? `rotate(${-a}deg)`
+          : ` translate(${L}px, 0px) rotate(${(k % 2 ? -2 : 2) * a}deg)`;
+      leaves.push(svg`
+          <g class="fp-fold-panel" style="transform:${chain};">
+            <rect x="0" y="-1.25" width=${L} height="2.5" style="fill:${tone};" />
+          </g>`);
+    }
+    body = svg`
+        <!-- jambs -->
+        <line x1=${-half} y1=${-cutH / 2} x2=${-half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <line x1=${half} y1=${-cutH / 2} x2=${half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <!-- track -->
+        <line x1=${-half} y1="0" x2=${half} y2="0"
+              stroke=${color} stroke-width="0.75" opacity="0.6" />
+        <g transform="translate(${-half} 0)">${leaves}</g>
+      `;
   } else {
     // Door leaf hinged at the left jamb: lies along the wall when closed,
     // swings up (−90° when fully open) by `amt`. The leaf is drawn closed and
