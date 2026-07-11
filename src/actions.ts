@@ -15,6 +15,20 @@ export function hasAction(config?: ActionConfig): boolean {
   return config !== undefined && config.action !== "none";
 }
 
+/**
+ * Whether an action-bearing item explicitly configures at least one gesture.
+ * Used to gate an *optional* tap target (currently: rooms) on there being
+ * something to do — unlike items/furniture, a room has no entity-driven
+ * default action, so "has an action" only ever means "the config set one".
+ */
+export function hasAnyAction(item: {
+  tap_action?: ActionConfig;
+  hold_action?: ActionConfig;
+  double_tap_action?: ActionConfig;
+}): boolean {
+  return hasAction(item.tap_action) || hasAction(item.hold_action) || hasAction(item.double_tap_action);
+}
+
 export function actionForGesture(
   item: {
     entity?: string;

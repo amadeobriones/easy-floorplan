@@ -24,6 +24,19 @@ describe("floorplan-card source guards", () => {
   it("registers the lights layer with the live-layer framework", () => {
     expect(src).toContain('import "./lights"');
   });
+
+  it("gates the room hit-polygon on roomIsTappable and reuses the furniture action wiring (2a)", () => {
+    expect(src).toContain("roomIsTappable(c, r)");
+    expect(src).toContain('class="fp-room-tap"');
+    expect(src).toContain('class="fp-room-hit"');
+    expect(src).toContain("resolveRoomAction(");
+    expect(src).toContain("_handleRoomAction");
+  });
+
+  it("styles the room hit polygon as an invisible, clickable overlay (2a)", () => {
+    expect(src).toContain(".fp-room-tap {");
+    expect(src).toContain(".fp-room-hit {");
+  });
 });
 
 // Task 2 (layer framework): the card's watched-entity set must union in

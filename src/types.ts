@@ -156,6 +156,17 @@ export interface Room {
    * docs/superpowers/plans/2026-07-10-thermal-layer.md).
    */
   tempEntity?: string;
+  /**
+   * Lovelace actions (see {@link ActionConfig}), mirroring `Furniture`. Unlike
+   * items/furniture, a room has no entity of its own, so there is no implicit
+   * default tap action — an unconfigured room stays a non-interactive shape.
+   * `{ action: "toggle-area-lights" }` is a card-specific convenience: toggle
+   * every `light.*` entity in the room's `areaId` (see {@link resolveRoomAction}
+   * in `./areas`).
+   */
+  tap_action?: ActionConfig;
+  hold_action?: ActionConfig;
+  double_tap_action?: ActionConfig;
 }
 
 /** How a matched {@link StateStyle} animates its element. */
