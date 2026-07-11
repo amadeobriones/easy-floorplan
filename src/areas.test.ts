@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { haAreasOf, entitiesInArea, scatterInPolygon, devicesToAdd } from "./areas";
+import {
+  haAreasOf,
+  entitiesInArea,
+  scatterInPolygon,
+  devicesToAdd,
+  lightsInArea,
+  resolveRoomAction,
+  TOGGLE_AREA_LIGHTS_ACTION,
+} from "./areas";
 import type { Room } from "./types";
 
 const hass = {
@@ -25,6 +33,50 @@ describe("haAreasOf", () => {
   it("returns [] when hass has no areas", () => {
     expect(haAreasOf({})).toEqual([]);
     expect(haAreasOf(null)).toEqual([]);
+  });
+});
+
+describe("lightsInArea", () => {
+  it("keeps only light.* entities in the area", () => {
+    expect(lightsInArea(hass, "kitchen")).toEqual(["light.k", "light.viadev"]);
+  });
+  it("returns [] for an area with no lights", () => {
+    // "bath" isn't usable here: this fixture's light.override entity-level
+    // overrides its device's area to "bath" (see the devicesToAdd tests
+    // below), so bath does have one light. Use an area absent from the
+    // fixture entirely instead -- no entities means no lights.
+    expect(lightsInArea(hass, "attic")).toEqual([]);
+  });
+});
+
+describe("resolveRoomAction", () => {
+  it("resolves the toggle-area-lights convenience to the area's light entities", () => {
+    const room = { tap_action: { action: TOGGLE_AREA_LIGHTS_ACTION }, areaId: "kitchen" };
+    expect(resolveRoomAction(room, "tap", hass)).toEqual({
+      kind: "toggle-lights",
+      entityIds: ["light.k", "light.viadev"],
+    });
+  });
+  it("resolves to [] entity ids when the room has no areaId", () => {
+    const room = { tap_action: { action: TOGGLE_AREA_LIGHTS_ACTION } };
+    expect(resolveRoomAction(room, "tap", hass)).toEqual({ kind: "toggle-lights", entityIds: [] });
+  });
+  it("falls through to the generic ActionConfig path for a normal action", () => {
+    const room = { tap_action: { action: "more-info" }, areaId: "kitchen" };
+    expect(resolveRoomAction(room, "tap", hass)).toEqual({
+      kind: "generic",
+      config: { action: "more-info" },
+    });
+  });
+  it("resolves per-gesture, like actionForGesture", () => {
+    const room = { hold_action: { action: "navigate", navigation_path: "/x" } };
+    expect(resolveRoomAction(room, "hold", hass)).toEqual({
+      kind: "generic",
+      config: { action: "navigate", navigation_path: "/x" },
+    });
+  });
+  it("an unconfigured gesture resolves to no action (rooms have no implicit default)", () => {
+    expect(resolveRoomAction({}, "tap", hass)).toEqual({ kind: "generic", config: { action: "none" } });
   });
 });
 

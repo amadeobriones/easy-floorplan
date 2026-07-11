@@ -1,5 +1,6 @@
-import type { ItemKind, Room } from "./types";
+import type { ItemKind, Room, ActionConfig } from "./types";
 import { kindFromEntity } from "./render";
+import { actionForGesture } from "./actions";
 
 /** A Home Assistant area-registry entry (the subset this card uses). */
 export interface HaAreaInfo {
@@ -46,6 +47,44 @@ export function entitiesInArea(hass: unknown, areaId: string): string[] {
     if (inArea) out.push(id);
   }
   return out.sort();
+}
+
+/** Sentinel action value: the room "toggle all lights in this room's area" convenience (2a). */
+export const TOGGLE_AREA_LIGHTS_ACTION = "toggle-area-lights";
+
+/** Light entities (domain `light.*`) in an area — the room "toggle area lights" convenience. */
+export function lightsInArea(hass: unknown, areaId: string): string[] {
+  return entitiesInArea(hass, areaId).filter((id) => id.startsWith("light."));
+}
+
+export type RoomActionResolution =
+  | { kind: "toggle-lights"; entityIds: string[] }
+  | { kind: "generic"; config: ActionConfig | undefined };
+
+/**
+ * Resolve a room gesture (tap/hold/double_tap) into either the built-in
+ * "toggle area lights" convenience or a generic {@link ActionConfig} for
+ * `executeAction`. Pure and registry-driven, so the room-tap behaviour is
+ * fully unit-testable without mounting the card.
+ */
+export function resolveRoomAction(
+  room: {
+    tap_action?: ActionConfig;
+    hold_action?: ActionConfig;
+    double_tap_action?: ActionConfig;
+    areaId?: string;
+  },
+  gesture: "tap" | "hold" | "double_tap",
+  hass: unknown,
+): RoomActionResolution {
+  const config = actionForGesture(
+    { tap_action: room.tap_action, hold_action: room.hold_action, double_tap_action: room.double_tap_action },
+    gesture,
+  );
+  if (config?.action === TOGGLE_AREA_LIGHTS_ACTION) {
+    return { kind: "toggle-lights", entityIds: room.areaId ? lightsInArea(hass, room.areaId) : [] };
+  }
+  return { kind: "generic", config };
 }
 
 export interface Point { x: number; y: number }
