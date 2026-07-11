@@ -37,6 +37,11 @@ import type { Opening } from "./types";
 import { enabledLayers, layerWatchedEntities, type LiveLayer } from "./layers";
 import type { FeatureName } from "./features";
 import { featureEnabled } from "./features";
+// Registers the room-tint overlay into the live-layer registry; the layer
+// framework (src/layers.ts) renders it, gives it a toggle chip, and folds its
+// watched entity into the card automatically once features.lightsLayer is on.
+// Nothing else in this file references lights.ts directly.
+import "./lights";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";

@@ -20,6 +20,10 @@ describe("floorplan-card source guards", () => {
   it("gates the furniture light glow behind the lightsLayer feature flag", () => {
     expect(src).toContain('featureEnabled(c, "lightsLayer")');
   });
+
+  it("registers the lights layer with the live-layer framework", () => {
+    expect(src).toContain('import "./lights"');
+  });
 });
 
 // Task 2 (layer framework): the card's watched-entity set must union in

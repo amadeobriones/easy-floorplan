@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import type { Room, RenderHass } from "./types";
-import { renderRoomLightWash, ROOM_LIGHT_WASH_OPACITY } from "./lights";
+import type { Room, RenderHass, FloorplanCardConfig } from "./types";
+import { renderRoomLightWash, ROOM_LIGHT_WASH_OPACITY, lightsLayer } from "./lights";
+import { LIVE_LAYERS } from "./layers";
 
 const hass = (states: Record<string, { state: string; attributes?: Record<string, unknown> }>) =>
   ({ states, formatEntityState: (s: { state: string }) => s.state }) as unknown as RenderHass;
@@ -61,5 +62,54 @@ describe("renderRoomLightWash", () => {
     const r = room([{ entity: "sensor.temp", color: "red" }]);
     const h = hass({ "sensor.temp": { state: "31", attributes: {} } });
     expect(renderRoomLightWash(r, h)).toBe("");
+  });
+});
+
+describe("lightsLayer", () => {
+  it("is registered in LIVE_LAYERS", () => {
+    expect(LIVE_LAYERS).toContain(lightsLayer);
+  });
+
+  it("id is the lightsLayer feature flag", () => {
+    expect(lightsLayer.id).toBe("lightsLayer");
+  });
+
+  it("watched() reports every room's light-bound entity across floors", () => {
+    const cfg = {
+      type: "x",
+      width: 10,
+      height: 10,
+      floors: [
+        {
+          id: "f", name: "F", walls: [], openings: [], items: [], texts: [], furniture: [],
+          trackers: [],
+          rooms: [
+            { id: "r1", points: [], stateStyles: [{ entity: "light.a", color: "rgb" }] },
+            { id: "r2", points: [] },
+          ],
+        },
+      ],
+    } as unknown as FloorplanCardConfig;
+    expect([...lightsLayer.watched(cfg)]).toEqual(["light.a"]);
+  });
+
+  it("render() draws nothing for a floor with no light-bound rooms", () => {
+    const cfg = { type: "x", width: 10, height: 10 } as unknown as FloorplanCardConfig;
+    const floor = {
+      id: "f", name: "F", walls: [], openings: [], items: [], texts: [], furniture: [],
+      trackers: [], rooms: [room()],
+    } as unknown as Parameters<typeof lightsLayer.render>[0]["floor"];
+    expect(lightsLayer.render({ floor, hass: hass({}), config: cfg }).strings.join("")).toBe("");
+  });
+
+  it("render() draws a wash for a light-bound, lit room", () => {
+    const cfg = { type: "x", width: 10, height: 10 } as unknown as FloorplanCardConfig;
+    const floor = {
+      id: "f", name: "F", walls: [], openings: [], items: [], texts: [], furniture: [],
+      trackers: [], rooms: [room([{ entity: "light.lamp", color: "rgb" }])],
+    } as unknown as Parameters<typeof lightsLayer.render>[0]["floor"];
+    const h = hass({ "light.lamp": { state: "on", attributes: { rgb_color: [1, 2, 3], brightness: 255 } } });
+    const out = lightsLayer.render({ floor, hass: h, config: cfg });
+    expect(out.strings.join("")).toContain("fp-lights-layer");
   });
 });
