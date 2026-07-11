@@ -791,6 +791,19 @@ describe("renderFurniture reactive glyphs (active variant)", () => {
     const active = serialize(renderFurniture(sofa, undefined, true));
     expect(active).toEqual(idle);
   });
+
+  // Real drift protection: pin the idle markup of every reactive type so a
+  // future refactor of the active/idle ternary cannot silently change what a
+  // no-entity piece draws. (The washer idle is already pinned elsewhere.)
+  it("dryer idle markup is pinned", () => {
+    expect(serialize(renderFurniture(dryer, undefined))).toMatchSnapshot();
+  });
+  it("tv idle markup is pinned", () => {
+    expect(serialize(renderFurniture(tv, undefined))).toMatchSnapshot();
+  });
+  it("fireplace idle markup is pinned", () => {
+    expect(serialize(renderFurniture(fireplace, undefined))).toMatchSnapshot();
+  });
 });
 
 describe("isEntityOn / resolveItemIcon", () => {
