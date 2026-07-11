@@ -473,24 +473,50 @@ export function textForm(t: FloorText): FormSpec {
 }
 
 /** A room's colours. `stateStyles` rules are owned by the repeater, not this form. */
-export function roomForm(r: Room): FormSpec {
-  return {
-    fields: [
-      { name: "name", label: "Name", selector: { text: {} } },
-      { name: "areaId", label: "Area", selector: { area: {} } },
-      { name: "fill", label: "Colour", selector: { text: {} } },
+export function roomForm(r: Room, thermalEnabled = false, tapScenesEnabled = false): FormSpec {
+  const fields: FormField[] = [
+    { name: "name", label: "Name", selector: { text: {} } },
+    { name: "areaId", label: "Area", selector: { area: {} } },
+    { name: "fill", label: "Colour", selector: { text: {} } },
+    {
+      name: "fillOpacity",
+      label: "Opacity",
+      helper: "0 is invisible, 1 is solid. The walls are drawn over the room.",
+      selector: { number: { min: 0, max: 1, step: 0.05, mode: "slider" } },
+    },
+  ];
+  // Only surfaced when the relevant feature is enabled, so the form stays lean
+  // for anyone not using it (same pattern as the background-image lock).
+  if (thermalEnabled) {
+    fields.push({
+      name: "tempEntity",
+      label: "Temperature sensor",
+      helper: "Its value shades the room warm↔cool on the climate layer.",
+      selector: { entity: {} },
+    });
+  }
+  if (tapScenesEnabled) {
+    fields.push(
+      { name: "tap_action", label: "Tap action", selector: { ui_action: { default_action: "none" } } },
+      { name: "hold_action", label: "Hold action", selector: { ui_action: { default_action: "none" } } },
       {
-        name: "fillOpacity",
-        label: "Opacity",
-        helper: "0 is invisible, 1 is solid. The walls are drawn over the room.",
-        selector: { number: { min: 0, max: 1, step: 0.05, mode: "slider" } },
-      },
-    ],
+        name: "double_tap_action",
+        label: "Double-tap action",
+        selector: { ui_action: { default_action: "none" } },
+      }
+    );
+  }
+  return {
+    fields,
     data: {
       name: r.name ?? "",
       areaId: r.areaId ?? "",
       fill: r.fill ?? "",
       fillOpacity: r.fillOpacity ?? ROOM_FILL_OPACITY,
+      tempEntity: r.tempEntity ?? "",
+      tap_action: r.tap_action,
+      hold_action: r.hold_action,
+      double_tap_action: r.double_tap_action,
     },
     toPatch(patch) {
       return patch;

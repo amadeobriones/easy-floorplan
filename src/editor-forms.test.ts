@@ -336,6 +336,47 @@ describe("roomForm — areas", () => {
   });
 });
 
+describe("roomForm — feature-gated fields", () => {
+  const room = { id: "r1", points: [[0, 0], [10, 0], [10, 10]] } as never;
+
+  it("hides tempEntity and action fields by default (flags off)", () => {
+    const names = roomForm(room).fields.map((f) => f.name);
+    expect(names).not.toContain("tempEntity");
+    expect(names).not.toContain("tap_action");
+    expect(names).not.toContain("hold_action");
+    expect(names).not.toContain("double_tap_action");
+  });
+
+  it("shows tempEntity only when the thermal layer is enabled", () => {
+    const field = roomForm(room, true, false).fields.find((f) => f.name === "tempEntity")!;
+    expect(field).toBeTruthy();
+    expect("entity" in field.selector).toBe(true);
+    expect(roomForm(room, false, false).fields.some((f) => f.name === "tempEntity")).toBe(false);
+  });
+
+  it("shows the three action fields only when room tap-scenes is enabled", () => {
+    const on = roomForm(room, false, true).fields.map((f) => f.name);
+    expect(on).toEqual(expect.arrayContaining(["tap_action", "hold_action", "double_tap_action"]));
+    for (const f of roomForm(room, false, true).fields) {
+      if (f.name.endsWith("_action")) expect("ui_action" in f.selector).toBe(true);
+    }
+    expect(roomForm(room, false, false).fields.some((f) => f.name === "tap_action")).toBe(false);
+  });
+
+  it("round-trips the gated values through data and toPatch", () => {
+    const bound = {
+      id: "r1",
+      points: [[0, 0], [10, 0], [10, 10]],
+      tempEntity: "sensor.kitchen",
+      tap_action: { action: "toggle" },
+    } as never;
+    const f = roomForm(bound, true, true);
+    expect(f.data.tempEntity).toBe("sensor.kitchen");
+    expect(f.data.tap_action).toMatchObject({ action: "toggle" });
+    expect(f.toPatch({ tempEntity: "sensor.hall" })).toMatchObject({ tempEntity: "sensor.hall" });
+  });
+});
+
 describe("normalizeFormPatch — area", () => {
   it("clears an empty area to undefined", () => {
     const fields = [{ name: "areaId", label: "Area", selector: { area: {} } }];
