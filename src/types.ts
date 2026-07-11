@@ -521,6 +521,13 @@ export interface Floor {
   image?: string;
   /** Background image opacity, 0–1. Default 1. */
   imageOpacity?: number;
+  /**
+   * Editor-only: when true and the `backgroundTrace` feature is on, the
+   * image URL and opacity controls are disabled in the editor so they can't
+   * be changed by accident while tracing. Has no effect on the live card —
+   * `floorplan-card.ts` never reads this field.
+   */
+  imageLocked?: boolean;
   /** Room polygons, drawn beneath the walls. Optional: older configs have none. */
   rooms?: Room[];
   /**
