@@ -944,6 +944,28 @@ export function renderRoom(r: Room, style?: ResolvedStyle): SVGTemplateResult {
   />`;
 }
 
+/*
+ * Three equalizer bars for the media now-playing cue (feature 1f). Drawn as
+ * inner sub-elements so the placement transform is untouched; the fp-furn-eq
+ * classes animate a standalone scale (see the media CSS block in
+ * floorplan-card.ts / editor.ts). Every bar strokes with the glyph color, so a
+ * stateStyles tint recolours the cue for free. Emitted ONLY when the caller
+ * passes playing=true, so a not-playing / flag-off render is byte-identical to
+ * the pre-1f glyph.
+ */
+function nowPlayingBars(
+  cx: number,
+  baseY: number,
+  bw: number,
+  bh: number,
+  color: string,
+): SVGTemplateResult {
+  const gap = bw * 1.6;
+  return svg`<rect class="fp-furn-eq" x=${cx - gap - bw / 2} y=${baseY - bh} width=${bw} height=${bh} fill=${color} />
+    <rect class="fp-furn-eq fp-furn-eq--2" x=${cx - bw / 2} y=${baseY - bh} width=${bw} height=${bh} fill=${color} />
+    <rect class="fp-furn-eq fp-furn-eq--3" x=${cx + gap - bw / 2} y=${baseY - bh} width=${bw} height=${bh} fill=${color} />`;
+}
+
 /**
  * A furniture/fixture diagram. Idle line art by default; when `resolved`
  * carries a matched {@link StateStyle} rule the base + detail lines are
@@ -956,12 +978,18 @@ export function renderRoom(r: Room, style?: ResolvedStyle): SVGTemplateResult {
  * variant (drum spin, screen glow, flame flicker) — see
  * docs/superpowers/specs/reactive-glyphs.md. `active === false` (or omitted)
  * is byte-identical to today for every type.
+ *
+ * When `playing` is true, tv/smartSpeaker append a media now-playing equalizer
+ * cue (feature 1f) — see docs/superpowers/specs/2026-07-10-vision-roadmap.md 1f.
+ * `playing === false` (or omitted) emits no cue, so a not-playing / flag-off
+ * render is byte-identical to the pre-1f glyph.
  */
 export function renderFurniture(
   f: Furniture,
   resolved?: ResolvedStyle,
   active = false,
   glowIntensity?: number,
+  playing = false,
 ): SVGTemplateResult {
   const color = resolved?.color ?? f.color ?? FURNITURE_COLOR;
   // A matched rule's colour is the one thing that steps up fill-opacity — an
@@ -1080,6 +1108,11 @@ export function renderFurniture(
               stroke=${color} stroke-width="2" />`
         : svg`<line x1=${-w * 0.18} y1=${hh} x2=${w * 0.18} y2=${hh + h}
                          stroke=${color} stroke-width="2" />`;
+      if (playing) {
+        // Lower-centre of the screen; bars span y in [-hh+h*0.48, -hh+h*0.78],
+        // inside the screen rect (y in [-hh+h*0.18, -hh+h*0.82]).
+        detail = svg`${detail}${nowPlayingBars(0, -hh + h * 0.78, w * 0.05, h * 0.3, color)}`;
+      }
       break;
     case "desk":
       detail = svg`<line x1=${-hw} y1=${-hh + h * 0.55} x2=${hw} y2=${-hh + h * 0.55}
@@ -1415,6 +1448,10 @@ export function renderFurniture(
         <circle cx=${m * 0.5} cy="0" r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
         <circle cx="0" cy=${m * 0.5} r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
         <circle cx=${-m * 0.5} cy="0" r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />`;
+      if (playing) {
+        // Centred bars sized to the speaker radius m; the fabric dots stay put.
+        detail = svg`${detail}${nowPlayingBars(0, m * 0.45, m * 0.16, m * 0.7, color)}`;
+      }
       break;
     }
     case "table":
