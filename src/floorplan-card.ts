@@ -33,6 +33,7 @@ import {
   resolveItemIcon,
 } from "./render";
 import type { Opening } from "./types";
+import { layerWatchedEntities } from "./layers";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
@@ -72,7 +73,14 @@ export class FloorplanCard extends LitElement {
       texts: config.texts ?? [],
       furniture: config.furniture ?? [],
     };
-    this._watchedEntities = collectWatchedEntities(this._config);
+    // Enabled live layers can watch entities the plan itself doesn't
+    // reference (e.g. a whole-home energy sensor); union them in so the card
+    // re-renders when those change too. A disabled/unregistered layer
+    // contributes nothing.
+    this._watchedEntities = new Set([
+      ...collectWatchedEntities(this._config),
+      ...layerWatchedEntities(this._config),
+    ]);
   }
 
   /**
