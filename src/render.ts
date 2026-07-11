@@ -130,6 +130,10 @@ export function defaultIcon(kind: ItemKind): string {
  * a television and a doorbell both render `mdi:circle`.
  */
 const DOMAIN_STATE_ICONS: Record<string, { on: string; off: string }> = {
+  // light / switch carry no device class, so without this a light shows the same
+  // bulb whether on or off. Mirrors HA's own on/off icons (upstream: shauneccles#2).
+  light: { on: "mdi:lightbulb", off: "mdi:lightbulb-outline" },
+  switch: { on: "mdi:toggle-switch-variant", off: "mdi:toggle-switch-variant-off" },
   media_player: { on: "mdi:television-play", off: "mdi:television-off" },
   fan: { on: "mdi:fan", off: "mdi:fan-off" },
   lock: { on: "mdi:lock-open-variant", off: "mdi:lock" },
