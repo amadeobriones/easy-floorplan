@@ -162,6 +162,10 @@
                     "description": "Optional background image URL (e.g. `/local/floorplan.png` or an external\nURL) drawn behind the elements — handy for tracing over a real floor plan.\nIt fills the virtual canvas, so match the canvas width/height to the image\naspect ratio to avoid distortion.",
                     "type": "string"
                 },
+                "imageLocked": {
+                    "description": "Editor-only: when true and the `backgroundTrace` feature is on, the\nimage URL and opacity controls are disabled in the editor so they can't\nbe changed by accident while tracing. Has no effect on the live card —\n`floorplan-card.ts` never reads this field.",
+                    "type": "boolean"
+                },
                 "imageOpacity": {
                     "description": "Background image opacity, 0–1. Default 1.",
                     "type": "number"

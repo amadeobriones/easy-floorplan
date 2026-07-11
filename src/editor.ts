@@ -2402,6 +2402,7 @@ export class FloorplanCardEditor extends LitElement {
               max=${n.max ?? 100}
               step=${n.step ?? 1}
               .value=${String(value ?? n.min ?? 0)}
+              ?disabled=${f.disabled ?? false}
               @input=${(e: Event) =>
                 this._applyFallback(spec, f, Number((e.target as HTMLInputElement).value), true, apply)}
             />`
@@ -2413,6 +2414,7 @@ export class FloorplanCardEditor extends LitElement {
           max=${n.max ?? nothing}
           step=${n.step ?? nothing}
           .value=${String(value ?? "")}
+          ?disabled=${f.disabled ?? false}
           @change=${(e: Event) => {
             const input = e.target as HTMLInputElement;
             this._applyFallback(
@@ -2476,6 +2478,7 @@ export class FloorplanCardEditor extends LitElement {
       <input
         type="text"
         .value=${String(value ?? "")}
+        ?disabled=${f.disabled ?? false}
         @input=${(e: Event) =>
           this._applyFallback(spec, f, (e.target as HTMLInputElement).value, true, apply)}
       />
@@ -2981,10 +2984,26 @@ export class FloorplanCardEditor extends LitElement {
               this._patchConfig({ background: (e.target as HTMLInputElement).value || undefined })}
           />
         </div>
-        ${this._renderForm(floorImageForm(this._floor()), (patch, live) => {
-          if (live) this._patchFloorLive(patch as Partial<Floor>);
-          else this._commitFloor(patch as Partial<Floor>);
-        })}
+        ${this._renderForm(
+          floorImageForm(this._floor(), featureEnabled(this._config, "backgroundTrace")),
+          (patch, live) => {
+            if (live) this._patchFloorLive(patch as Partial<Floor>);
+            else this._commitFloor(patch as Partial<Floor>);
+          }
+        )}
+        ${featureEnabled(this._config, "backgroundTrace") && this._floor().image
+          ? html`<div class="row">
+              <label></label>
+              <button
+                ?disabled=${!!this._floor().imageLocked}
+                title="Remove the background image, its opacity, and its lock"
+                @click=${() =>
+                  this._commitFloor({ image: undefined, imageOpacity: undefined, imageLocked: undefined })}
+              >
+                Clear background image
+              </button>
+            </div>`
+          : nothing}
         <div class="row wide import-export">
           <label>Import / Export</label>
           <textarea

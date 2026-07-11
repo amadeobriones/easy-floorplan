@@ -34,6 +34,7 @@ export interface FormField {
   label: string;
   helper?: string;
   required?: boolean;
+  disabled?: boolean;
   selector: Record<string, unknown>;
 }
 
@@ -615,16 +616,36 @@ export function featuresForm(c: FloorplanCardConfig): FormSpec {
   };
 }
 
-export function floorImageForm(f: Floor): FormSpec {
+export function floorImageForm(f: Floor, traceEnabled = false): FormSpec {
+  const locked = traceEnabled && !!f.imageLocked;
   const fields: FormField[] = [
-    { name: "image", label: "Bg image", helper: "/local/floorplan.png or URL", selector: { text: {} } },
+    {
+      name: "image",
+      label: "Bg image",
+      helper: "/local/floorplan.png or URL",
+      selector: { text: {} },
+      disabled: locked,
+    },
   ];
   if (f.image) {
     fields.push({
       name: "imageOpacity",
       label: "Image opacity",
       selector: { number: { min: 0, max: 1, step: 0.05, mode: "slider" } },
+      disabled: locked,
     });
+    if (traceEnabled) {
+      fields.push({
+        name: "imageLocked",
+        label: "Lock image",
+        helper: "Disable the URL/opacity controls above so they can't be changed by accident while tracing.",
+        selector: { boolean: {} },
+      });
+    }
   }
-  return { fields, data: { image: f.image ?? "", imageOpacity: f.imageOpacity ?? 1 }, toPatch: identity };
+  return {
+    fields,
+    data: { image: f.image ?? "", imageOpacity: f.imageOpacity ?? 1, imageLocked: !!f.imageLocked },
+    toPatch: identity,
+  };
 }

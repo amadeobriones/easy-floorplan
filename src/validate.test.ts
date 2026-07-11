@@ -221,3 +221,20 @@ it("rejects a non-string powerEntity", () => {
   });
   expect(r.ok).toBe(false);
 });
+
+it("accepts a floor with imageLocked", () => {
+  const r = validateConfig({
+    type: "x", width: 10, height: 10,
+    floors: [{ id: "f1", walls: [], openings: [], items: [], texts: [], furniture: [], trackers: [],
+      image: "plan.png", imageOpacity: 0.5, imageLocked: true }],
+  });
+  expect(r.ok).toBe(true);
+});
+it("rejects a non-boolean imageLocked", () => {
+  const r = validateConfig({
+    type: "x", width: 10, height: 10,
+    floors: [{ id: "f1", walls: [], openings: [], items: [], texts: [], furniture: [], trackers: [],
+      imageLocked: "yes" }],
+  });
+  expect(r.ok).toBe(false);
+});

@@ -82,7 +82,7 @@ const elementLists = {
 
 const floor = shape(
   { id: str },
-  { name: str, haFloor: str, image: str, imageOpacity: num, rotation: oneOf(0, 90, 180, 270), ...elementLists }
+  { name: str, haFloor: str, image: str, imageOpacity: num, imageLocked: bool, rotation: oneOf(0, 90, 180, 270), ...elementLists }
 );
 
 const features = shape(
