@@ -194,6 +194,19 @@ export const FURNITURE_LABELS: Record<FurnitureType, string> = {
   airHandler: "air handler",
 };
 
+/** The Add-menu grouping. Every FurnitureType appears in exactly one category. */
+export const FURNITURE_CATEGORIES: { label: string; types: FurnitureType[] }[] = [
+  { label: "Seating & beds", types: ["chair", "armchair", "sofa", "sectional", "bench", "bed", "crib"] },
+  { label: "Tables & desks", types: ["table", "roundTable", "desk", "coffeeTable", "nightstand"] },
+  { label: "Storage", types: ["wardrobe", "dresser", "bookshelf", "cabinet"] },
+  {
+    label: "Appliances",
+    types: ["fridge", "stove", "microwave", "dishwasher", "washer", "dryer", "waterHeater", "airHandler", "tv"],
+  },
+  { label: "Fixtures", types: ["sink", "toilet", "bathtub", "shower", "vanity", "bidet"] },
+  { label: "Decor & misc", types: ["rug", "plant", "fireplace", "stairs"] },
+];
+
 export function openingForm(o: Opening): FormSpec {
   const motion = openingMotion(o);
   const style = sliderStyleOf(o);

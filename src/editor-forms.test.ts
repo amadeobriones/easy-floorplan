@@ -14,6 +14,7 @@ import {
   floorImageForm,
   FURNITURE_TYPES,
   FURNITURE_LABELS,
+  FURNITURE_CATEGORIES,
 } from "./editor-forms";
 import type { FormField } from "./editor-forms";
 import type { Opening, FloorItem, Floor, FloorplanCardConfig, Furniture, FurnitureType } from "./types";
@@ -232,6 +233,12 @@ describe("furnitureForm", () => {
     for (const t of ["sectional", "washer", "waterHeater", "airHandler"] as FurnitureType[]) {
       expect(FURNITURE_TYPES).toContain(t);
     }
+  });
+
+  it("groups every furniture type into exactly one Add-menu category", () => {
+    const flattened = FURNITURE_CATEGORIES.flatMap((c) => c.types);
+    expect(new Set(flattened)).toEqual(new Set(FURNITURE_TYPES));
+    expect(flattened.length).toBe(FURNITURE_TYPES.length);
   });
 
   it("asks for the chaise side only on a sectional", () => {
