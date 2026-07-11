@@ -782,6 +782,18 @@ export class FloorplanCard extends LitElement {
       0%, 49% { opacity: 1; }
       50%, 100% { opacity: 0.25; }
     }
+    /* Awareness layer (feature flag "awarenessLayer"): a safety marker
+       (leak, smoke, door left open) reuses the fp-furn-blink keyframe above
+       so it reads as the same alert language, tinted red/alert instead of
+       the piece's own colour. Idle markers stay a faint neutral dot so the
+       sensor is still visible on the plan at rest. */
+    .fp-awareness-safety {
+      fill: var(--fp-awareness-alert-color, #d32f2f);
+    }
+    .fp-awareness-safety-idle {
+      fill: var(--disabled-text-color, #9e9e9e);
+      fill-opacity: 0.35;
+    }
     @media (prefers-reduced-motion: reduce) {
       /* Every animation this card draws, not just the conditional ones. */
       .item.anim-pulse .badge,

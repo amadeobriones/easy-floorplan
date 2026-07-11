@@ -3797,6 +3797,18 @@ export class FloorplanCardEditor extends LitElement {
       0%, 49% { opacity: 1; }
       50%, 100% { opacity: 0.25; }
     }
+    /* Awareness layer -- see the matching comment in floorplan-card.ts. The
+       editor's own canvas does not yet place/animate these markers (that is
+       future editor work), but this rule set is duplicated here per the
+       existing convention (see the smart-furniture comment above) so any
+       later preview render already has the styling available. */
+    .fp-awareness-safety {
+      fill: var(--fp-awareness-alert-color, #d32f2f);
+    }
+    .fp-awareness-safety-idle {
+      fill: var(--disabled-text-color, #9e9e9e);
+      fill-opacity: 0.35;
+    }
     @media (prefers-reduced-motion: reduce) {
       .fp-furn-anim-pulse,
       .fp-furn-anim-blink {
