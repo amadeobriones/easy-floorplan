@@ -7,6 +7,8 @@ import {
   openingMotion,
   openingMirror,
   sliderStyleOf,
+  doorStyleOf,
+  foldPanelsOf,
   openingFromDeviceClass,
   openingClickAction,
   resolveOpeningOpen,
@@ -93,6 +95,8 @@ describe("openingMotion", () => {
     expect(openingMotion({ type: "door" } as Opening)).toBe("swing");
     expect(openingMotion({ type: "door", motion: "slide" } as Opening)).toBe("slide");
     expect(openingMotion({ type: "window", motion: "slide" } as Opening)).toBe("slide");
+    expect(openingMotion({ type: "door", motion: "roll" } as Opening)).toBe("roll");
+    expect(openingMotion({ type: "door", motion: "fold" } as Opening)).toBe("fold");
   });
 });
 
@@ -125,6 +129,38 @@ describe("sliderStyleOf", () => {
   });
 });
 
+describe("doorStyleOf", () => {
+  it("resolves the configured style for a swing door, single by default", () => {
+    expect(doorStyleOf({ type: "door", motion: "swing" } as Opening)).toBe("single");
+    expect(doorStyleOf({ type: "door", motion: "swing", doorStyle: "double" } as Opening)).toBe(
+      "double",
+    );
+  });
+  it("is single for a window even with doorStyle set", () => {
+    expect(doorStyleOf({ type: "window", motion: "swing", doorStyle: "double" } as Opening)).toBe(
+      "single",
+    );
+  });
+  it("is single for a non-swing door even with doorStyle set", () => {
+    expect(doorStyleOf({ type: "door", motion: "slide", doorStyle: "double" } as Opening)).toBe(
+      "single",
+    );
+    expect(doorStyleOf({ type: "door", motion: "roll", doorStyle: "double" } as Opening)).toBe(
+      "single",
+    );
+    expect(doorStyleOf({ type: "door", motion: "fold", doorStyle: "double" } as Opening)).toBe(
+      "single",
+    );
+  });
+});
+
+describe("foldPanelsOf", () => {
+  it("defaults to 2 and returns 4 when configured", () => {
+    expect(foldPanelsOf({ type: "door", motion: "fold" } as Opening)).toBe(2);
+    expect(foldPanelsOf({ type: "door", motion: "fold", foldPanels: 4 } as Opening)).toBe(4);
+  });
+});
+
 describe("openingFromDeviceClass", () => {
   it("maps window-like cover device classes to a window", () => {
     expect(openingFromDeviceClass("window")).toEqual({ type: "window", motion: undefined });
@@ -132,10 +168,13 @@ describe("openingFromDeviceClass", () => {
     expect(openingFromDeviceClass("shade")).toEqual({ type: "window", motion: "slide" });
     expect(openingFromDeviceClass("curtain")).toEqual({ type: "window", motion: "slide" });
   });
-  it("maps door-like device classes to a door, sliding for rollers", () => {
+  it("maps door-like device classes to a door, rolling for garage covers", () => {
     expect(openingFromDeviceClass("door")).toEqual({ type: "door", motion: undefined });
-    expect(openingFromDeviceClass("garage")).toEqual({ type: "door", motion: "slide" });
+    expect(openingFromDeviceClass("garage")).toEqual({ type: "door", motion: "roll" });
     expect(openingFromDeviceClass("gate")).toEqual({ type: "door", motion: undefined });
+  });
+  it("keeps the other rolling classes on slide, not roll", () => {
+    expect(openingFromDeviceClass("shutter")).toEqual({ type: "window", motion: "slide" });
   });
   it("defaults unknown / missing device classes to a swing door", () => {
     expect(openingFromDeviceClass(undefined)).toEqual({ type: "door", motion: undefined });

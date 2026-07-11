@@ -59,9 +59,10 @@ export interface Opening {
   /**
    * How the opening moves. `swing` (default) is a hinged door / casement window;
    * `slide` is a sliding door / sliding window whose panel(s) travel along the
-   * wall (see {@link sliderStyle}).
+   * wall (see {@link sliderStyle}). New: `roll` (sectional/garage) and `fold`
+   * (bi-fold).
    */
-  motion?: "swing" | "slide";
+  motion?: "swing" | "slide" | "roll" | "fold";
   x: number;
   y: number;
   /** Length along the wall, in virtual units. */
@@ -99,6 +100,17 @@ export interface Opening {
    * Ignored for swinging openings.
    */
   sliderStyle?: "single" | "bypass" | "biparting";
+  /**
+   * Swing doors only: leaf arrangement. "double" draws two half-width leaves,
+   * one hinged at each jamb, meeting at the centre (French doors). Ignored for
+   * windows and for non-swing motions.
+   */
+  doorStyle?: "single" | "double";
+  /**
+   * Folding openings only ("fold"): number of equal leaves in the hinge chain.
+   * Must be even so the free end rides the track; 2 (default) or 4.
+   */
+  foldPanels?: 2 | 4;
 }
 
 export type ItemKind =

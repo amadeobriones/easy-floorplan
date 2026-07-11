@@ -415,6 +415,14 @@
                     "description": "Rotation in degrees, 0 = horizontal.",
                     "type": "number"
                 },
+                "doorStyle": {
+                    "description": "Swing doors only: leaf arrangement. \"double\" draws two half-width leaves,\none hinged at each jamb, meeting at the centre (French doors). Ignored for\nwindows and for non-swing motions.",
+                    "enum": [
+                        "double",
+                        "single"
+                    ],
+                    "type": "string"
+                },
                 "entity": {
                     "description": "Optional entity (e.g. a contact `binary_sensor` or a `cover`) whose state\ndrives whether the opening is drawn open or closed. When unset, doors are\ndrawn open (swing symbol) and windows closed, matching a static floor plan.",
                     "type": "string"
@@ -426,6 +434,14 @@
                 "flipV": {
                     "description": "Mirror the symbol across the wall line, so the door opens into the room on\nthe other side. Absent = the default (swings toward the −y / \"near\" side).",
                     "type": "boolean"
+                },
+                "foldPanels": {
+                    "description": "Folding openings only (\"fold\"): number of equal leaves in the hinge chain.\nMust be even so the free end rides the track; 2 (default) or 4.",
+                    "enum": [
+                        2,
+                        4
+                    ],
+                    "type": "number"
                 },
                 "id": {
                     "type": "string"
@@ -439,8 +455,10 @@
                     "type": "number"
                 },
                 "motion": {
-                    "description": "How the opening moves. `swing` (default) is a hinged door / casement window;\n`slide` is a sliding door / sliding window whose panel(s) travel along the\nwall (see {@link sliderStyle}).",
+                    "description": "How the opening moves. `swing` (default) is a hinged door / casement window;\n`slide` is a sliding door / sliding window whose panel(s) travel along the\nwall (see {@link sliderStyle}). New: `roll` (sectional/garage) and `fold`\n(bi-fold).",
                     "enum": [
+                        "fold",
+                        "roll",
                         "slide",
                         "swing"
                     ],

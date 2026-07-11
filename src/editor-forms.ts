@@ -24,7 +24,7 @@ import {
   DEFAULT_TEXT_SIZE,
   DEFAULT_TRACKER_DOT_SIZE,
 } from "./types";
-import { defaultIcon, openingMotion, sliderStyleOf, ROOM_FILL_OPACITY } from "./render";
+import { defaultIcon, openingMotion, sliderStyleOf, doorStyleOf, foldPanelsOf, ROOM_FILL_OPACITY } from "./render";
 import { defaultItemAction } from "./actions";
 
 /** One ha-form schema item, extended with our label/helper (read by computeLabel). */
@@ -210,9 +210,20 @@ export const FURNITURE_CATEGORIES: { label: string; types: FurnitureType[] }[] =
 export function openingForm(o: Opening): FormSpec {
   const motion = openingMotion(o);
   const style = sliderStyleOf(o);
+  const doorStyle = doorStyleOf(o);
+  const foldPanels = foldPanelsOf(o);
   const fields: FormField[] = [
     { name: "type", label: "Type", selector: dropdown(opt("door", "Door"), opt("window", "Window")) },
-    { name: "motion", label: "Motion", selector: dropdown(opt("swing", "Swing"), opt("slide", "Slide")) },
+    {
+      name: "motion",
+      label: "Motion",
+      selector: dropdown(
+        opt("swing", "Swing"),
+        opt("slide", "Slide"),
+        opt("roll", "Garage (roll-up)"),
+        opt("fold", "Bi-fold")
+      ),
+    },
     { name: "length", label: "Length", required: true, selector: { number: { min: 1, mode: "box" } } },
   ];
   if (o.type === "door" && motion === "swing") {
@@ -220,6 +231,11 @@ export function openingForm(o: Opening): FormSpec {
       name: "hinge",
       label: "Hinge",
       selector: dropdown(opt("left", "Left"), opt("right", "Right")),
+    });
+    fields.push({
+      name: "doorStyle",
+      label: "Style",
+      selector: dropdown(opt("single", "Single"), opt("double", "Double")),
     });
   }
   if (motion === "swing") {
@@ -247,6 +263,13 @@ export function openingForm(o: Opening): FormSpec {
       ),
     });
   }
+  if (motion === "fold") {
+    fields.push({
+      name: "foldPanels",
+      label: "Panels",
+      selector: dropdown(opt("2", "2 panels"), opt("4", "4 panels")),
+    });
+  }
   fields.push({
     name: "entity",
     label: "Entity",
@@ -265,6 +288,8 @@ export function openingForm(o: Opening): FormSpec {
       opens: o.flipV ? "other" : "this",
       slide: o.flipH ? "right" : "left",
       style,
+      doorStyle,
+      foldPanels: String(foldPanels),
       entity: o.entity ?? "",
       invert: o.invert ?? false,
       angle: o.angle,
@@ -273,12 +298,18 @@ export function openingForm(o: Opening): FormSpec {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(patch)) {
         if (k === "motion") {
-          out.motion = v === "slide" ? "slide" : undefined;
-          // sliderStyle only applies while sliding — drop it when switching back.
+          out.motion = v === "swing" ? undefined : v;
+          // sliderStyle only applies while sliding — drop it when switching away.
           if (v !== "slide") out.sliderStyle = undefined;
+          // doorStyle only applies to a swinging door — drop it when switching away.
+          if (v !== "swing") out.doorStyle = undefined;
+          // foldPanels only applies while folding — drop it when switching away.
+          if (v !== "fold") out.foldPanels = undefined;
         } else if (k === "hinge" || k === "slide") out.flipH = v === "right" || undefined;
         else if (k === "opens") out.flipV = v === "other" || undefined;
         else if (k === "style") out.sliderStyle = v === "single" ? undefined : v;
+        else if (k === "doorStyle") out.doorStyle = v === "single" ? undefined : v;
+        else if (k === "foldPanels") out.foldPanels = v === "4" ? 4 : undefined;
         else if (k === "invert") out.invert = v || undefined;
         else out[k] = v;
       }

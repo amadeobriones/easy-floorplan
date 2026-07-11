@@ -409,10 +409,11 @@ export function kindFromEntity(entity: string): ItemKind {
 }
 
 /**
- * How an opening moves — `swing` (hinged door / casement window) or `slide`
- * (panels travelling along the wall). Defaults to `swing`.
+ * How an opening moves — `swing` (hinged door / casement window), `slide`
+ * (panels travelling along the wall), `roll` (sectional/garage), or `fold`
+ * (bi-fold, hinged concertina). Defaults to `swing`.
  */
-export function openingMotion(o: Opening): "swing" | "slide" {
+export function openingMotion(o: Opening): "swing" | "slide" | "roll" | "fold" {
   return o.motion ?? "swing";
 }
 
@@ -446,32 +447,46 @@ export function sliderStyleOf(o: Opening): "single" | "bypass" | "biparting" {
   return openingMotion(o) === "slide" ? (o.sliderStyle ?? "single") : "single";
 }
 
+/**
+ * Resolve a swing opening's leaf arrangement. Only meaningful for a swinging
+ * door (windows and non-swing motions always resolve to `single`), defaulting
+ * to `single`.
+ */
+export function doorStyleOf(o: Opening): "single" | "double" {
+  return o.type === "door" && openingMotion(o) === "swing" ? (o.doorStyle ?? "single") : "single";
+}
+
+/**
+ * Resolve a folding opening's leaf count. Defaults to 2 (the archetypal
+ * bi-fold); 4 suits wide closet/patio runs.
+ */
+export function foldPanelsOf(o: Opening): 2 | 4 {
+  return o.foldPanels === 4 ? 4 : 2;
+}
+
 /** HA `cover` / `binary_sensor` device classes that read as a window (glass). */
 const WINDOW_DEVICE_CLASSES = new Set(["window", "blind", "shade", "shutter", "curtain", "awning"]);
-/** Device classes that roll / slide rather than swing. */
-const SLIDING_DEVICE_CLASSES = new Set([
-  "garage",
-  "garage_door",
-  "blind",
-  "shade",
-  "shutter",
-  "curtain",
-]);
+/** Device classes that roll up out of the plane (sectional garage doors). */
+const GARAGE_DEVICE_CLASSES = new Set(["garage", "garage_door"]);
+/** Device classes that slide rather than swing. */
+const SLIDING_DEVICE_CLASSES = new Set(["blind", "shade", "shutter", "curtain"]);
 
 /**
  * Default opening `type` and `motion` inferred from a bound entity's HA
  * `device_class` (mirrors how HA itself picks icons/behaviour from it). Window-
- * like classes render as a window; rolling/sliding classes default to `slide`.
- * Unknown / missing classes fall back to a swing door. `motion: undefined`
- * means swing (the default).
+ * like classes render as a window; garage classes default to `roll`; other
+ * rolling/sliding classes default to `slide`. Unknown / missing classes fall
+ * back to a swing door. `motion: undefined` means swing (the default).
  */
 export function openingFromDeviceClass(deviceClass: string | undefined): {
   type: Opening["type"];
-  motion: "slide" | undefined;
+  motion: "slide" | "roll" | undefined;
 } {
+  const dc = deviceClass ?? "";
+  if (GARAGE_DEVICE_CLASSES.has(dc)) return { type: "door", motion: "roll" };
   return {
-    type: WINDOW_DEVICE_CLASSES.has(deviceClass ?? "") ? "window" : "door",
-    motion: SLIDING_DEVICE_CLASSES.has(deviceClass ?? "") ? "slide" : undefined,
+    type: WINDOW_DEVICE_CLASSES.has(dc) ? "window" : "door",
+    motion: SLIDING_DEVICE_CLASSES.has(dc) ? "slide" : undefined,
   };
 }
 

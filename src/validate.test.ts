@@ -65,6 +65,24 @@ describe("validateConfig", () => {
   it("allows unknown extra keys", () => {
     expect(validateConfig({ ...valid, futureKey: 123 }).ok).toBe(true);
   });
+  it("accepts roll (garage) and fold (bi-fold) openings, and a double-style swing door", () => {
+    const mkOpening = (opening: Record<string, unknown>) => ({
+      type: "custom:floorplan-card", width: 100, height: 100,
+      floors: [{ id: "f", openings: [{ id: "o1", type: "door", x: 0, y: 0, length: 90, angle: 0, ...opening }] }],
+    });
+    expect(validateConfig(mkOpening({ motion: "roll" })).ok).toBe(true);
+    expect(validateConfig(mkOpening({ motion: "fold", foldPanels: 4 })).ok).toBe(true);
+    expect(validateConfig(mkOpening({ motion: "swing", doorStyle: "double" })).ok).toBe(true);
+  });
+  it("rejects a bad opening motion", () => {
+    const bad = {
+      type: "custom:floorplan-card", width: 100, height: 100,
+      floors: [{ id: "f", openings: [{ id: "o1", type: "door", x: 0, y: 0, length: 90, angle: 0, motion: "spin" }] }],
+    };
+    const r = validateConfig(bad);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some((e) => e.includes("openings[0].motion"))).toBe(true);
+  });
   it("rejects a non-positive width or height", () => {
     expect(validateConfig({ ...valid, width: 0 }).ok).toBe(false);
     expect(validateConfig({ ...valid, height: -5 }).ok).toBe(false);

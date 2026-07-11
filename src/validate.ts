@@ -47,7 +47,7 @@ const FURNITURE_TYPES = ["table","roundTable","desk","chair","sofa","bed","wardr
 const wall = shape({ id: str, x1: num, y1: num, x2: num, y2: num });
 const opening = shape(
   { id: str, type: oneOf("door", "window"), x: num, y: num, length: num, angle: num },
-  { motion: oneOf("swing", "slide"), entity: str, activeColor: str }
+  { motion: oneOf("swing", "slide", "roll", "fold"), entity: str, activeColor: str }
 );
 const item = shape(
   { id: str, x: num, y: num, kind: oneOf(...ITEM_KINDS) },
