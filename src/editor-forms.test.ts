@@ -15,6 +15,7 @@ import {
   FURNITURE_TYPES,
   FURNITURE_LABELS,
   FURNITURE_CATEGORIES,
+  computeAddMenuGroups,
 } from "./editor-forms";
 import type { FormField } from "./editor-forms";
 import type { Opening, FloorItem, Floor, FloorplanCardConfig, Furniture, FurnitureType } from "./types";
@@ -355,5 +356,57 @@ describe("roomForm — no light/lit shorthand", () => {
     const patch = roomForm(room).toPatch({ fill: "#fff" });
     expect(patch).toEqual({ fill: "#fff" });
     expect("stateStyles" in patch).toBe(false);
+  });
+});
+
+describe("computeAddMenuGroups", () => {
+  it("with an empty query, marks not-searching and shows every type in every group unfiltered", () => {
+    const result = computeAddMenuGroups(FURNITURE_CATEGORIES, "");
+    expect(result.searching).toBe(false);
+    expect(result.matches).toEqual([]);
+    expect(result.visible).toHaveLength(FURNITURE_CATEGORIES.length);
+    result.visible.forEach((group, i) => {
+      expect(group.label).toBe(FURNITURE_CATEGORIES[i].label);
+      expect(group.shown).toEqual(FURNITURE_CATEGORIES[i].types);
+    });
+  });
+
+  it("with a whitespace-only query, behaves the same as an empty query", () => {
+    const result = computeAddMenuGroups(FURNITURE_CATEGORIES, "   ");
+    expect(result.searching).toBe(false);
+    expect(result.matches).toEqual([]);
+  });
+
+  it("with a query, only shows types whose label matches and flattens matches across groups", () => {
+    // "table" matches the "table", "round table", and "coffee table" labels.
+    const result = computeAddMenuGroups(FURNITURE_CATEGORIES, "table");
+    expect(result.searching).toBe(true);
+    expect(result.matches.sort()).toEqual(["coffeeTable", "roundTable", "table"].sort());
+    const tablesAndDesks = result.visible.find((g) => g.label === "Tables & desks")!;
+    expect(tablesAndDesks.shown.sort()).toEqual(["coffeeTable", "roundTable", "table"].sort());
+    const seating = result.visible.find((g) => g.label === "Seating & beds")!;
+    expect(seating.shown).toEqual([]);
+  });
+
+  it("matches case-insensitively", () => {
+    const lower = computeAddMenuGroups(FURNITURE_CATEGORIES, "sofa");
+    const upper = computeAddMenuGroups(FURNITURE_CATEGORIES, "SOFA");
+    const mixed = computeAddMenuGroups(FURNITURE_CATEGORIES, "SoFa");
+    expect(upper.matches).toEqual(lower.matches);
+    expect(mixed.matches).toEqual(lower.matches);
+    expect(lower.matches).toEqual(["sofa"]);
+  });
+
+  it("with a no-match query, every group is shown but empty, and matches is empty", () => {
+    const result = computeAddMenuGroups(FURNITURE_CATEGORIES, "zzz-nonexistent");
+    expect(result.searching).toBe(true);
+    expect(result.matches).toEqual([]);
+    expect(result.visible.every((g) => g.shown.length === 0)).toBe(true);
+    expect(result.visible).toHaveLength(FURNITURE_CATEGORIES.length);
+  });
+
+  it("matches on multi-word labels by substring, e.g. a space-containing query", () => {
+    const result = computeAddMenuGroups(FURNITURE_CATEGORIES, "smart speaker");
+    expect(result.matches).toEqual(["smartSpeaker"]);
   });
 });

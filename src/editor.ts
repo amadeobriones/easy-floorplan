@@ -88,6 +88,7 @@ import {
 import {
   FURNITURE_LABELS,
   FURNITURE_CATEGORIES,
+  computeAddMenuGroups,
   diffFormValue,
   featuresForm,
   floorImageForm,
@@ -2621,15 +2622,8 @@ export class FloorplanCardEditor extends LitElement {
     const close = () => {
       this._addMenuOpen = false;
     };
-    const q = this._addSearch.trim().toLowerCase();
-    const searching = q.length > 0;
-
     // One pass over the categories; reused by Enter-to-add below.
-    const visible = FURNITURE_CATEGORIES.map((cat) => ({
-      ...cat,
-      shown: searching ? cat.types.filter((t) => FURNITURE_LABELS[t].toLowerCase().includes(q)) : cat.types,
-    }));
-    const matches = searching ? visible.flatMap((c) => c.shown) : [];
+    const { searching, visible, matches } = computeAddMenuGroups(FURNITURE_CATEGORIES, this._addSearch);
 
     return html`
       <div class="pop left add-pop">
