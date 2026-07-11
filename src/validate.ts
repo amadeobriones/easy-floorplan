@@ -98,7 +98,7 @@ const config = shape(
   {},
   {
     type: str, title: str, width: posNum, height: posNum, grid: num, snap: num,
-    background: str, defaultFloor: str, floors: arrayOf(floor), features, ...elementLists,
+    background: str, dayNightEntity: str, defaultFloor: str, floors: arrayOf(floor), features, ...elementLists,
   }
 );
 

@@ -612,6 +612,15 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   /** Canvas background color (CSS / hex). Falls back to the card background. */
   background?: string;
   /**
+   * Entity read by the day/night theme (roadmap 4a) -- normally a `sun.sun`
+   * sensor, but any entity whose state is `above_horizon`/`below_horizon`
+   * (or that carries a numeric `elevation` attribute) works, e.g. a template
+   * sensor mirroring a different sun/darkness source. Defaults to `sun.sun`
+   * (theme.ts's DEFAULT_SUN_ENTITY) when unset. Read only when
+   * `features.dayNightTheme` is on.
+   */
+  dayNightEntity?: string;
+  /**
    * Multi-floor data. When present and non-empty this is the source of truth.
    * When absent, the legacy flat arrays below describe a single implicit floor
    * (kept for backward compatibility with hand-written configs).

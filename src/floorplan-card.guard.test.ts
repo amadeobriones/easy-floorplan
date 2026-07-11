@@ -37,6 +37,16 @@ describe("floorplan-card source guards", () => {
     expect(src).toContain(".fp-room-tap {");
     expect(src).toContain(".fp-room-hit {");
   });
+
+  it("gates the night overlay behind featureEnabled(dayNightTheme)", () => {
+    expect(src).toContain('featureEnabled(c, "dayNightTheme")');
+    expect(src).toContain("fp-night-overlay");
+  });
+
+  it("keeps the night overlay non-interactive (pointer-events: none)", () => {
+    const overlayRule = src.slice(src.indexOf(".fp-night-overlay {"), src.indexOf(".fp-night-overlay {") + 200);
+    expect(overlayRule).toContain("pointer-events: none");
+  });
 });
 
 // Task 2 (layer framework): the card's watched-entity set must union in
