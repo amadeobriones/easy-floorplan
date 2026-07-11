@@ -14,6 +14,7 @@ import {
   floorImageForm,
   FURNITURE_TYPES,
   FURNITURE_LABELS,
+  FURNITURE_CATEGORIES,
 } from "./editor-forms";
 import type { FormField } from "./editor-forms";
 import type { Opening, FloorItem, Floor, FloorplanCardConfig, Furniture, FurnitureType } from "./types";
@@ -234,6 +235,12 @@ describe("furnitureForm", () => {
     }
   });
 
+  it("groups every furniture type into exactly one Add-menu category", () => {
+    const flattened = FURNITURE_CATEGORIES.flatMap((c) => c.types);
+    expect(new Set(flattened)).toEqual(new Set(FURNITURE_TYPES));
+    expect(flattened.length).toBe(FURNITURE_TYPES.length);
+  });
+
   it("asks for the chaise side only on a sectional", () => {
     expect(names(fur({ type: "sectional" }))).toContain("hand");
     expect(names(fur({ type: "sofa" }))).not.toContain("hand");
@@ -252,6 +259,36 @@ describe("furnitureForm", () => {
 
   it("leaves other patches alone", () => {
     expect(furnitureForm(fur()).toPatch({ w: 120 })).toEqual({ w: 120 });
+  });
+
+  it("exposes an entity field and showState, defaulted like itemForm", () => {
+    const form = furnitureForm(fur());
+    expect(form.fields.find((x) => x.name === "entity")!.selector).toEqual({ entity: {} });
+    expect(form.fields.find((x) => x.name === "showState")!.selector).toEqual({ boolean: {} });
+    expect(form.data.entity).toBe("");
+    expect(form.data.showState).toBe(false);
+
+    const bound = furnitureForm(fur({ entity: "switch.a", showState: true }));
+    expect(bound.data.entity).toBe("switch.a");
+    expect(bound.data.showState).toBe(true);
+  });
+
+  it("offers the three action fields, same shape and defaulting as itemForm", () => {
+    const fs = furnitureForm(fur()).fields;
+    expect(fs.find((x) => x.name === "tap_action")!.selector).toEqual({
+      ui_action: { default_action: "none" },
+    });
+    expect(fs.find((x) => x.name === "hold_action")!.selector).toEqual({
+      ui_action: { default_action: "none" },
+    });
+    expect(fs.find((x) => x.name === "double_tap_action")!.selector).toEqual({
+      ui_action: { default_action: "none" },
+    });
+
+    const bound = furnitureForm(fur({ entity: "switch.a" })).fields;
+    expect(bound.find((x) => x.name === "tap_action")!.selector).toEqual({
+      ui_action: { default_action: "toggle" },
+    });
   });
 });
 describe("roomForm — areas", () => {

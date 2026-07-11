@@ -82,7 +82,7 @@ import {
 } from "./editor-geometry";
 import {
   FURNITURE_LABELS,
-  FURNITURE_TYPES,
+  FURNITURE_CATEGORIES,
   diffFormValue,
   floorImageForm,
   furnitureForm,
@@ -198,6 +198,10 @@ export class FloorplanCardEditor extends LitElement {
   @state() private _floorMenuOpen = false;
   /** "+ Add" popover (device / text / furniture glyphs) visibility. */
   @state() private _addMenuOpen = false;
+  /** Live filter text in the "+ Add" search field. Reset every time the popover opens. */
+  @state() private _addSearch = "";
+  /** Categories the user collapsed in the "+ Add" menu. Empty set = everything open (the default). */
+  @state() private _addClosedCats: Set<string> = new Set();
   /** Project section expanded? Collapsed by default — page settings are touched rarely. */
   @state() private _projectOpen = false;
   @state() private _importText = "";
@@ -1367,35 +1371,43 @@ export class FloorplanCardEditor extends LitElement {
     this._commitFloor({ items: [...this._floor().items, ...items] });
   }
 
-  private _stateElement(kind: "room" | "item", id: string): Room | FloorItem | undefined {
+  private _stateElement(
+    kind: "room" | "item" | "furniture",
+    id: string
+  ): Room | FloorItem | Furniture | undefined {
     return kind === "room"
       ? (this._floor().rooms ?? []).find((r) => r.id === id)
-      : this._floor().items.find((x) => x.id === id);
+      : kind === "furniture"
+        ? this._floor().furniture.find((x) => x.id === id)
+        : this._floor().items.find((x) => x.id === id);
   }
 
   private _patchStateStyles(
-    kind: "room" | "item",
+    kind: "room" | "item" | "furniture",
     id: string,
     stateStyles: StateStyle[] | undefined,
     live: boolean
   ): void {
     if (kind === "room") this._updateRoom(id, { stateStyles }, live);
-    else if (live) this._updateItemLive(id, { stateStyles });
+    else if (kind === "furniture") {
+      if (live) this._updateFurnitureLive(id, { stateStyles });
+      else this._updateFurniture(id, { stateStyles });
+    } else if (live) this._updateItemLive(id, { stateStyles });
     else this._updateItem(id, { stateStyles });
   }
 
-  private _addStateStyleRule(kind: "room" | "item", id: string): void {
+  private _addStateStyleRule(kind: "room" | "item" | "furniture", id: string): void {
     const el = this._stateElement(kind, id);
     if (el) this._patchStateStyles(kind, id, addRule(el.stateStyles), false);
   }
 
-  private _removeStateStyleRule(kind: "room" | "item", id: string, i: number): void {
+  private _removeStateStyleRule(kind: "room" | "item" | "furniture", id: string, i: number): void {
     const el = this._stateElement(kind, id);
     if (el) this._patchStateStyles(kind, id, removeRule(el.stateStyles ?? [], i), false);
   }
 
   private _updateStateStyleRule(
-    kind: "room" | "item",
+    kind: "room" | "item" | "furniture",
     id: string,
     i: number,
     patch: Partial<StateStyle>,
@@ -2098,6 +2110,14 @@ export class FloorplanCardEditor extends LitElement {
               @click=${() => {
                 this._addMenuOpen = !this._addMenuOpen;
                 this._floorMenuOpen = false;
+                if (this._addMenuOpen) {
+                  // A stale filter from the last time the menu was open would
+                  // look like furniture went missing.
+                  this._addSearch = "";
+                  this.updateComplete.then(() => {
+                    (this.renderRoot.querySelector(".add-search input") as HTMLInputElement | null)?.focus();
+                  });
+                }
               }}
             >
               + Add
@@ -2483,7 +2503,7 @@ export class FloorplanCardEditor extends LitElement {
 
   private _renderStateStyleRows(
     rules: StateStyle[],
-    kind: "room" | "item",
+    kind: "room" | "item" | "furniture",
     id: string,
     defaultEntity?: string,
     areaEntities?: string[]
@@ -2501,7 +2521,7 @@ export class FloorplanCardEditor extends LitElement {
 
   private _renderStateStyleRule(
     rule: StateStyle,
-    kind: "room" | "item",
+    kind: "room" | "item" | "furniture",
     id: string,
     i: number,
     defaultEntity?: string,
@@ -2570,52 +2590,130 @@ export class FloorplanCardEditor extends LitElement {
     this._addMenuOpen = false;
   }
 
-  /** The "+ Add" popover: device, text, then every furniture type as its real glyph. */
+  /** Toggle one Add-menu category's collapsed state. */
+  private _toggleCat(label: string): void {
+    const next = new Set(this._addClosedCats);
+    if (next.has(label)) next.delete(label);
+    else next.add(label);
+    this._addClosedCats = next; // new Set => lit re-render
+  }
+
+  /**
+   * The "+ Add" popover: a search field, the Device/Text entries, then every
+   * furniture type as its real glyph, grouped into collapsible categories.
+   * Searching filters the glyphs by label and force-opens any category with a
+   * match; the Device/Text row hides so results read as results, not noise.
+   */
   private _renderAddMenu(): TemplateResult {
     const close = () => {
       this._addMenuOpen = false;
     };
+    const q = this._addSearch.trim().toLowerCase();
+    const searching = q.length > 0;
+
+    // One pass over the categories; reused by Enter-to-add below.
+    const visible = FURNITURE_CATEGORIES.map((cat) => ({
+      ...cat,
+      shown: searching ? cat.types.filter((t) => FURNITURE_LABELS[t].toLowerCase().includes(q)) : cat.types,
+    }));
+    const matches = searching ? visible.flatMap((c) => c.shown) : [];
+
     return html`
       <div class="pop left add-pop">
-        <button
-          class="add-entry"
-          @click=${() => {
-            this._addItem("generic");
-            close();
-          }}
-        >
-          <ha-icon icon="mdi:lightbulb-outline"></ha-icon> Device
-        </button>
-        <button
-          class="add-entry"
-          @click=${() => {
-            this._addText();
-            close();
-          }}
-        >
-          <ha-icon icon="mdi:format-text"></ha-icon> Text
-        </button>
-        <div class="add-furn-grid">
-          ${FURNITURE_TYPES.map((t) => {
-            const size = FURNITURE_DEFAULT_SIZE[t];
-            // Glyphs are drawn centered at the origin; pad the viewBox a bit
-            // (tv draws its stand below the box, plants overflow slightly).
-            const pad = Math.max(size.w, size.h) * 0.25 + 6;
-            const vb = `${-size.w / 2 - pad} ${-size.h / 2 - pad} ${size.w + pad * 2} ${size.h + pad * 2}`;
+        <div class="add-search">
+          <input
+            type="search"
+            placeholder="Search furniture…"
+            .value=${this._addSearch}
+            @input=${(e: Event) => {
+              this._addSearch = (e.target as HTMLInputElement).value;
+            }}
+            @keydown=${(e: KeyboardEvent) => {
+              if (e.key === "Enter" && matches.length === 1) {
+                e.preventDefault();
+                this._addFurniture(matches[0]);
+                close();
+              } else if (e.key === "Escape") {
+                // Non-empty query: the search owns this Escape — clear it and
+                // stop it short of the global handler. Empty query: nothing
+                // left to clear, so close the popover directly — the global
+                // handler never sees this key (the input is a text-entry
+                // target, so its own Escape-closes-popover branch is
+                // unreachable while focus is here).
+                e.stopPropagation();
+                if (searching) this._addSearch = "";
+                else close();
+              }
+            }}
+          />
+        </div>
+        <div class="add-body">
+          ${searching
+            ? nothing
+            : html`
+                <button
+                  class="add-entry"
+                  @click=${() => {
+                    this._addItem("generic");
+                    close();
+                  }}
+                >
+                  <ha-icon icon="mdi:lightbulb-outline"></ha-icon> Device
+                </button>
+                <button
+                  class="add-entry"
+                  @click=${() => {
+                    this._addText();
+                    close();
+                  }}
+                >
+                  <ha-icon icon="mdi:format-text"></ha-icon> Text
+                </button>
+                <div class="add-sep"></div>
+              `}
+          ${searching && matches.length === 0
+            ? html`<p class="add-empty">No furniture matches "${this._addSearch.trim()}"</p>`
+            : nothing}
+          ${visible.map((cat) => {
+            if (searching && cat.shown.length === 0) return nothing;
+            const open = searching || !this._addClosedCats.has(cat.label);
             return html`
-              <button
-                class="furn-cell"
-                title=${FURNITURE_LABELS[t]}
-                @click=${() => {
-                  this._addFurniture(t);
-                  close();
-                }}
-              >
-                <svg viewBox=${vb}>
-                  ${renderFurniture({ id: "preview", type: t, x: 0, y: 0, w: size.w, h: size.h })}
-                </svg>
-                <span>${FURNITURE_LABELS[t]}</span>
-              </button>
+              <section class="add-cat">
+                <button class="cat-head" aria-expanded=${open} @click=${() => this._toggleCat(cat.label)}>
+                  <ha-icon class="caret" icon="mdi:chevron-down"></ha-icon>
+                  <span>${cat.label}</span>
+                  <span class="cat-count">${cat.shown.length}</span>
+                </button>
+                ${open
+                  ? html`
+                      <div class="add-furn-grid">
+                        ${cat.shown.map((t) => {
+                          const size = FURNITURE_DEFAULT_SIZE[t];
+                          // Glyphs are drawn centered at the origin; pad the viewBox a
+                          // bit (tv draws its stand below the box, plants overflow
+                          // slightly).
+                          const pad = Math.max(size.w, size.h) * 0.25 + 6;
+                          const vb = `${-size.w / 2 - pad} ${-size.h / 2 - pad} ${size.w + pad * 2} ${size.h + pad * 2}`;
+                          return html`
+                            <button
+                              class="furn-cell"
+                              title=${FURNITURE_LABELS[t]}
+                              @click=${() => {
+                                this._addFurniture(t);
+                                close();
+                              }}
+                            >
+                              <svg viewBox=${vb}>
+                                ${renderFurniture({ id: "preview", type: t, x: 0, y: 0, w: size.w, h: size.h })}
+                              </svg>
+                              <span>${FURNITURE_LABELS[t]}</span>
+                            </button>
+                          `;
+                        })}
+                      </div>
+                    `
+                  : nothing}
+              </section>
             `;
           })}
         </div>
@@ -3042,6 +3140,7 @@ export class FloorplanCardEditor extends LitElement {
         ${this._renderForm(furnitureForm(f), (patch, live) =>
           this._applyElementPatch("furniture", f.id, patch, live)
         )}
+        ${this._renderStateStyleRows(f.stateStyles ?? [], "furniture", f.id, f.entity)}
         <div class="row">
           <label>Color</label>
           <input
@@ -3586,6 +3685,38 @@ export class FloorplanCardEditor extends LitElement {
     .fp-door-arc {
       transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
     }
+    .fp-slide-panel {
+      transform-box: fill-box;
+      transition: transform 0.5s ease;
+    }
+    .fp-slide-panel rect {
+      transition: fill 0.5s ease;
+    }
+    /* Garage panel: retracts toward the hinge-side jamb (scaleX about the left
+       jamb via fill-box left center; the group content is static so the box is
+       stable) and fades as the door rolls up out of the cut plane. */
+    .fp-garage-panel {
+      transform-box: fill-box;
+      transform-origin: left center;
+      transition: transform 0.5s ease, opacity 0.5s ease;
+    }
+    .fp-garage-panel rect {
+      transition: fill 0.5s ease;
+    }
+    .fp-garage-panel line {
+      transition: stroke 0.5s ease;
+    }
+    /* Bi-fold leaf: each group holds exactly one leaf rect, so fill-box left
+       center is the hinge end; the transform is the whole chained hinge list,
+       which transitions per-function -- every tween frame is a true fold pose. */
+    .fp-fold-panel {
+      transform-box: fill-box;
+      transform-origin: left center;
+      transition: transform 0.5s ease;
+    }
+    .fp-fold-panel rect {
+      transition: fill 0.5s ease;
+    }
     .wall-hit {
       stroke: transparent;
       stroke-width: 22;
@@ -3603,6 +3734,116 @@ export class FloorplanCardEditor extends LitElement {
       stroke-width: 1.5;
       stroke-dasharray: 6 4;
       pointer-events: none;
+    }
+    /*
+     * Smart furniture (stateStyles matched) -- see
+     * docs/superpowers/specs/smart-furniture-look.md. The editor's own
+     * renderFurniture() calls are always idle (no resolved style), but these
+     * rules are per-shadow-root, so they belong here too for anything that
+     * later renders a resolved preview.
+     */
+    .fp-furn {
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    .fp-furn-anim-pulse {
+      animation: fp-furn-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes fp-furn-pulse {
+      0%, 100% { scale: 1; opacity: 0.78; }
+      50% { scale: 1.03; opacity: 1; }
+    }
+    .fp-furn-anim-blink {
+      animation: fp-furn-blink 1s steps(1, end) infinite;
+    }
+    @keyframes fp-furn-blink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0.25; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .fp-furn-anim-pulse,
+      .fp-furn-anim-blink {
+        animation: none;
+      }
+    }
+    /* Reactive glyphs: bespoke active-state animation on inner sub-elements of a
+       furniture drawing. These classes sit inside the placement transform (and
+       inside g.fp-furn when a stateStyles rule resolves) and animate only the
+       standalone rotate/scale/opacity properties, so placement is never touched. */
+    .fp-furn-drum,
+    .fp-furn-flame {
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    /* Drum tumble: one revolution every 3.6 s at constant speed. Real drums spin
+       faster, but at glyph scale that strobes; this reads as turning, calmly. */
+    .fp-furn-drum {
+      animation: fp-furn-drum-spin 3.6s linear infinite;
+    }
+    /* The dryer turns the opposite way, so a laundry pair reads as two machines. */
+    .fp-furn-drum--reverse {
+      animation-direction: reverse;
+    }
+    @keyframes fp-furn-drum-spin {
+      from { rotate: 0deg; }
+      to   { rotate: 360deg; }
+    }
+    /* TV screen glow: a slow brightness swell. The resting opacity doubles as the
+       reduced-motion pose, so animation: none leaves a steadily lit screen. */
+    .fp-furn-screen {
+      opacity: 0.2;
+      animation: fp-furn-screen-glow 3s ease-in-out infinite;
+    }
+    @keyframes fp-furn-screen-glow {
+      0%, 100% { opacity: 0.1; }
+      50%      { opacity: 0.3; }
+    }
+    /* Fire flicker: uneven stops so it dances instead of pulsing. The alt flame
+       runs a shorter period with a negative delay, so the two tongues never sync
+       and the combined pattern only repeats every ~22 s. */
+    .fp-furn-flame {
+      animation: fp-furn-flame-flicker 1.7s ease-in-out infinite;
+    }
+    .fp-furn-flame--alt {
+      animation-duration: 1.3s;
+      animation-delay: -0.9s;
+    }
+    @keyframes fp-furn-flame-flicker {
+      0%, 100% { opacity: 0.85; scale: 1; }
+      27%      { opacity: 0.55; scale: 0.97; }
+      52%      { opacity: 1;    scale: 1.05; }
+      71%      { opacity: 0.65; scale: 0.98; }
+    }
+    /* Fan spin: one revolution every 1.8 s, twice the washer drum's speed, so a
+       fan and a laundry pair on one card never read as the same motion. Four
+       blades pass a fixed point every 0.45 s: clearly spinning, not strobing.
+       Reuses the drum's full-revolution keyframes at a shorter duration. */
+    .fp-furn-fan {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: fp-furn-drum-spin 1.8s linear infinite;
+    }
+    /* Light glow: a slow brightness swell on a lit disc (ceiling light, lamp).
+       The resting opacity doubles as the reduced-motion pose, so animation: none
+       leaves a steadily lit fixture. The 2.6 s period is deliberately out of
+       step with the TV screen's 3 s so co-located glyphs do not pulse in
+       lockstep. */
+    .fp-furn-glow {
+      opacity: 0.25;
+      animation: fp-furn-glow-swell 2.6s ease-in-out infinite;
+    }
+    @keyframes fp-furn-glow-swell {
+      0%, 100% { opacity: 0.12; }
+      50%      { opacity: 0.35; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .fp-furn-drum,
+      .fp-furn-screen,
+      .fp-furn-flame,
+      .fp-furn-fan,
+      .fp-furn-glow {
+        animation: none;
+      }
     }
     /* Toolbar icons sit inline with their labels; smaller than content icons. */
     .toolbar ha-icon {
@@ -3671,8 +3912,44 @@ export class FloorplanCardEditor extends LitElement {
       justify-content: center;
       font-size: 13px;
     }
+    /* The popover becomes a scroll container; the search row stays put. */
     .add-pop {
       min-width: 300px;
+      max-height: min(62vh, 480px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      /* Padding moves to .add-search and .add-body so the sticky search row sits flush. */
+      padding: 0;
+    }
+    .add-search {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      padding: 8px;
+      background: var(--card-background-color, #fff);
+      border-bottom: 1px solid var(--divider-color, #eee);
+    }
+    .add-search input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      font-size: 13px;
+    }
+    .add-search input:focus {
+      outline: none;
+      border-color: var(--primary-color);
+    }
+    .add-body {
+      padding: 6px 8px 8px;
+    }
+    .add-sep {
+      height: 1px;
+      margin: 6px 0;
+      background: var(--divider-color, #eee);
     }
     .add-entry {
       display: flex;
@@ -3689,13 +3966,56 @@ export class FloorplanCardEditor extends LitElement {
     .add-entry:hover {
       background: var(--secondary-background-color, #f5f5f5);
     }
+    .cat-head {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      width: 100%;
+      border: none;
+      background: none;
+      padding: 6px 4px;
+      border-radius: 6px;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      /* The base button rule capitalizes every word; category labels are
+         written the way they should read ("Seating & beds"). */
+      text-transform: none;
+    }
+    .cat-head:hover {
+      background: var(--secondary-background-color, #f5f5f5);
+    }
+    .cat-head .caret {
+      --mdc-icon-size: 16px;
+      transition: transform 0.15s ease;
+    }
+    .cat-head[aria-expanded="false"] .caret {
+      transform: rotate(-90deg);
+    }
+    .cat-count {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 400;
+      opacity: 0.7;
+    }
+    .add-empty {
+      margin: 8px 4px;
+      font-size: 12px;
+      color: var(--secondary-text-color);
+    }
+    /* Grid keeps its 5 columns; the border-top divider role moved to .cat-head. */
     .add-furn-grid {
       display: grid;
       grid-template-columns: repeat(5, 1fr);
       gap: 4px;
-      margin-top: 8px;
-      padding-top: 8px;
-      border-top: 1px solid var(--divider-color, #eee);
+      padding: 0 0 4px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .cat-head .caret {
+        transition: none;
+      }
     }
     .furn-cell {
       display: flex;

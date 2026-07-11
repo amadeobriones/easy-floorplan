@@ -42,19 +42,22 @@ const shape =
   };
 
 const ITEM_KINDS = ["light","switch","sensor","binary_sensor","climate","cover","media_player","fan","camera","lock","humidifier","vacuum","generic"];
-const FURNITURE_TYPES = ["table","roundTable","desk","chair","sofa","bed","wardrobe","rug","plant","fridge","stove","sink","toilet","stairs","tv","washer","dryer","dishwasher","waterHeater","airHandler","bathtub","vanity","sectional"];
+const FURNITURE_TYPES = ["table","roundTable","desk","chair","sofa","bed","wardrobe","rug","plant","fridge","stove","sink","toilet","stairs","tv","washer","dryer","dishwasher","waterHeater","airHandler","bathtub","vanity","sectional","armchair","bench","crib","coffeeTable","nightstand","dresser","bookshelf","cabinet","microwave","shower","bidet","fireplace","ceilingFan","ceilingLight","lamp","coffeeMaker","toaster","rangeHood","smartSpeaker"];
 
 const wall = shape({ id: str, x1: num, y1: num, x2: num, y2: num });
 const opening = shape(
   { id: str, type: oneOf("door", "window"), x: num, y: num, length: num, angle: num },
-  { motion: oneOf("swing", "slide"), entity: str, activeColor: str }
+  { motion: oneOf("swing", "slide", "roll", "fold"), entity: str, activeColor: str }
 );
 const item = shape(
   { id: str, x: num, y: num, kind: oneOf(...ITEM_KINDS) },
   { entity: str, secondaryEntity: str, name: str, icon: str, size: num, angle: num, showState: bool, showIcon: bool }
 );
 const text = shape({ id: str, x: num, y: num, text: str }, { size: num, color: str, angle: num });
-const furniture = shape({ id: str, type: oneOf(...FURNITURE_TYPES), x: num, y: num, w: num, h: num }, { angle: num });
+const furniture = shape(
+  { id: str, type: oneOf(...FURNITURE_TYPES), x: num, y: num, w: num, h: num },
+  { angle: num, entity: str, secondaryEntity: str, showState: bool }
+);
 const tracker = shape({ id: str, x: num, y: num, w: num, h: num }, { angle: num });
 const room = shape({ id: str, points: arrayOf(point) }, { name: str, areaId: str, fill: str, fillOpacity: num });
 

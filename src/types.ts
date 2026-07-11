@@ -59,9 +59,10 @@ export interface Opening {
   /**
    * How the opening moves. `swing` (default) is a hinged door / casement window;
    * `slide` is a sliding door / sliding window whose panel(s) travel along the
-   * wall (see {@link sliderStyle}).
+   * wall (see {@link sliderStyle}). New: `roll` (sectional/garage) and `fold`
+   * (bi-fold).
    */
-  motion?: "swing" | "slide";
+  motion?: "swing" | "slide" | "roll" | "fold";
   x: number;
   y: number;
   /** Length along the wall, in virtual units. */
@@ -99,6 +100,17 @@ export interface Opening {
    * Ignored for swinging openings.
    */
   sliderStyle?: "single" | "bypass" | "biparting";
+  /**
+   * Swing doors only: leaf arrangement. "double" draws two half-width leaves,
+   * one hinged at each jamb, meeting at the centre (French doors). Ignored for
+   * windows and for non-swing motions.
+   */
+  doorStyle?: "single" | "double";
+  /**
+   * Folding openings only ("fold"): number of equal leaves in the hinge chain.
+   * Must be even so the free end rides the track; 2 (default) or 4.
+   */
+  foldPanels?: 2 | 4;
 }
 
 export type ItemKind =
@@ -271,7 +283,26 @@ export type FurnitureType =
   | "airHandler"
   | "bathtub"
   | "vanity"
-  | "sectional";
+  | "sectional"
+  | "armchair"
+  | "bench"
+  | "crib"
+  | "coffeeTable"
+  | "nightstand"
+  | "dresser"
+  | "bookshelf"
+  | "cabinet"
+  | "microwave"
+  | "shower"
+  | "bidet"
+  | "fireplace"
+  | "ceilingFan"
+  | "ceilingLight"
+  | "lamp"
+  | "coffeeMaker"
+  | "toaster"
+  | "rangeHood"
+  | "smartSpeaker";
 
 /**
  * Which end of an L-shaped sectional the chaise sits on, facing the sofa from
@@ -294,6 +325,16 @@ export interface Furniture {
   angle?: number;
   /** Stroke/fill color. Defaults to gray so it reads differently from walls. */
   color?: string;
+  /** Optional entity. With one, the piece is a live, controllable appliance. */
+  entity?: string;
+  secondaryEntity?: string;
+  /** Conditional colour/animation/icon, first match wins (same engine as rooms/items). */
+  stateStyles?: StateStyle[];
+  /** Show the entity's state text on the piece. */
+  showState?: boolean;
+  tap_action?: ActionConfig;
+  hold_action?: ActionConfig;
+  double_tap_action?: ActionConfig;
 }
 
 /**
@@ -405,6 +446,25 @@ export const FURNITURE_DEFAULT_SIZE: Record<FurnitureType, { w: number; h: numbe
   bathtub: { w: 150, h: 76 },
   vanity: { w: 110, h: 55 },
   sectional: { w: 230, h: 180 },
+  armchair: { w: 72, h: 72 },
+  bench: { w: 110, h: 35 },
+  crib: { w: 70, h: 130 },
+  coffeeTable: { w: 100, h: 55 },
+  nightstand: { w: 42, h: 40 },
+  dresser: { w: 110, h: 50 },
+  bookshelf: { w: 110, h: 30 },
+  cabinet: { w: 90, h: 50 },
+  microwave: { w: 50, h: 35 },
+  shower: { w: 90, h: 90 },
+  bidet: { w: 44, h: 62 },
+  fireplace: { w: 110, h: 40 },
+  ceilingFan: { w: 90, h: 90 },
+  ceilingLight: { w: 36, h: 36 },
+  lamp: { w: 40, h: 40 },
+  coffeeMaker: { w: 34, h: 40 },
+  toaster: { w: 34, h: 22 },
+  rangeHood: { w: 70, h: 48 },
+  smartSpeaker: { w: 28, h: 28 },
 };
 
 /** A quarter-turn display rotation for a floor. Absent means 0. */

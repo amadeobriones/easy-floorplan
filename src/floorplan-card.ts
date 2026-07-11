@@ -1,6 +1,8 @@
 import { LitElement, html, css, svg, nothing, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, FloorplanCardConfig, FloorItem, FloorText, Floor, Rotation } from "./types";
+import type {
+  HomeAssistant, FloorplanCardConfig, FloorItem, FloorText, Floor, Rotation, Furniture, ItemKind,
+} from "./types";
 import {
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
@@ -126,7 +128,12 @@ export class FloorplanCard extends LitElement {
     return resolveStateStyle(item.stateStyles, this.hass, item.entity);
   }
 
-  private _itemIcon(item: FloorItem): string {
+  /**
+   * Widened past `FloorItem` so a furniture-badge adapter (no domain `kind`
+   * of its own; `_renderFurnitureBadge` passes `"generic"`) shares this and
+   * `_renderBadge` verbatim with items.
+   */
+  private _itemIcon(item: { entity?: string; kind: ItemKind; icon?: string }): string {
     // No entity: no state to read and no registry entry to override the icon.
     const e = item.entity;
     return resolveItemIcon(
@@ -153,6 +160,14 @@ export class FloorplanCard extends LitElement {
     executeAction(this, this.hass, item, actionForGesture(item, ev.detail.action));
   }
 
+  private _handleFurnitureAction(
+    ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>,
+    f: Furniture
+  ): void {
+    if (!this.hass) return;
+    executeAction(this, this.hass, f, actionForGesture(f, ev.detail.action));
+  }
+
   /**
    * Tapping an entity-bound opening: toggle a controllable `cover`, otherwise
    * open the entity's more-info dialog (read-only `binary_sensor`s and
@@ -174,7 +189,10 @@ export class FloorplanCard extends LitElement {
     }
   }
 
-  private _renderBadge(item: FloorItem, style?: ResolvedStyle): TemplateResult {
+  private _renderBadge(
+    item: { entity?: string; kind: ItemKind; icon?: string; size?: number; angle?: number },
+    style?: ResolvedStyle,
+  ): TemplateResult {
     const size = item.size ?? DEFAULT_ITEM_SIZE;
     // A matched rule's icon beats the item's own: it is the more specific one.
     const icon = style?.icon ?? this._itemIcon(item);
@@ -249,6 +267,49 @@ export class FloorplanCard extends LitElement {
     `;
   }
 
+  /**
+   * A furniture piece's state badge: 22px, straddling the piece's top-right
+   * corner (post-rotation), upright regardless of the piece's own angle or
+   * the floor's rotation. Shown for entity-bound furniture that shows its
+   * state, or whose matched rule resolves an icon. Reuses `_renderBadge` and
+   * the `.item`/`.badge`/`.label` styles verbatim -- see
+   * docs/superpowers/specs/smart-furniture-look.md §2.
+   */
+  private _renderFurnitureBadge(
+    f: Furniture,
+    style: ResolvedStyle | undefined,
+    c: FloorplanCardConfig,
+    rot: Rotation,
+  ): TemplateResult | typeof nothing {
+    if (!f.entity || !(f.showState || style?.icon)) return nothing;
+    const theta = ((f.angle ?? 0) * Math.PI) / 180;
+    const hw = f.w / 2;
+    const hh = f.h / 2;
+    const badgeX = f.x + hw * Math.cos(theta) + hh * Math.sin(theta);
+    const badgeY = f.y + hw * Math.sin(theta) - hh * Math.cos(theta);
+    return html`
+      <div
+        class="item ${
+          style?.animation && style.animation !== "none" ? `anim-${style.animation}` : ""
+        }"
+        style="left:${(badgeX / c.width) * 100}%; top:${(badgeY / c.height) * 100}%;${
+          rot ? ` transform: translate(-50%, -50%) rotate(${counterRotate(0, rot)}deg);` : ""
+        }"
+        role="button"
+        tabindex="0"
+        @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
+          this._handleFurnitureAction(ev, f)}
+        .actionHandler=${actionHandler({
+          hasHold: hasAction(f.hold_action),
+          hasDoubleClick: hasAction(f.double_tap_action),
+        })}
+      >
+        ${this._renderBadge({ entity: f.entity, kind: "generic", size: 22 }, style)}
+        ${f.showState ? html`<span class="label">${itemStateText(this.hass, f)}</span>` : nothing}
+      </div>
+    `;
+  }
+
   private _renderText(t: FloorText, c: FloorplanCardConfig, rot: Rotation): TemplateResult {
     return html`
       <div
@@ -294,7 +355,33 @@ export class FloorplanCard extends LitElement {
             ${(active.rooms ?? []).map((r) =>
               renderRoom(r, resolveStateStyle(r.stateStyles, this.hass, undefined)),
             )}
-            ${active.furniture.map((f) => renderFurniture(f))}
+            ${active.furniture.map((f) => {
+              const style = resolveStateStyle(f.stateStyles, this.hass, f.entity);
+              // Domain-aware active state (same as items' _isOn), so a reactive
+              // glyph bound to e.g. a climate/media_player animates on its real
+              // active states, not only literal on/open/home/playing.
+              const isActive = !!f.entity && entityIsActive(f.entity, this.hass?.states[f.entity]?.state);
+              const shape = renderFurniture(f, style, isActive);
+              if (!f.entity) return shape;
+              // Entity-bound furniture is tappable -- a transparent rect over the
+              // piece's oriented bounding box gives a reliable hit target even
+              // where the drawing itself is a thin stroke (a rug's dashed border,
+              // a TV's single line). The shape stays decoration; this is the
+              // functional tap target, mirroring .fp-opening-hit.
+              const hw = f.w / 2;
+              const hh = f.h / 2;
+              return svg`<g class="fp-furn-tap"
+                  @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
+                    this._handleFurnitureAction(ev, f)}
+                  .actionHandler=${actionHandler({
+                    hasHold: hasAction(f.hold_action),
+                    hasDoubleClick: hasAction(f.double_tap_action),
+                  })}>
+                  ${shape}
+                  <rect class="fp-furn-hit" x=${-hw} y=${-hh} width=${f.w} height=${f.h}
+                        transform="translate(${f.x} ${f.y}) rotate(${f.angle ?? 0})" />
+                </g>`;
+            })}
             ${renderWallMask(active.openings, c.width, c.height, this._wallMaskId)}
             <g mask=${`url(#${this._wallMaskId})`}>
               ${active.walls.map(
@@ -338,6 +425,9 @@ export class FloorplanCard extends LitElement {
           <div class="items">
             ${active.texts.map((t) => this._renderText(t, c, rot))}
             ${active.items.map((it) => this._renderItem(it, c, rot))}
+            ${active.furniture.map((f) =>
+              this._renderFurnitureBadge(f, resolveStateStyle(f.stateStyles, this.hass, f.entity), c, rot),
+            )}
           </div>
           </div>
           ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
@@ -469,6 +559,38 @@ export class FloorplanCard extends LitElement {
     .fp-slide-panel rect {
       transition: fill 0.5s ease;
     }
+    /* Garage panel: retracts toward the hinge-side jamb (scaleX about the left
+       jamb via fill-box left center; the group content is static so the box is
+       stable) and fades as the door rolls up out of the cut plane. */
+    .fp-garage-panel {
+      transform-box: fill-box;
+      transform-origin: left center;
+      transition: transform 0.5s ease, opacity 0.5s ease;
+    }
+    .fp-garage-panel rect {
+      transition: fill 0.5s ease;
+    }
+    .fp-garage-panel line {
+      transition: stroke 0.5s ease;
+    }
+    /* Bi-fold leaf: each group holds exactly one leaf rect, so fill-box left
+       center is the hinge end; the transform is the whole chained hinge list,
+       which transitions per-function -- every tween frame is a true fold pose. */
+    .fp-fold-panel {
+      transform-box: fill-box;
+      transform-origin: left center;
+      transition: transform 0.5s ease;
+    }
+    .fp-fold-panel rect {
+      transition: fill 0.5s ease;
+    }
+    .fp-furn-tap {
+      cursor: pointer;
+    }
+    .fp-furn-hit {
+      fill: transparent;
+      pointer-events: all;
+    }
     .items {
       position: absolute;
       inset: 0;
@@ -527,14 +649,122 @@ export class FloorplanCard extends LitElement {
       0%, 49% { opacity: 1; }
       50%, 100% { opacity: 0.25; }
     }
+    /*
+     * Smart furniture (stateStyles matched). Tint lives in renderFurniture's
+     * inline fill/stroke; this only carries the animation, on the inner group
+     * so the placement transform (translate + rotate) is never touched.
+     */
+    .fp-furn {
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    /* Breathing: the appliance inhales -- same 1.6s period as fp-item-pulse, so
+       a badge and its shape pulse in phase. Scale is gentle (1.03): these are
+       big shapes; the badge's 1.18 would look like the sofa levitating. */
+    .fp-furn-anim-pulse {
+      animation: fp-furn-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes fp-furn-pulse {
+      0%, 100% { scale: 1; opacity: 0.78; }
+      50% { scale: 1.03; opacity: 1; }
+    }
+    /* Blink: alert language, identical timing/curve to fp-item-blink. */
+    .fp-furn-anim-blink {
+      animation: fp-furn-blink 1s steps(1, end) infinite;
+    }
+    @keyframes fp-furn-blink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0.25; }
+    }
     @media (prefers-reduced-motion: reduce) {
       /* Every animation this card draws, not just the conditional ones. */
       .item.anim-pulse .badge,
       .item.anim-blink .badge,
+      .fp-furn-anim-pulse,
+      .fp-furn-anim-blink,
       .ripple.active .ring,
       .tracker-dot,
       .tracker-ring,
       .tracker-band {
+        animation: none;
+      }
+    }
+    /* Reactive glyphs: bespoke active-state animation on inner sub-elements of a
+       furniture drawing. These classes sit inside the placement transform (and
+       inside g.fp-furn when a stateStyles rule resolves) and animate only the
+       standalone rotate/scale/opacity properties, so placement is never touched. */
+    .fp-furn-drum,
+    .fp-furn-flame {
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    /* Drum tumble: one revolution every 3.6 s at constant speed. Real drums spin
+       faster, but at glyph scale that strobes; this reads as turning, calmly. */
+    .fp-furn-drum {
+      animation: fp-furn-drum-spin 3.6s linear infinite;
+    }
+    /* The dryer turns the opposite way, so a laundry pair reads as two machines. */
+    .fp-furn-drum--reverse {
+      animation-direction: reverse;
+    }
+    @keyframes fp-furn-drum-spin {
+      from { rotate: 0deg; }
+      to   { rotate: 360deg; }
+    }
+    /* TV screen glow: a slow brightness swell. The resting opacity doubles as the
+       reduced-motion pose, so animation: none leaves a steadily lit screen. */
+    .fp-furn-screen {
+      opacity: 0.2;
+      animation: fp-furn-screen-glow 3s ease-in-out infinite;
+    }
+    @keyframes fp-furn-screen-glow {
+      0%, 100% { opacity: 0.1; }
+      50%      { opacity: 0.3; }
+    }
+    /* Fire flicker: uneven stops so it dances instead of pulsing. The alt flame
+       runs a shorter period with a negative delay, so the two tongues never sync
+       and the combined pattern only repeats every ~22 s. */
+    .fp-furn-flame {
+      animation: fp-furn-flame-flicker 1.7s ease-in-out infinite;
+    }
+    .fp-furn-flame--alt {
+      animation-duration: 1.3s;
+      animation-delay: -0.9s;
+    }
+    @keyframes fp-furn-flame-flicker {
+      0%, 100% { opacity: 0.85; scale: 1; }
+      27%      { opacity: 0.55; scale: 0.97; }
+      52%      { opacity: 1;    scale: 1.05; }
+      71%      { opacity: 0.65; scale: 0.98; }
+    }
+    /* Fan spin: one revolution every 1.8 s, twice the washer drum's speed, so a
+       fan and a laundry pair on one card never read as the same motion. Four
+       blades pass a fixed point every 0.45 s: clearly spinning, not strobing.
+       Reuses the drum's full-revolution keyframes at a shorter duration. */
+    .fp-furn-fan {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: fp-furn-drum-spin 1.8s linear infinite;
+    }
+    /* Light glow: a slow brightness swell on a lit disc (ceiling light, lamp).
+       The resting opacity doubles as the reduced-motion pose, so animation: none
+       leaves a steadily lit fixture. The 2.6 s period is deliberately out of
+       step with the TV screen's 3 s so co-located glyphs do not pulse in
+       lockstep. */
+    .fp-furn-glow {
+      opacity: 0.25;
+      animation: fp-furn-glow-swell 2.6s ease-in-out infinite;
+    }
+    @keyframes fp-furn-glow-swell {
+      0%, 100% { opacity: 0.12; }
+      50%      { opacity: 0.35; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .fp-furn-drum,
+      .fp-furn-screen,
+      .fp-furn-flame,
+      .fp-furn-fan,
+      .fp-furn-glow {
         animation: none;
       }
     }

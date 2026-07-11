@@ -24,7 +24,7 @@ import {
   DEFAULT_TEXT_SIZE,
   DEFAULT_TRACKER_DOT_SIZE,
 } from "./types";
-import { defaultIcon, openingMotion, sliderStyleOf, ROOM_FILL_OPACITY } from "./render";
+import { defaultIcon, openingMotion, sliderStyleOf, doorStyleOf, foldPanelsOf, ROOM_FILL_OPACITY } from "./render";
 import { defaultItemAction } from "./actions";
 
 /** One ha-form schema item, extended with our label/helper (read by computeLabel). */
@@ -121,26 +121,45 @@ export const FURNITURE_TYPES: FurnitureType[] = [
   "table",
   "roundTable",
   "desk",
+  "coffeeTable",
+  "nightstand",
   "chair",
+  "armchair",
   "sofa",
+  "sectional",
+  "bench",
   "bed",
+  "crib",
   "wardrobe",
+  "dresser",
+  "bookshelf",
+  "cabinet",
   "rug",
   "plant",
+  "fireplace",
   "fridge",
   "stove",
+  "microwave",
   "sink",
   "toilet",
+  "bidet",
   "stairs",
   "tv",
-  "sectional",
   "washer",
   "dryer",
   "dishwasher",
   "bathtub",
   "vanity",
+  "shower",
   "waterHeater",
   "airHandler",
+  "ceilingFan",
+  "ceilingLight",
+  "lamp",
+  "coffeeMaker",
+  "toaster",
+  "rangeHood",
+  "smartSpeaker",
 ];
 
 /** User-facing labels for furniture types (the enum uses camelCase). */
@@ -148,34 +167,79 @@ export const FURNITURE_LABELS: Record<FurnitureType, string> = {
   table: "table",
   roundTable: "round table",
   desk: "desk",
+  coffeeTable: "coffee table",
+  nightstand: "nightstand",
   chair: "chair",
+  armchair: "armchair",
   sofa: "sofa",
+  sectional: "sectional (L)",
+  bench: "bench",
   bed: "bed",
+  crib: "crib",
   wardrobe: "wardrobe",
+  dresser: "dresser",
+  bookshelf: "bookshelf",
+  cabinet: "cabinet",
   rug: "rug",
   plant: "plant",
+  fireplace: "fireplace",
   fridge: "fridge",
   stove: "stove",
+  microwave: "microwave",
   sink: "sink",
   toilet: "toilet",
+  bidet: "bidet",
   stairs: "stairs",
   tv: "tv",
-  sectional: "sectional (L)",
   washer: "washer",
   dryer: "dryer",
   dishwasher: "dishwasher",
   bathtub: "bathtub",
   vanity: "vanity",
+  shower: "shower",
   waterHeater: "water heater",
   airHandler: "air handler",
+  ceilingFan: "ceiling fan",
+  ceilingLight: "ceiling light",
+  lamp: "lamp",
+  coffeeMaker: "coffee maker",
+  toaster: "toaster",
+  rangeHood: "range hood",
+  smartSpeaker: "smart speaker",
 };
+
+/** The Add-menu grouping. Every FurnitureType appears in exactly one category. */
+export const FURNITURE_CATEGORIES: { label: string; types: FurnitureType[] }[] = [
+  { label: "Seating & beds", types: ["chair", "armchair", "sofa", "sectional", "bench", "bed", "crib"] },
+  { label: "Tables & desks", types: ["table", "roundTable", "desk", "coffeeTable", "nightstand"] },
+  { label: "Storage", types: ["wardrobe", "dresser", "bookshelf", "cabinet"] },
+  { label: "Lighting & fans", types: ["ceilingFan", "ceilingLight", "lamp"] },
+  {
+    label: "Appliances",
+    types: ["fridge", "stove", "rangeHood", "microwave", "coffeeMaker", "toaster",
+            "dishwasher", "washer", "dryer", "waterHeater", "airHandler", "tv", "smartSpeaker"],
+  },
+  { label: "Fixtures", types: ["sink", "toilet", "bathtub", "shower", "vanity", "bidet"] },
+  { label: "Decor & misc", types: ["rug", "plant", "fireplace", "stairs"] },
+];
 
 export function openingForm(o: Opening): FormSpec {
   const motion = openingMotion(o);
   const style = sliderStyleOf(o);
+  const doorStyle = doorStyleOf(o);
+  const foldPanels = foldPanelsOf(o);
   const fields: FormField[] = [
     { name: "type", label: "Type", selector: dropdown(opt("door", "Door"), opt("window", "Window")) },
-    { name: "motion", label: "Motion", selector: dropdown(opt("swing", "Swing"), opt("slide", "Slide")) },
+    {
+      name: "motion",
+      label: "Motion",
+      selector: dropdown(
+        opt("swing", "Swing"),
+        opt("slide", "Slide"),
+        opt("roll", "Garage (roll-up)"),
+        opt("fold", "Bi-fold")
+      ),
+    },
     { name: "length", label: "Length", required: true, selector: { number: { min: 1, mode: "box" } } },
   ];
   if (o.type === "door" && motion === "swing") {
@@ -183,6 +247,11 @@ export function openingForm(o: Opening): FormSpec {
       name: "hinge",
       label: "Hinge",
       selector: dropdown(opt("left", "Left"), opt("right", "Right")),
+    });
+    fields.push({
+      name: "doorStyle",
+      label: "Style",
+      selector: dropdown(opt("single", "Single"), opt("double", "Double")),
     });
   }
   if (motion === "swing") {
@@ -210,6 +279,13 @@ export function openingForm(o: Opening): FormSpec {
       ),
     });
   }
+  if (motion === "fold") {
+    fields.push({
+      name: "foldPanels",
+      label: "Panels",
+      selector: dropdown(opt("2", "2 panels"), opt("4", "4 panels")),
+    });
+  }
   fields.push({
     name: "entity",
     label: "Entity",
@@ -228,6 +304,8 @@ export function openingForm(o: Opening): FormSpec {
       opens: o.flipV ? "other" : "this",
       slide: o.flipH ? "right" : "left",
       style,
+      doorStyle,
+      foldPanels: String(foldPanels),
       entity: o.entity ?? "",
       invert: o.invert ?? false,
       angle: o.angle,
@@ -236,12 +314,18 @@ export function openingForm(o: Opening): FormSpec {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(patch)) {
         if (k === "motion") {
-          out.motion = v === "slide" ? "slide" : undefined;
-          // sliderStyle only applies while sliding — drop it when switching back.
+          out.motion = v === "swing" ? undefined : v;
+          // sliderStyle only applies while sliding — drop it when switching away.
           if (v !== "slide") out.sliderStyle = undefined;
+          // doorStyle only applies to a swinging door — drop it when switching away.
+          if (v !== "swing") out.doorStyle = undefined;
+          // foldPanels only applies while folding — drop it when switching away.
+          if (v !== "fold") out.foldPanels = undefined;
         } else if (k === "hinge" || k === "slide") out.flipH = v === "right" || undefined;
         else if (k === "opens") out.flipV = v === "other" || undefined;
         else if (k === "style") out.sliderStyle = v === "single" ? undefined : v;
+        else if (k === "doorStyle") out.doorStyle = v === "single" ? undefined : v;
+        else if (k === "foldPanels") out.foldPanels = v === "4" ? 4 : undefined;
         else if (k === "invert") out.invert = v || undefined;
         else out[k] = v;
       }
@@ -371,6 +455,12 @@ export function roomForm(r: Room): FormSpec {
 export function furnitureForm(f: Furniture): FormSpec {
   const fields: FormField[] = [
     {
+      name: "entity",
+      label: "Entity",
+      helper: "Optional. Without one the piece is static: no state, no tint, no action.",
+      selector: { entity: {} },
+    },
+    {
       name: "type",
       label: "Type",
       selector: {
@@ -392,11 +482,34 @@ export function furnitureForm(f: Furniture): FormSpec {
   fields.push(
     { name: "w", label: "Width", required: true, selector: { number: { min: 10, mode: "box" } } },
     { name: "h", label: "Height", required: true, selector: { number: { min: 10, mode: "box" } } },
-    angleField()
+    angleField(),
+    { name: "showState", label: "Show state", selector: { boolean: {} } },
+    {
+      name: "tap_action",
+      label: "Tap action",
+      selector: { ui_action: { default_action: defaultItemAction(f.entity).action } },
+    },
+    { name: "hold_action", label: "Hold action", selector: { ui_action: { default_action: "none" } } },
+    {
+      name: "double_tap_action",
+      label: "Double-tap action",
+      selector: { ui_action: { default_action: "none" } },
+    }
   );
   return {
     fields,
-    data: { type: f.type, hand: f.hand ?? "right", w: f.w, h: f.h, angle: f.angle ?? 0 },
+    data: {
+      entity: f.entity ?? "",
+      type: f.type,
+      hand: f.hand ?? "right",
+      w: f.w,
+      h: f.h,
+      angle: f.angle ?? 0,
+      showState: f.showState ?? false,
+      tap_action: f.tap_action,
+      hold_action: f.hold_action,
+      double_tap_action: f.double_tap_action,
+    },
     toPatch(patch) {
       const out: Record<string, unknown> = { ...patch };
       // `hand` is meaningless on anything but a sectional; drop it rather than

@@ -65,6 +65,13 @@ export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
       // render for anything it is not watching.
       for (const id of stateStyleEntities(it.stateStyles, it.entity)) ids.add(id);
     }
+    for (const fu of f.furniture) {
+      if (fu.entity) ids.add(fu.entity);
+      if (fu.secondaryEntity) ids.add(fu.secondaryEntity);
+      // Same reasoning as items: a rule may watch an entity the piece itself
+      // does not, and the card only re-renders for what it watches.
+      for (const id of stateStyleEntities(fu.stateStyles, fu.entity)) ids.add(id);
+    }
     for (const tr of f.trackers) {
       for (const s of [tr.xSensor, tr.ySensor]) {
         if (s?.entity) ids.add(s.entity);
@@ -403,10 +410,11 @@ export function kindFromEntity(entity: string): ItemKind {
 }
 
 /**
- * How an opening moves — `swing` (hinged door / casement window) or `slide`
- * (panels travelling along the wall). Defaults to `swing`.
+ * How an opening moves — `swing` (hinged door / casement window), `slide`
+ * (panels travelling along the wall), `roll` (sectional/garage), or `fold`
+ * (bi-fold, hinged concertina). Defaults to `swing`.
  */
-export function openingMotion(o: Opening): "swing" | "slide" {
+export function openingMotion(o: Opening): "swing" | "slide" | "roll" | "fold" {
   return o.motion ?? "swing";
 }
 
@@ -440,32 +448,46 @@ export function sliderStyleOf(o: Opening): "single" | "bypass" | "biparting" {
   return openingMotion(o) === "slide" ? (o.sliderStyle ?? "single") : "single";
 }
 
+/**
+ * Resolve a swing opening's leaf arrangement. Only meaningful for a swinging
+ * door (windows and non-swing motions always resolve to `single`), defaulting
+ * to `single`.
+ */
+export function doorStyleOf(o: Opening): "single" | "double" {
+  return o.type === "door" && openingMotion(o) === "swing" ? (o.doorStyle ?? "single") : "single";
+}
+
+/**
+ * Resolve a folding opening's leaf count. Defaults to 2 (the archetypal
+ * bi-fold); 4 suits wide closet/patio runs.
+ */
+export function foldPanelsOf(o: Opening): 2 | 4 {
+  return o.foldPanels === 4 ? 4 : 2;
+}
+
 /** HA `cover` / `binary_sensor` device classes that read as a window (glass). */
 const WINDOW_DEVICE_CLASSES = new Set(["window", "blind", "shade", "shutter", "curtain", "awning"]);
-/** Device classes that roll / slide rather than swing. */
-const SLIDING_DEVICE_CLASSES = new Set([
-  "garage",
-  "garage_door",
-  "blind",
-  "shade",
-  "shutter",
-  "curtain",
-]);
+/** Device classes that roll up out of the plane (sectional garage doors). */
+const GARAGE_DEVICE_CLASSES = new Set(["garage", "garage_door"]);
+/** Device classes that slide rather than swing. */
+const SLIDING_DEVICE_CLASSES = new Set(["blind", "shade", "shutter", "curtain"]);
 
 /**
  * Default opening `type` and `motion` inferred from a bound entity's HA
  * `device_class` (mirrors how HA itself picks icons/behaviour from it). Window-
- * like classes render as a window; rolling/sliding classes default to `slide`.
- * Unknown / missing classes fall back to a swing door. `motion: undefined`
- * means swing (the default).
+ * like classes render as a window; garage classes default to `roll`; other
+ * rolling/sliding classes default to `slide`. Unknown / missing classes fall
+ * back to a swing door. `motion: undefined` means swing (the default).
  */
 export function openingFromDeviceClass(deviceClass: string | undefined): {
   type: Opening["type"];
-  motion: "slide" | undefined;
+  motion: "slide" | "roll" | undefined;
 } {
+  const dc = deviceClass ?? "";
+  if (GARAGE_DEVICE_CLASSES.has(dc)) return { type: "door", motion: "roll" };
   return {
-    type: WINDOW_DEVICE_CLASSES.has(deviceClass ?? "") ? "window" : "door",
-    motion: SLIDING_DEVICE_CLASSES.has(deviceClass ?? "") ? "slide" : undefined,
+    type: WINDOW_DEVICE_CLASSES.has(dc) ? "window" : "door",
+    motion: SLIDING_DEVICE_CLASSES.has(dc) ? "slide" : undefined,
   };
 }
 
@@ -586,30 +608,25 @@ export interface OpeningStyle {
   accent?: string;
 }
 
-/**
- * Render a door or window as an SVG group centered at the origin, then translated
- * and rotated into place. The wall behind the opening is cut away by the host via
- * an SVG mask (see {@link renderWallMask}), so this draws only the symbol — jambs,
- * swing arc and the moving leaf/sash, which carry CSS classes so the host's styles
- * can transition them smoothly between open and closed.
- */
-export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResult {
-  const { color, open = true, active = false, accent = "var(--primary-color, #03a9f4)" } = style;
-  const half = o.length / 2;
-  const cutH = WALL_THICKNESS + 4;
-  // The moving parts take the accent color when actively open (sensor-driven).
-  const tone = active ? accent : color;
-  // Fraction open (0..1) drives partial swing/slide. Defaults to the binary
-  // `open` so callers that don't pass `amount` render exactly as before.
-  const amt = Math.max(0, Math.min(1, style.amount ?? (open ? 1 : 0)));
+/** Bi-fold full-open fold angle. See {@link renderOpening} §3 (reactive-doors spec). */
+const FOLD_MAX_DEG = 80; // full open keeps a legible zigzag, not a flat bar
 
-  let body: SVGTemplateResult;
-  if (o.type === "window" && openingMotion(o) === "swing") {
-    // Two casement leaves hinged at each jamb. Closed, they meet in the middle
-    // along the wall; open, they swing outward (up) like double doors, each
-    // tracing a quarter-circle arc (radius = half) that draws on as it opens.
-    const arcLen = (Math.PI / 2) * half;
-    body = svg`
+/**
+ * Two leaves hinged one at each jamb, meeting at the centre when closed and
+ * swinging outward (a butterfly) as `amt` goes to 1. Shared by the swing
+ * *window* body (a casement pair) and the swing *double door* body (French
+ * doors) — the two are the same plan symbol, so this must stay the single
+ * source of truth for both.
+ */
+function doubleSwingBody(
+  half: number,
+  cutH: number,
+  amt: number,
+  tone: string,
+  color: string,
+): SVGTemplateResult {
+  const arcLen = (Math.PI / 2) * half;
+  return svg`
         <!-- jambs -->
         <line x1=${-half} y1=${-cutH / 2} x2=${-half} y2=${cutH / 2}
               stroke=${color} stroke-width="2" />
@@ -635,6 +652,37 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
           </g>
         </g>
       `;
+}
+
+/**
+ * Render a door or window as an SVG group centered at the origin, then translated
+ * and rotated into place. The wall behind the opening is cut away by the host via
+ * an SVG mask (see {@link renderWallMask}), so this draws only the symbol — jambs,
+ * swing arc and the moving leaf/sash, which carry CSS classes so the host's styles
+ * can transition them smoothly between open and closed.
+ */
+export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResult {
+  const { color, open = true, active = false, accent = "var(--primary-color, #03a9f4)" } = style;
+  const half = o.length / 2;
+  const cutH = WALL_THICKNESS + 4;
+  // The moving parts take the accent color when actively open (sensor-driven).
+  const tone = active ? accent : color;
+  // Fraction open (0..1) drives partial swing/slide. Defaults to the binary
+  // `open` so callers that don't pass `amount` render exactly as before.
+  const amt = Math.max(0, Math.min(1, style.amount ?? (open ? 1 : 0)));
+
+  let body: SVGTemplateResult;
+  if (o.type === "window" && openingMotion(o) === "swing") {
+    // Two casement leaves hinged at each jamb. Closed, they meet in the middle
+    // along the wall; open, they swing outward (up) like double doors, each
+    // tracing a quarter-circle arc (radius = half) that draws on as it opens.
+    body = doubleSwingBody(half, cutH, amt, tone, color);
+  } else if (openingMotion(o) === "swing" && doorStyleOf(o) === "double") {
+    // Double door: two half-width leaves, one hinged at each jamb, meeting at
+    // the centre (French doors). Geometrically identical to the casement
+    // window body above -- a French door and a casement pair are the same
+    // plan symbol.
+    body = doubleSwingBody(half, cutH, amt, tone, color);
   } else if (openingMotion(o) === "slide") {
     // A sliding door / window: panel(s) sit in the opening and travel *along* the
     // wall. Closed, they fill the gap; open, they slide aside (single), stack
@@ -692,6 +740,61 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
           <rect x=${-half} y=${-t / 2} width=${o.length} height=${t} style="fill:${tone};" />
         </g>`;
     }
+  } else if (openingMotion(o) === "roll") {
+    // Sectional roll-up door (garage). Closed: a full-span panel with section
+    // joints. Open: the panel rolls up out of the cut plane -- drawn as a
+    // retract-toward-the-jamb + fade, uncovering the dashed overhead-track line.
+    const seg = o.length / 4;
+    const clear = 1 - amt;
+    body = svg`
+        <!-- jambs -->
+        <line x1=${-half} y1=${-cutH / 2} x2=${-half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <line x1=${half} y1=${-cutH / 2} x2=${half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <!-- overhead track: dashed = above the cut plane; shows once the panel clears -->
+        <line x1=${-half} y1="0" x2=${half} y2="0" stroke=${color}
+              stroke-width="0.75" stroke-dasharray="4 3" opacity="0.35" />
+        <!-- sectional panel: joints ride inside so the sections clear with it -->
+        <g class="fp-garage-panel" style="transform:scaleX(${clear});opacity:${clear};">
+          <rect x=${-half} y="-1.25" width=${o.length} height="2.5" style="fill:${tone};" />
+          ${[1, 2, 3].map(
+            (k) => svg`<line x1=${-half + k * seg} y1="-2.5" x2=${-half + k * seg}
+              y2="2.5" stroke-width="1" style="stroke:${tone};" />`
+          )}
+        </g>
+      `;
+  } else if (openingMotion(o) === "fold") {
+    // Bi-fold: n equal leaves hinged in a chain, concertina against the left
+    // jamb. Each leaf is a flat sibling whose CSS transform is the full hinge
+    // chain up to that leaf; matching list structures make the 0.5s transition
+    // interpolate every frame as an exact fold pose (see reactive-doors spec).
+    const n = foldPanelsOf(o); // 2 | 4
+    const L = o.length / n;
+    const a = FOLD_MAX_DEG * amt;
+    let chain = "";
+    const leaves: SVGTemplateResult[] = [];
+    for (let k = 1; k <= n; k++) {
+      chain +=
+        k === 1
+          ? `rotate(${-a}deg)`
+          : ` translate(${L}px, 0px) rotate(${(k % 2 ? -2 : 2) * a}deg)`;
+      leaves.push(svg`
+          <g class="fp-fold-panel" style="transform:${chain};">
+            <rect x="0" y="-1.25" width=${L} height="2.5" style="fill:${tone};" />
+          </g>`);
+    }
+    body = svg`
+        <!-- jambs -->
+        <line x1=${-half} y1=${-cutH / 2} x2=${-half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <line x1=${half} y1=${-cutH / 2} x2=${half} y2=${cutH / 2}
+              stroke=${color} stroke-width="2" />
+        <!-- track -->
+        <line x1=${-half} y1="0" x2=${half} y2="0"
+              stroke=${color} stroke-width="0.75" opacity="0.6" />
+        <g transform="translate(${-half} 0)">${leaves}</g>
+      `;
   } else {
     // Door leaf hinged at the left jamb: lies along the wall when closed,
     // swings up (−90° when fully open) by `amt`. The leaf is drawn closed and
@@ -816,28 +919,52 @@ export function renderRoom(r: Room, style?: ResolvedStyle): SVGTemplateResult {
   />`;
 }
 
-export function renderFurniture(f: Furniture): SVGTemplateResult {
-  const color = f.color ?? FURNITURE_COLOR;
+/**
+ * A furniture/fixture diagram. Idle line art by default; when `resolved`
+ * carries a matched {@link StateStyle} rule the base + detail lines are
+ * wrapped in an inner `g.fp-furn` (tint + animation), *inside* the placement
+ * transform, so nothing this adds can move the piece. With no `resolved` the
+ * output is byte-identical to the pre-smart-furniture render — see
+ * docs/superpowers/specs/smart-furniture-look.md.
+ *
+ * When `active` is true, washer/dryer/tv/fireplace render a bespoke animated
+ * variant (drum spin, screen glow, flame flicker) — see
+ * docs/superpowers/specs/reactive-glyphs.md. `active === false` (or omitted)
+ * is byte-identical to today for every type.
+ */
+export function renderFurniture(
+  f: Furniture,
+  resolved?: ResolvedStyle,
+  active = false,
+): SVGTemplateResult {
+  const color = resolved?.color ?? f.color ?? FURNITURE_COLOR;
+  // A matched rule's colour is the one thing that steps up fill-opacity — an
+  // animation-only rule (no colour) keeps the idle grey and idle opacity.
+  const tinted = !!resolved?.color;
+  const fillOpacity = tinted ? 0.3 : 0.12;
+  const rugFillOpacity = tinted ? 0.2 : 0.08;
   const w = f.w;
   const h = f.h;
   const hw = w / 2;
   const hh = h / 2;
 
   const roundBase =
-    f.type === "roundTable" || f.type === "plant" || f.type === "waterHeater";
+    f.type === "roundTable" || f.type === "plant" || f.type === "waterHeater" ||
+    f.type === "ceilingFan" || f.type === "ceilingLight" || f.type === "lamp" ||
+    f.type === "smartSpeaker";
   const base = f.type === "sectional"
     ? svg`<polygon points=${sectionalPoints(w, h, f.hand).map((p) => p.join(",")).join(" ")}
-                   fill=${color} fill-opacity="0.12" stroke=${color} stroke-width="2"
+                   fill=${color} fill-opacity=${fillOpacity} stroke=${color} stroke-width="2"
                    stroke-linejoin="round" />`
     : roundBase
     ? svg`<ellipse cx="0" cy="0" rx=${hw} ry=${hh}
-                   fill=${color} fill-opacity="0.12" stroke=${color} stroke-width="2" />`
+                   fill=${color} fill-opacity=${fillOpacity} stroke=${color} stroke-width="2" />`
     : f.type === "rug"
       ? svg`<rect x=${-hw} y=${-hh} width=${w} height=${h} rx=${Math.min(w, h) * 0.12}
-                  fill=${color} fill-opacity="0.08" stroke=${color} stroke-width="2"
+                  fill=${color} fill-opacity=${rugFillOpacity} stroke=${color} stroke-width="2"
                   stroke-dasharray="8 5" />`
       : svg`<rect x=${-hw} y=${-hh} width=${w} height=${h} rx="4"
-                  fill=${color} fill-opacity="0.12" stroke=${color} stroke-width="2" />`;
+                  fill=${color} fill-opacity=${fillOpacity} stroke=${color} stroke-width="2" />`;
 
   let detail: SVGTemplateResult;
   switch (f.type) {
@@ -911,7 +1038,13 @@ export function renderFurniture(f: Furniture): SVGTemplateResult {
       break;
     }
     case "tv":
-      detail = svg`<line x1=${-w * 0.18} y1=${hh} x2=${w * 0.18} y2=${hh + h}
+      detail = active
+        ? svg`
+        <rect class="fp-furn-screen" x=${-hw + w * 0.06} y=${-hh + h * 0.18}
+              width=${w * 0.88} height=${h * 0.64} rx="2" fill=${color} />
+        <line x1=${-w * 0.18} y1=${hh} x2=${w * 0.18} y2=${hh + h}
+              stroke=${color} stroke-width="2" />`
+        : svg`<line x1=${-w * 0.18} y1=${hh} x2=${w * 0.18} y2=${hh + h}
                          stroke=${color} stroke-width="2" />`;
       break;
     case "desk":
@@ -939,18 +1072,56 @@ export function renderFurniture(f: Furniture): SVGTemplateResult {
                          rx=${Math.min(w, h) * 0.08} fill="none" stroke=${color}
                          stroke-width="1.5" opacity="0.6" />`;
       break;
-    case "washer":
-    case "dryer": {
+    case "washer": {
       const r = Math.min(w, h) * 0.3;
-      detail = svg`
+      const cy = h * 0.06;
+      detail = active
+        ? svg`
+        <line x1=${-hw + w * 0.06} y1=${-hh + h * 0.18} x2=${hw - w * 0.06} y2=${-hh + h * 0.18}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <g class="fp-furn-drum">
+          <circle cx="0" cy=${cy} r=${r} fill="none" stroke=${color} stroke-width="2" />
+          <line x1="0" y1=${cy - r * 0.3} x2="0" y2=${cy - r * 0.85}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+          <line x1=${r * 0.26} y1=${cy + r * 0.15} x2=${r * 0.736} y2=${cy + r * 0.425}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+          <line x1=${-r * 0.26} y1=${cy + r * 0.15} x2=${-r * 0.736} y2=${cy + r * 0.425}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+        </g>
+        <circle cx=${-hw + w * 0.16} cy=${-hh + h * 0.09} r=${Math.min(w, h) * 0.045}
+                fill="none" stroke=${color} stroke-width="1.5" />`
+        : svg`
         <line x1=${-hw + w * 0.06} y1=${-hh + h * 0.18} x2=${hw - w * 0.06} y2=${-hh + h * 0.18}
               stroke=${color} stroke-width="1.5" opacity="0.7" />
         <circle cx="0" cy=${h * 0.06} r=${r} fill="none" stroke=${color} stroke-width="2" />
-        ${f.type === "dryer"
-          ? svg`<circle cx="0" cy=${h * 0.06} r=${r * 0.45}
-                        fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`
-          : svg`<circle cx=${-hw + w * 0.16} cy=${-hh + h * 0.09} r=${Math.min(w, h) * 0.045}
-                        fill="none" stroke=${color} stroke-width="1.5" />`}`;
+        <circle cx=${-hw + w * 0.16} cy=${-hh + h * 0.09} r=${Math.min(w, h) * 0.045}
+                        fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    }
+    case "dryer": {
+      const r = Math.min(w, h) * 0.3;
+      const cy = h * 0.06;
+      detail = active
+        ? svg`
+        <line x1=${-hw + w * 0.06} y1=${-hh + h * 0.18} x2=${hw - w * 0.06} y2=${-hh + h * 0.18}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <g class="fp-furn-drum fp-furn-drum--reverse">
+          <circle cx="0" cy=${cy} r=${r} fill="none" stroke=${color} stroke-width="2" />
+          <line x1="0" y1=${cy - r * 0.6} x2="0" y2=${cy - r * 0.9}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+          <line x1=${r * 0.52} y1=${cy + r * 0.3} x2=${r * 0.779} y2=${cy + r * 0.45}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+          <line x1=${-r * 0.52} y1=${cy + r * 0.3} x2=${-r * 0.779} y2=${cy + r * 0.45}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+        </g>
+        <circle cx="0" cy=${cy} r=${r * 0.45}
+                fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`
+        : svg`
+        <line x1=${-hw + w * 0.06} y1=${-hh + h * 0.18} x2=${hw - w * 0.06} y2=${-hh + h * 0.18}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <circle cx="0" cy=${h * 0.06} r=${r} fill="none" stroke=${color} stroke-width="2" />
+        <circle cx="0" cy=${h * 0.06} r=${r * 0.45}
+                        fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`;
       break;
     }
     case "dishwasher":
@@ -998,13 +1169,234 @@ export function renderFurniture(f: Furniture): SVGTemplateResult {
         <line x1=${divX} y1=${backY} x2=${divX} y2=${hh} stroke=${color} stroke-width="2" />`;
       break;
     }
+    case "armchair":
+      detail = svg`
+        <line x1=${-hw} y1=${-hh + h * 0.26} x2=${hw} y2=${-hh + h * 0.26}
+              stroke=${color} stroke-width="2" />
+        <line x1=${-hw + w * 0.16} y1=${-hh + h * 0.26} x2=${-hw + w * 0.16} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <line x1=${hw - w * 0.16} y1=${-hh + h * 0.26} x2=${hw - w * 0.16} y2=${hh}
+              stroke=${color} stroke-width="2" />`;
+      break;
+    case "bench":
+      detail = svg`
+        <line x1=${-hw + w * 0.06} y1=${-h * 0.16} x2=${hw - w * 0.06} y2=${-h * 0.16}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <line x1=${-hw + w * 0.06} y1=${h * 0.16} x2=${hw - w * 0.06} y2=${h * 0.16}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />`;
+      break;
+    case "crib": {
+      const ticks = [];
+      for (const ty of [-h * 0.25, 0, h * 0.25]) {
+        ticks.push(svg`<line x1=${-hw} y1=${ty} x2=${-hw + w * 0.16} y2=${ty}
+                             stroke=${color} stroke-width="1.5" opacity="0.7" />`);
+        ticks.push(svg`<line x1=${hw - w * 0.16} y1=${ty} x2=${hw} y2=${ty}
+                             stroke=${color} stroke-width="1.5" opacity="0.7" />`);
+      }
+      detail = svg`
+        <rect x=${-hw + w * 0.16} y=${-hh + h * 0.12} width=${w * 0.68} height=${h * 0.76} rx="3"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        ${ticks}`;
+      break;
+    }
+    case "coffeeTable":
+      detail = svg`
+        <rect x=${-hw + w * 0.12} y=${-hh + h * 0.15} width=${w * 0.76} height=${h * 0.7} rx="3"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`;
+      break;
+    case "nightstand":
+      detail = svg`
+        <circle cx="0" cy="0" r=${Math.min(w, h) * 0.09}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "dresser":
+      detail = svg`
+        <line x1=${-w * 0.15} y1=${-hh + h * 0.15} x2=${-w * 0.15} y2=${hh - h * 0.15}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${w * 0.15} y1=${-hh + h * 0.15} x2=${w * 0.15} y2=${hh - h * 0.15}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <circle cx=${-w * 0.3} cy="0" r=${Math.min(w, h) * 0.07}
+                fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx="0" cy="0" r=${Math.min(w, h) * 0.07}
+                fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx=${w * 0.3} cy="0" r=${Math.min(w, h) * 0.07}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "bookshelf": {
+      const spines = [];
+      for (let i = 1; i < 6; i++) {
+        const x = -hw + (w / 6) * i;
+        spines.push(svg`<line x1=${x} y1=${-hh} x2=${x} y2=${hh} stroke=${color} stroke-width="1.5" />`);
+      }
+      detail = svg`${spines}`;
+      break;
+    }
+    case "cabinet":
+      detail = svg`
+        <line x1=${-hw + w * 0.08} y1=${-hh + h * 0.08} x2=${hw - w * 0.08} y2=${hh - h * 0.08}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />`;
+      break;
+    case "microwave":
+      detail = svg`
+        <rect x=${-hw + w * 0.1} y=${-hh + h * 0.18} width=${w * 0.55} height=${h * 0.64} rx="2"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <line x1=${hw - w * 0.2} y1=${-hh + h * 0.18} x2=${hw - w * 0.2} y2=${hh - h * 0.18}
+              stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "shower": {
+      const r = Math.min(w, h) * 0.07;
+      detail = svg`
+        <circle cx="0" cy="0" r=${r}
+                fill="none" stroke=${color} stroke-width="1.5" />
+        <line x1=${-hw + w * 0.08} y1=${-hh + h * 0.08} x2=${-w * 0.1} y2=${-h * 0.1}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${hw - w * 0.08} y1=${-hh + h * 0.08} x2=${w * 0.1} y2=${-h * 0.1}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${-hw + w * 0.08} y1=${hh - h * 0.08} x2=${-w * 0.1} y2=${h * 0.1}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${hw - w * 0.08} y1=${hh - h * 0.08} x2=${w * 0.1} y2=${h * 0.1}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />`;
+      break;
+    }
+    case "bidet":
+      detail = svg`
+        <ellipse cx="0" cy=${h * 0.08} rx=${w * 0.32} ry=${h * 0.34}
+                 fill="none" stroke=${color} stroke-width="2" />
+        <circle cx="0" cy=${-hh + h * 0.16} r=${Math.min(w, h) * 0.07}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "fireplace":
+      detail = active
+        ? svg`
+        <line x1=${-w * 0.26} y1=${-hh} x2=${-w * 0.26} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <line x1=${w * 0.26} y1=${-hh} x2=${w * 0.26} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <path class="fp-furn-flame"
+              d="M ${-w * 0.14} ${h * 0.18} L ${-w * 0.05} ${-h * 0.18} L 0 ${h * 0.02} L ${w * 0.05} ${-h * 0.18} L ${w * 0.14} ${h * 0.18}"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <path class="fp-furn-flame fp-furn-flame--alt"
+              d="M ${-w * 0.08} ${h * 0.16} L ${-w * 0.03} ${-h * 0.05} L 0 ${h * 0.07} L ${w * 0.03} ${-h * 0.05} L ${w * 0.08} ${h * 0.16}"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`
+        : svg`
+        <line x1=${-w * 0.26} y1=${-hh} x2=${-w * 0.26} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <line x1=${w * 0.26} y1=${-hh} x2=${w * 0.26} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <path d="M ${-w * 0.14} ${h * 0.18} L ${-w * 0.05} ${-h * 0.18} L 0 ${h * 0.02} L ${w * 0.05} ${-h * 0.18} L ${w * 0.14} ${h * 0.18}"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />`;
+      break;
+    case "ceilingFan": {
+      const r = Math.min(hw, hh);
+      // One blade pointing up, trailing edge bowed left; three rotate() copies.
+      const blade = `M ${-r * 0.08} ${-r * 0.2} C ${-r * 0.2} ${-r * 0.45} ${-r * 0.24} ${-r * 0.68} ${-r * 0.14} ${-r * 0.88} Q ${-r * 0.02} ${-r * 0.98} ${r * 0.06} ${-r * 0.85} C ${r * 0.12} ${-r * 0.62} ${r * 0.1} ${-r * 0.4} ${r * 0.06} ${-r * 0.2} Z`;
+      // Trail arc at 0.88 r spanning 235..262 deg, just behind the up blade for
+      // clockwise rotation (cos/sin of 235 and 262 deg premultiplied by 0.88:
+      // -0.574/-0.819 -> -0.505/-0.721, -0.139/-0.990 -> -0.122/-0.871).
+      const trail = `M ${-r * 0.505} ${-r * 0.721} A ${r * 0.88} ${r * 0.88} 0 0 1 ${-r * 0.122} ${-r * 0.871}`;
+      const blades = svg`
+        <path d=${blade} fill="none" stroke=${color} stroke-width="2" />
+        <path d=${blade} transform="rotate(90)" fill="none" stroke=${color} stroke-width="2" />
+        <path d=${blade} transform="rotate(180)" fill="none" stroke=${color} stroke-width="2" />
+        <path d=${blade} transform="rotate(270)" fill="none" stroke=${color} stroke-width="2" />`;
+      detail = active
+        ? svg`
+        <g class="fp-furn-fan">
+          ${blades}
+          <path d=${trail} fill="none" stroke=${color} stroke-width="1.5" opacity="0.45" />
+          <path d=${trail} transform="rotate(180)" fill="none" stroke=${color} stroke-width="1.5" opacity="0.45" />
+        </g>
+        <circle cx="0" cy="0" r=${r * 0.15} fill="none" stroke=${color} stroke-width="2" />`
+        : svg`
+        ${blades}
+        <circle cx="0" cy="0" r=${r * 0.15} fill="none" stroke=${color} stroke-width="2" />`;
+      break;
+    }
+    case "ceilingLight": {
+      const m = Math.min(hw, hh);
+      const ring = svg`
+        <circle cx="0" cy="0" r=${m * 0.6} fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <line x1="0" y1=${-m * 0.6} x2="0" y2=${-m * 0.86} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${m * 0.6} y1="0" x2=${m * 0.86} y2="0" stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1="0" y1=${m * 0.6} x2="0" y2=${m * 0.86} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${-m * 0.6} y1="0" x2=${-m * 0.86} y2="0" stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <circle cx="0" cy="0" r=${m * 0.1} fill="none" stroke=${color} stroke-width="1.5" />`;
+      detail = active
+        ? svg`
+        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.5} fill=${color} />
+        ${ring}`
+        : ring;
+      break;
+    }
+    case "lamp": {
+      const m = Math.min(hw, hh);
+      const shade = svg`
+        <line x1=${m * 0.27} y1=${m * 0.27} x2=${m * 0.57} y2=${m * 0.57} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${-m * 0.27} y1=${m * 0.27} x2=${-m * 0.57} y2=${m * 0.57} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${m * 0.27} y1=${-m * 0.27} x2=${m * 0.57} y2=${-m * 0.57} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${-m * 0.27} y1=${-m * 0.27} x2=${-m * 0.57} y2=${-m * 0.57} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <circle cx="0" cy="0" r=${m * 0.14} fill="none" stroke=${color} stroke-width="1.5" />`;
+      detail = active
+        ? svg`
+        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.78} fill=${color} />
+        ${shade}`
+        : shade;
+      break;
+    }
+    case "coffeeMaker": {
+      const cr = Math.min(w, h) * 0.28;
+      detail = svg`
+        <line x1=${-hw + w * 0.08} y1=${-hh + h * 0.28} x2=${hw - w * 0.08} y2=${-hh + h * 0.28}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <circle cx="0" cy=${h * 0.18} r=${cr} fill="none" stroke=${color} stroke-width="2" />
+        <line x1=${cr} y1=${h * 0.18} x2=${cr + w * 0.12} y2=${h * 0.18}
+              stroke=${color} stroke-width="1.5" />`;
+      break;
+    }
+    case "toaster":
+      detail = svg`
+        <rect x=${-hw + w * 0.08} y=${-h * 0.24} width=${w * 0.64} height=${h * 0.16} rx="2"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <rect x=${-hw + w * 0.08} y=${h * 0.08} width=${w * 0.64} height=${h * 0.16} rx="2"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <circle cx=${hw - w * 0.12} cy="0" r=${Math.min(w, h) * 0.09}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "rangeHood":
+      detail = svg`
+        <rect x=${-w * 0.14} y=${-hh + h * 0.1} width=${w * 0.28} height=${h * 0.34} rx="2"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <line x1=${-hw + w * 0.08} y1=${hh - h * 0.1} x2=${-w * 0.14} y2=${-hh + h * 0.44}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${hw - w * 0.08} y1=${hh - h * 0.1} x2=${w * 0.14} y2=${-hh + h * 0.44}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />`;
+      break;
+    case "smartSpeaker": {
+      const m = Math.min(hw, hh);
+      detail = svg`
+        <circle cx="0" cy="0" r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx="0" cy=${-m * 0.5} r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx=${m * 0.5} cy="0" r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx="0" cy=${m * 0.5} r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx=${-m * 0.5} cy="0" r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    }
     case "table":
     case "roundTable":
     default:
       detail = svg``;
       break;
   }
-  return svg`<g transform="translate(${f.x} ${f.y}) rotate(${f.angle ?? 0})">${base}${detail}</g>`;
+  // No matched rule: identical to the pre-smart-furniture markup, so idle
+  // plans render byte-for-byte the same.
+  if (!resolved) {
+    return svg`<g transform="translate(${f.x} ${f.y}) rotate(${f.angle ?? 0})">${base}${detail}</g>`;
+  }
+  const anim =
+    resolved.animation && resolved.animation !== "none" ? resolved.animation : undefined;
+  return svg`<g transform="translate(${f.x} ${f.y}) rotate(${f.angle ?? 0})">
+    <g class="fp-furn${anim ? ` fp-furn-anim-${anim}` : ""}">${base}${detail}</g>
+  </g>`;
 }
 
 /**

@@ -65,9 +65,70 @@ describe("validateConfig", () => {
   it("allows unknown extra keys", () => {
     expect(validateConfig({ ...valid, futureKey: 123 }).ok).toBe(true);
   });
+  it("accepts roll (garage) and fold (bi-fold) openings, and a double-style swing door", () => {
+    const mkOpening = (opening: Record<string, unknown>) => ({
+      type: "custom:floorplan-card", width: 100, height: 100,
+      floors: [{ id: "f", openings: [{ id: "o1", type: "door", x: 0, y: 0, length: 90, angle: 0, ...opening }] }],
+    });
+    expect(validateConfig(mkOpening({ motion: "roll" })).ok).toBe(true);
+    expect(validateConfig(mkOpening({ motion: "fold", foldPanels: 4 })).ok).toBe(true);
+    expect(validateConfig(mkOpening({ motion: "swing", doorStyle: "double" })).ok).toBe(true);
+  });
+  it("rejects a bad opening motion", () => {
+    const bad = {
+      type: "custom:floorplan-card", width: 100, height: 100,
+      floors: [{ id: "f", openings: [{ id: "o1", type: "door", x: 0, y: 0, length: 90, angle: 0, motion: "spin" }] }],
+    };
+    const r = validateConfig(bad);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some((e) => e.includes("openings[0].motion"))).toBe(true);
+  });
   it("rejects a non-positive width or height", () => {
     expect(validateConfig({ ...valid, width: 0 }).ok).toBe(false);
     expect(validateConfig({ ...valid, height: -5 }).ok).toBe(false);
+  });
+  it("accepts smart-furniture fields", () => {
+    const cfg = { type: "custom:floorplan-card", width: 100, height: 100, floors: [{ id: "f",
+      furniture: [{ id: "u1", type: "washer", x: 1, y: 1, w: 10, h: 10, entity: "switch.washer",
+        showState: true, stateStyles: [{ state: "on", color: "orange", animation: "pulse" }],
+        tap_action: { action: "toggle" } }] }] };
+    expect(validateConfig(cfg).ok).toBe(true);
+  });
+  it("rejects a furniture piece with a wrong-typed entity, with a path", () => {
+    const cfg = { type: "custom:floorplan-card", width: 100, height: 100, floors: [{ id: "f",
+      furniture: [{ id: "u1", type: "washer", x: 1, y: 1, w: 10, h: 10, entity: 123 }] }] };
+    const r = validateConfig(cfg);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some((e) => e.includes("furniture[0].entity"))).toBe(true);
+  });
+  it("still accepts a plain furniture piece with no smart fields", () => {
+    const cfg = { type: "custom:floorplan-card", width: 100, height: 100, floors: [{ id: "f",
+      furniture: [{ id: "u1", type: "sofa", x: 1, y: 1, w: 10, h: 10 }] }] };
+    expect(validateConfig(cfg).ok).toBe(true);
+  });
+  it("accepts a furniture piece of each of the 12 Phase-2 types", () => {
+    const newTypes = [
+      "armchair", "bench", "crib", "coffeeTable", "nightstand", "dresser",
+      "bookshelf", "cabinet", "microwave", "shower", "bidet", "fireplace",
+    ];
+    for (const type of newTypes) {
+      const cfg = { type: "custom:floorplan-card", width: 100, height: 100, floors: [{ id: "f",
+        furniture: [{ id: "u1", type, x: 1, y: 1, w: 10, h: 10 }] }] };
+      const r = validateConfig(cfg);
+      expect(r.ok, type).toBe(true);
+    }
+  });
+  it("accepts a furniture piece of each of the 7 catalog-glyphs types", () => {
+    const newTypes = [
+      "ceilingFan", "ceilingLight", "lamp", "coffeeMaker", "toaster",
+      "rangeHood", "smartSpeaker",
+    ];
+    for (const type of newTypes) {
+      const cfg = { type: "custom:floorplan-card", width: 100, height: 100, floors: [{ id: "f",
+        furniture: [{ id: "u1", type, x: 1, y: 1, w: 10, h: 10 }] }] };
+      const r = validateConfig(cfg);
+      expect(r.ok, type).toBe(true);
+    }
   });
 });
 

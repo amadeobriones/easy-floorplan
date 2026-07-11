@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
 import type { FurnitureType, ItemKind } from "./types";
-import { FURNITURE_DEFAULT_SIZE } from "./types";
+import { FURNITURE_DEFAULT_SIZE, FURNITURE_COLOR } from "./types";
 import {
   snapToWall,
   openingDefaultOpen,
   openingMotion,
   openingMirror,
   sliderStyleOf,
+  doorStyleOf,
+  foldPanelsOf,
   openingFromDeviceClass,
   openingClickAction,
   resolveOpeningOpen,
@@ -93,6 +95,8 @@ describe("openingMotion", () => {
     expect(openingMotion({ type: "door" } as Opening)).toBe("swing");
     expect(openingMotion({ type: "door", motion: "slide" } as Opening)).toBe("slide");
     expect(openingMotion({ type: "window", motion: "slide" } as Opening)).toBe("slide");
+    expect(openingMotion({ type: "door", motion: "roll" } as Opening)).toBe("roll");
+    expect(openingMotion({ type: "door", motion: "fold" } as Opening)).toBe("fold");
   });
 });
 
@@ -125,6 +129,38 @@ describe("sliderStyleOf", () => {
   });
 });
 
+describe("doorStyleOf", () => {
+  it("resolves the configured style for a swing door, single by default", () => {
+    expect(doorStyleOf({ type: "door", motion: "swing" } as Opening)).toBe("single");
+    expect(doorStyleOf({ type: "door", motion: "swing", doorStyle: "double" } as Opening)).toBe(
+      "double",
+    );
+  });
+  it("is single for a window even with doorStyle set", () => {
+    expect(doorStyleOf({ type: "window", motion: "swing", doorStyle: "double" } as Opening)).toBe(
+      "single",
+    );
+  });
+  it("is single for a non-swing door even with doorStyle set", () => {
+    expect(doorStyleOf({ type: "door", motion: "slide", doorStyle: "double" } as Opening)).toBe(
+      "single",
+    );
+    expect(doorStyleOf({ type: "door", motion: "roll", doorStyle: "double" } as Opening)).toBe(
+      "single",
+    );
+    expect(doorStyleOf({ type: "door", motion: "fold", doorStyle: "double" } as Opening)).toBe(
+      "single",
+    );
+  });
+});
+
+describe("foldPanelsOf", () => {
+  it("defaults to 2 and returns 4 when configured", () => {
+    expect(foldPanelsOf({ type: "door", motion: "fold" } as Opening)).toBe(2);
+    expect(foldPanelsOf({ type: "door", motion: "fold", foldPanels: 4 } as Opening)).toBe(4);
+  });
+});
+
 describe("openingFromDeviceClass", () => {
   it("maps window-like cover device classes to a window", () => {
     expect(openingFromDeviceClass("window")).toEqual({ type: "window", motion: undefined });
@@ -132,10 +168,13 @@ describe("openingFromDeviceClass", () => {
     expect(openingFromDeviceClass("shade")).toEqual({ type: "window", motion: "slide" });
     expect(openingFromDeviceClass("curtain")).toEqual({ type: "window", motion: "slide" });
   });
-  it("maps door-like device classes to a door, sliding for rollers", () => {
+  it("maps door-like device classes to a door, rolling for garage covers", () => {
     expect(openingFromDeviceClass("door")).toEqual({ type: "door", motion: undefined });
-    expect(openingFromDeviceClass("garage")).toEqual({ type: "door", motion: "slide" });
+    expect(openingFromDeviceClass("garage")).toEqual({ type: "door", motion: "roll" });
     expect(openingFromDeviceClass("gate")).toEqual({ type: "door", motion: undefined });
+  });
+  it("keeps the other rolling classes on slide, not roll", () => {
+    expect(openingFromDeviceClass("shutter")).toEqual({ type: "window", motion: "slide" });
   });
   it("defaults unknown / missing device classes to a swing door", () => {
     expect(openingFromDeviceClass(undefined)).toEqual({ type: "door", motion: undefined });
@@ -610,6 +649,10 @@ describe("every furniture type renders and has a default size", () => {
     "plant", "fridge", "stove", "sink", "toilet", "stairs", "tv",
     "washer", "dryer", "dishwasher", "waterHeater", "airHandler", "bathtub",
     "vanity", "sectional",
+    "armchair", "bench", "crib", "coffeeTable", "nightstand", "dresser",
+    "bookshelf", "cabinet", "microwave", "shower", "bidet", "fireplace",
+    "ceilingFan", "ceilingLight", "lamp", "coffeeMaker", "toaster",
+    "rangeHood", "smartSpeaker",
   ];
 
   it("has a default size for each", () => {
@@ -637,6 +680,253 @@ describe("every furniture type renders and has a default size", () => {
   });
 });
 
+describe("the 12 Phase-2 furniture types (armchair..fireplace)", () => {
+  const newTypes: FurnitureType[] = [
+    "armchair", "bench", "crib", "coffeeTable", "nightstand", "dresser",
+    "bookshelf", "cabinet", "microwave", "shower", "bidet", "fireplace",
+  ];
+
+  interface TplLike { strings: readonly string[]; values: unknown[] }
+  const isTpl = (v: unknown): v is TplLike =>
+    !!v && typeof v === "object" && "strings" in v && "values" in v;
+  const serialize = (t: unknown): string => {
+    const tpl = t as TplLike;
+    let out = tpl.strings[0];
+    for (let i = 0; i < tpl.values.length; i++) {
+      const v = tpl.values[i];
+      out += isTpl(v) ? serialize(v) : String(v);
+      out += tpl.strings[i + 1];
+    }
+    return out;
+  };
+
+  it("renders each without throwing, and its output contains FURNITURE_COLOR", () => {
+    for (const t of newTypes) {
+      const { w, h } = FURNITURE_DEFAULT_SIZE[t];
+      let result;
+      expect(() => {
+        result = renderFurniture({ id: t, type: t, x: 0, y: 0, w, h });
+      }, t).not.toThrow();
+      expect(serialize(result), t).toContain(FURNITURE_COLOR);
+    }
+  });
+});
+
+describe("the 7 catalog-glyphs furniture types (ceilingFan..smartSpeaker)", () => {
+  const newTypes: FurnitureType[] = [
+    "ceilingFan", "ceilingLight", "lamp", "coffeeMaker", "toaster",
+    "rangeHood", "smartSpeaker",
+  ];
+
+  interface TplLike { strings: readonly string[]; values: unknown[] }
+  const isTpl = (v: unknown): v is TplLike =>
+    !!v && typeof v === "object" && "strings" in v && "values" in v;
+  const serialize = (t: unknown): string => {
+    const tpl = t as TplLike;
+    let out = tpl.strings[0];
+    for (let i = 0; i < tpl.values.length; i++) {
+      const v = tpl.values[i];
+      out += isTpl(v) ? serialize(v) : String(v);
+      out += tpl.strings[i + 1];
+    }
+    return out;
+  };
+
+  it("renders each without throwing, and its output contains FURNITURE_COLOR", () => {
+    for (const t of newTypes) {
+      const { w, h } = FURNITURE_DEFAULT_SIZE[t];
+      let result;
+      expect(() => {
+        result = renderFurniture({ id: t, type: t, x: 0, y: 0, w, h });
+      }, t).not.toThrow();
+      expect(serialize(result), t).toContain(FURNITURE_COLOR);
+    }
+  });
+
+  it("the 4 static types render identically whether active is true or false", () => {
+    for (const t of ["coffeeMaker", "toaster", "rangeHood", "smartSpeaker"] as FurnitureType[]) {
+      const { w, h } = FURNITURE_DEFAULT_SIZE[t];
+      const f = { id: t, type: t, x: 0, y: 0, w, h };
+      const idle = serialize(renderFurniture(f, undefined, false));
+      const active = serialize(renderFurniture(f, undefined, true));
+      expect(active, t).toEqual(idle);
+    }
+  });
+});
+
+describe("renderFurniture stateStyles tint (smart furniture)", () => {
+  const f = { id: "w", type: "washer" as const, x: 120, y: 80, w: 60, h: 60 };
+
+  // Full recursive serialization (strings interleaved with values, including
+  // nested SVGTemplateResults) -- unlike the renderRoom `values()` helper this
+  // also surfaces literal markup such as a wrapper's class="fp-furn ...".
+  interface TplLike { strings: readonly string[]; values: unknown[] }
+  const isTpl = (v: unknown): v is TplLike =>
+    !!v && typeof v === "object" && "strings" in v && "values" in v;
+  const serialize = (t: unknown): string => {
+    const tpl = t as TplLike;
+    let out = tpl.strings[0];
+    for (let i = 0; i < tpl.values.length; i++) {
+      const v = tpl.values[i];
+      out += isTpl(v) ? serialize(v) : String(v);
+      out += tpl.strings[i + 1];
+    }
+    return out;
+  };
+
+  it("with no resolved style, is byte-identical to today: FURNITURE_COLOR, no fp-furn wrapper", () => {
+    const v = serialize(renderFurniture(f));
+    expect(v).toContain(FURNITURE_COLOR);
+    expect(v).not.toContain("fp-furn");
+  });
+
+  it("with no resolved style, the markup is pinned to a snapshot (idle byte-identity guard)", () => {
+    // A regression guard, not a design assertion: any change to idle furniture
+    // markup -- structure, attribute order, whitespace -- fails this and must
+    // be reviewed, since Task 4's contract is that idle plans render unchanged.
+    expect(serialize(renderFurniture(f))).toMatchSnapshot();
+  });
+
+  it("with a resolved colour, tints the shape and wraps it in g.fp-furn", () => {
+    const v = serialize(renderFurniture(f, { color: "orange" }));
+    expect(v).toContain("orange");
+    expect(v).toContain("fp-furn");
+  });
+
+  it("a matched rule with no colour keeps the idle grey but still wraps (animation-only)", () => {
+    const v = serialize(renderFurniture(f, { animation: "pulse" }));
+    expect(v).toContain(FURNITURE_COLOR);
+    expect(v).toContain("fp-furn-anim-pulse");
+  });
+
+  it("steps up fill-opacity to 0.30 when tinted (0.20 for a rug)", () => {
+    expect(serialize(renderFurniture(f, { color: "orange" }))).toContain("0.3");
+    const rug = { id: "r", type: "rug" as const, x: 0, y: 0, w: 180, h: 120 };
+    expect(serialize(renderFurniture(rug, { color: "orange" }))).toContain("0.2");
+  });
+});
+
+describe("renderFurniture reactive glyphs (active variant)", () => {
+  interface TplLike { strings: readonly string[]; values: unknown[] }
+  const isTpl = (v: unknown): v is TplLike =>
+    !!v && typeof v === "object" && "strings" in v && "values" in v;
+  const serialize = (t: unknown): string => {
+    const tpl = t as TplLike;
+    let out = tpl.strings[0];
+    for (let i = 0; i < tpl.values.length; i++) {
+      const v = tpl.values[i];
+      out += isTpl(v) ? serialize(v) : String(v);
+      out += tpl.strings[i + 1];
+    }
+    return out;
+  };
+
+  const washer = { id: "w", type: "washer" as const, x: 120, y: 80, w: 60, h: 60 };
+  const dryer = { id: "d", type: "dryer" as const, x: 120, y: 80, w: 60, h: 60 };
+  const tv = { id: "t", type: "tv" as const, x: 0, y: 0, w: 50, h: 20 };
+  const fireplace = { id: "f", type: "fireplace" as const, x: 0, y: 0, w: 60, h: 20 };
+  const sofa = { id: "s", type: "sofa" as const, x: 0, y: 0, w: 180, h: 90 };
+  const ceilingFan = { id: "cf", type: "ceilingFan" as const, x: 0, y: 0, w: 90, h: 90 };
+  const ceilingLight = { id: "cl", type: "ceilingLight" as const, x: 0, y: 0, w: 36, h: 36 };
+  const lamp = { id: "lp", type: "lamp" as const, x: 0, y: 0, w: 40, h: 40 };
+
+  it("washer: active omitted/false is byte-identical to the pre-Phase-3 output", () => {
+    const withoutParam = serialize(renderFurniture(washer, undefined));
+    const explicitFalse = serialize(renderFurniture(washer, undefined, false));
+    expect(withoutParam).not.toContain("fp-furn-drum");
+    expect(explicitFalse).toEqual(withoutParam);
+  });
+
+  it("washer: active true renders a spinning drum with vanes", () => {
+    const v = serialize(renderFurniture(washer, undefined, true));
+    expect(v).toContain("fp-furn-drum");
+    expect(v).not.toContain("fp-furn-drum--reverse");
+  });
+
+  it("dryer: active true renders the drum reversed", () => {
+    const v = serialize(renderFurniture(dryer, undefined, true));
+    expect(v).toContain("fp-furn-drum--reverse");
+  });
+
+  it("dryer: active omitted is byte-identical to the pre-Phase-3 output", () => {
+    const withoutParam = serialize(renderFurniture(dryer, undefined));
+    const explicitFalse = serialize(renderFurniture(dryer, undefined, false));
+    expect(withoutParam).not.toContain("fp-furn-drum");
+    expect(explicitFalse).toEqual(withoutParam);
+  });
+
+  it("tv: active true adds fp-furn-screen; omitted does not", () => {
+    const idle = serialize(renderFurniture(tv, undefined));
+    const active = serialize(renderFurniture(tv, undefined, true));
+    expect(idle).not.toContain("fp-furn-screen");
+    expect(active).toContain("fp-furn-screen");
+    expect(serialize(renderFurniture(tv, undefined, false))).toEqual(idle);
+  });
+
+  it("fireplace: active true adds fp-furn-flame and fp-furn-flame--alt; omitted keeps a single unclassed flame", () => {
+    const idle = serialize(renderFurniture(fireplace, undefined));
+    const active = serialize(renderFurniture(fireplace, undefined, true));
+    expect(idle).not.toContain("fp-furn-flame");
+    expect(active).toContain("fp-furn-flame");
+    expect(active).toContain("fp-furn-flame--alt");
+    expect(serialize(renderFurniture(fireplace, undefined, false))).toEqual(idle);
+  });
+
+  it("a non-reactive type (sofa) is unchanged whether active or not", () => {
+    const idle = serialize(renderFurniture(sofa, undefined));
+    const active = serialize(renderFurniture(sofa, undefined, true));
+    expect(active).toEqual(idle);
+  });
+
+  it("ceilingFan: active true adds fp-furn-fan; omitted/false is byte-identical", () => {
+    const withoutParam = serialize(renderFurniture(ceilingFan, undefined));
+    const explicitFalse = serialize(renderFurniture(ceilingFan, undefined, false));
+    const active = serialize(renderFurniture(ceilingFan, undefined, true));
+    expect(withoutParam).not.toContain("fp-furn-fan");
+    expect(explicitFalse).toEqual(withoutParam);
+    expect(active).toContain("fp-furn-fan");
+  });
+
+  it("ceilingLight: active true adds fp-furn-glow; omitted/false is byte-identical", () => {
+    const withoutParam = serialize(renderFurniture(ceilingLight, undefined));
+    const explicitFalse = serialize(renderFurniture(ceilingLight, undefined, false));
+    const active = serialize(renderFurniture(ceilingLight, undefined, true));
+    expect(withoutParam).not.toContain("fp-furn-glow");
+    expect(explicitFalse).toEqual(withoutParam);
+    expect(active).toContain("fp-furn-glow");
+  });
+
+  it("lamp: active true adds fp-furn-glow; omitted/false is byte-identical", () => {
+    const withoutParam = serialize(renderFurniture(lamp, undefined));
+    const explicitFalse = serialize(renderFurniture(lamp, undefined, false));
+    const active = serialize(renderFurniture(lamp, undefined, true));
+    expect(withoutParam).not.toContain("fp-furn-glow");
+    expect(explicitFalse).toEqual(withoutParam);
+    expect(active).toContain("fp-furn-glow");
+  });
+
+  // Real drift protection: pin the idle markup of every reactive type so a
+  // future refactor of the active/idle ternary cannot silently change what a
+  // no-entity piece draws. (The washer idle is already pinned elsewhere.)
+  it("dryer idle markup is pinned", () => {
+    expect(serialize(renderFurniture(dryer, undefined))).toMatchSnapshot();
+  });
+  it("tv idle markup is pinned", () => {
+    expect(serialize(renderFurniture(tv, undefined))).toMatchSnapshot();
+  });
+  it("fireplace idle markup is pinned", () => {
+    expect(serialize(renderFurniture(fireplace, undefined))).toMatchSnapshot();
+  });
+  it("ceilingFan idle markup is pinned", () => {
+    expect(serialize(renderFurniture(ceilingFan, undefined))).toMatchSnapshot();
+  });
+  it("ceilingLight idle markup is pinned", () => {
+    expect(serialize(renderFurniture(ceilingLight, undefined))).toMatchSnapshot();
+  });
+  it("lamp idle markup is pinned", () => {
+    expect(serialize(renderFurniture(lamp, undefined))).toMatchSnapshot();
+  });
+});
 
 describe("isEntityOn / resolveItemIcon", () => {
   it("treats on/open/home/playing as on", () => {
@@ -696,6 +986,32 @@ describe("collectWatchedEntities", () => {
     } as unknown as FloorplanCardConfig);
     expect(got.has("light.legacy")).toBe(true);
     expect(got.size).toBe(1);
+  });
+
+  it("watches a smart furniture piece's entity, and any entity a rule names (smart furniture)", () => {
+    const cfg = {
+      floors: [
+        {
+          id: "f1",
+          name: "F1",
+          walls: [],
+          openings: [],
+          items: [],
+          texts: [],
+          trackers: [],
+          furniture: [
+            {
+              id: "w", type: "washer", x: 0, y: 0, w: 60, h: 60,
+              entity: "switch.washer",
+              stateStyles: [{ entity: "sensor.washer_cycle", state: "running", color: "orange" }],
+            },
+          ],
+        },
+      ],
+    } as unknown as FloorplanCardConfig;
+    const got = collectWatchedEntities(cfg);
+    expect(got.has("switch.washer")).toBe(true);
+    expect(got.has("sensor.washer_cycle")).toBe(true);
   });
 });
 
