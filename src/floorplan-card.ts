@@ -44,6 +44,7 @@ import type { Opening } from "./types";
 import { enabledLayers, layerWatchedEntities, type LiveLayer } from "./layers";
 import type { FeatureName } from "./features";
 import { featureEnabled } from "./features";
+import { isNight, nightFactor, elevationOf, DEFAULT_SUN_ENTITY, NIGHT_MAX_OPACITY } from "./theme";
 // Registers the room-tint overlay into the live-layer registry; the layer
 // framework (src/layers.ts) renders it, gives it a toggle chip, and folds its
 // watched entity into the card automatically once features.lightsLayer is on.
@@ -550,6 +551,7 @@ export class FloorplanCard extends LitElement {
               this._renderFurnitureBadge(f, resolveStateStyle(f.stateStyles, this.hass, f.entity), c, rot),
             )}
           </div>
+          ${this._nightOverlay(c)}
           </div>
           ${layers.length > 0 ? this._renderLayerToggles(layers) : nothing}
           ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
@@ -582,6 +584,23 @@ export class FloorplanCard extends LitElement {
         )}
       </div>
     `;
+  }
+
+  /**
+   * The night wash: an absolutely-positioned, pointer-events:none div over
+   * the whole .plate, opacity driven by how far the sun (or the
+   * configured stand-in) is below the horizon. `nothing` when the feature
+   * is off, or when it is currently day, so a disabled or daytime plan never
+   * carries the extra DOM node.
+   */
+  private _nightOverlay(c: FloorplanCardConfig): TemplateResult | typeof nothing {
+    if (!featureEnabled(c, "dayNightTheme")) return nothing;
+    const entityId = c.dayNightEntity ?? DEFAULT_SUN_ENTITY;
+    const st = this.hass?.states[entityId];
+    const elevation = elevationOf(st);
+    if (!isNight(st?.state, elevation)) return nothing;
+    const opacity = nightFactor(st?.state, elevation) * NIGHT_MAX_OPACITY;
+    return html`<div class="fp-night-overlay" style="opacity:${opacity}"></div>`;
   }
 
   private _renderFloorSwitcher(floors: Floor[], active: Floor): TemplateResult {
@@ -710,6 +729,13 @@ export class FloorplanCard extends LitElement {
     .plate.rot90,
     .plate.rot270 {
       width: min(100cqh, 100cqw * var(--fp-arw));
+    }
+    .fp-night-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: var(--fp-night-color, #0a1330);
+      transition: opacity 1s ease;
     }
     .wall {
       stroke: var(--primary-text-color);
