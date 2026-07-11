@@ -350,6 +350,12 @@ export function itemForm(it: FloorItem): FormSpec {
       helper: "Shown next to the primary state",
       selector: { entity: {} },
     },
+    {
+      name: "powerEntity",
+      label: "Power sensor (energy layer)",
+      helper: "A watts sensor that colours this item when the energy layer is on",
+      selector: { entity: {} },
+    },
     { name: "icon", label: "Icon", selector: { icon: { placeholder: defaultIcon(it.kind) } } },
     { name: "name", label: "Name", selector: { text: {} } },
     {
@@ -395,6 +401,7 @@ export function itemForm(it: FloorItem): FormSpec {
     data: {
       entity: it.entity,
       secondaryEntity: it.secondaryEntity ?? "",
+      powerEntity: it.powerEntity ?? "",
       icon: it.icon ?? "",
       name: it.name ?? "",
       size: it.size ?? DEFAULT_ITEM_SIZE,
