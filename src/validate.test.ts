@@ -27,6 +27,15 @@ describe("validateConfig", () => {
     const r = validateConfig({ type: "x", width: 10, height: 10, features: { thermalLayer: "yes" } });
     expect(r.ok).toBe(false);
   });
+  it("accepts an optional dayNightEntity string", () => {
+    const r = validateConfig({ ...valid, dayNightEntity: "sensor.porch_darkness" });
+    expect(r.ok).toBe(true);
+  });
+  it("rejects a non-string dayNightEntity", () => {
+    const r = validateConfig({ ...valid, dayNightEntity: 5 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some((e) => e.startsWith("config.dayNightEntity"))).toBe(true);
+  });
   it("accepts a room's tempEntity", () => {
     const cfg = {
       type: "x", width: 10, height: 10,

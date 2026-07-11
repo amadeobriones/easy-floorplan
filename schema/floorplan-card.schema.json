@@ -851,6 +851,10 @@
             "description": "Canvas background color (CSS / hex). Falls back to the card background.",
             "type": "string"
         },
+        "dayNightEntity": {
+            "description": "Entity read by the day/night theme (roadmap 4a) -- normally a `sun.sun`\nsensor, but any entity whose state is `above_horizon`/`below_horizon`\n(or that carries a numeric `elevation` attribute) works, e.g. a template\nsensor mirroring a different sun/darkness source. Defaults to `sun.sun`\n(theme.ts's DEFAULT_SUN_ENTITY) when unset. Read only when\n`features.dayNightTheme` is on.",
+            "type": "string"
+        },
         "defaultFloor": {
             "description": "Id of the floor shown first. Falls back to the first floor.",
             "type": "string"
