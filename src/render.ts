@@ -1,11 +1,12 @@
 import { svg, html, nothing, type SVGTemplateResult, type TemplateResult } from "lit";
 import type {
   SectionalHand, FloorplanCardConfig, Opening, ItemKind, Furniture, Tracker, RenderHass,
-  StateStyle, StateAnimation, Room,
+  StateStyle, StateAnimation, Room, FeaturesConfig,
 } from "./types";
 import {
   FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, getFloors, trackerAxisFraction,
 } from "./types";
+import { featureEnabled } from "./features";
 
 export const WALL_THICKNESS = 8;
 
@@ -378,6 +379,21 @@ export function entityIsActive(entityId: string | undefined, state: string | und
   const domain = entityId?.split(".")[0] ?? "";
   const inactive = INACTIVE_STATES[domain];
   return inactive ? !inactive.has(state) : isEntityOn(state);
+}
+
+/**
+ * Feature-1f gate: should a media-bound furniture piece show the now-playing
+ * cue? True only when the mediaNowPlaying flag is on, the piece has an entity,
+ * and that entity is literally "playing" -- narrower than entityIsActive, which
+ * also treats paused/on/idle as active. Flag off (or no features block) => false,
+ * so the cue is byte-identical-absent by default.
+ */
+export function furnitureNowPlaying(
+  config: { features?: FeaturesConfig } | undefined,
+  state: string | undefined,
+  entity: string | undefined,
+): boolean {
+  return !!entity && state === "playing" && featureEnabled(config, "mediaNowPlaying");
 }
 
 /**

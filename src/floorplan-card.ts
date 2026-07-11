@@ -30,6 +30,7 @@ import {
   hassRenderInputsChanged,
   collectWatchedEntities,
   entityIsActive,
+  furnitureNowPlaying,
   resolveItemIcon,
   lightVisual,
 } from "./render";
@@ -409,7 +410,13 @@ export class FloorplanCard extends LitElement {
                 featureEnabled(c, "lightsLayer") && f.entity
                   ? lightVisual(this.hass?.states[f.entity]).intensity
                   : undefined;
-              const shape = renderFurniture(f, style, isActive, glowIntensity);
+              // Feature 1f: literally "playing" (narrower than isActive), flag-gated.
+              const isPlaying = furnitureNowPlaying(
+                c,
+                f.entity ? this.hass?.states[f.entity]?.state : undefined,
+                f.entity,
+              );
+              const shape = renderFurniture(f, style, isActive, glowIntensity, isPlaying);
               if (!f.entity) return shape;
               // Entity-bound furniture is tappable -- a transparent rect over the
               // piece's oriented bounding box gives a reliable hit target even

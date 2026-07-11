@@ -16,6 +16,7 @@ import {
   kindFromEntity,
   defaultIcon,
   renderFurniture,
+  furnitureNowPlaying,
   sectionalPoints,
   SECTIONAL_CHAISE_FRACTION,
   SECTIONAL_SEAT_FRACTION,
@@ -1473,5 +1474,25 @@ describe("feature 1f -- media now-playing cue", () => {
 
   it("playing defaults to false (omitted 5th arg = no cue)", () => {
     expect(serialize(renderFurniture(tv, undefined, true))).not.toContain("fp-furn-eq");
+  });
+});
+
+describe("furnitureNowPlaying (feature 1f gate)", () => {
+  const on = { features: { mediaNowPlaying: true } };
+  it("true only when flag on AND entity set AND state is exactly playing", () => {
+    expect(furnitureNowPlaying(on, "playing", "media_player.lr")).toBe(true);
+  });
+  it("false when the flag is off, even while playing (default off)", () => {
+    expect(furnitureNowPlaying({}, "playing", "media_player.lr")).toBe(false);
+    expect(furnitureNowPlaying(undefined, "playing", "media_player.lr")).toBe(false);
+  });
+  it("false for paused/on/idle -- distinct from merely active", () => {
+    expect(furnitureNowPlaying(on, "paused", "media_player.lr")).toBe(false);
+    expect(furnitureNowPlaying(on, "on", "media_player.lr")).toBe(false);
+    expect(furnitureNowPlaying(on, "idle", "media_player.lr")).toBe(false);
+  });
+  it("false when there is no entity or no state", () => {
+    expect(furnitureNowPlaying(on, "playing", undefined)).toBe(false);
+    expect(furnitureNowPlaying(on, undefined, "media_player.lr")).toBe(false);
   });
 });
