@@ -19,4 +19,12 @@ describe("radial-popover source guards", () => {
   it("positions itself via the pure clampPopoverPosition helper, not ad-hoc inline math", () => {
     expect(src).toContain("clampPopoverPosition(");
   });
+  it("renders a distinct body per supported domain and reuses executeAction for toggling", () => {
+    expect(src).toContain("_renderLight");
+    expect(src).toContain("_renderSwitch");
+    expect(src).toContain("_renderClimate");
+    expect(src).toContain("executeAction(");
+    expect(src).toContain("lightBrightnessCall(");
+    expect(src).toContain("climateSetpointCall(");
+  });
 });

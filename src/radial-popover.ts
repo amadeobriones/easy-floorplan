@@ -1,7 +1,10 @@
 import { LitElement, html, css, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import type { HomeAssistant } from "./types";
-import { clampPopoverPosition, radialDomainFor } from "./radial-controls";
+import {
+  clampPopoverPosition, radialDomainFor, lightBrightnessCall, climateSetpointCall, climateStep,
+} from "./radial-controls";
+import { executeAction } from "./actions";
 
 export interface RadialPopoverRequest {
   hass: HomeAssistant;
@@ -81,6 +84,11 @@ export class RadialPopover extends LitElement {
   protected render(): TemplateResult | typeof nothing {
     if (!this._req) return nothing;
     const domain = radialDomainFor(this._req.entity);
+    const body =
+      domain === "light" ? this._renderLight() :
+      domain === "switch" ? this._renderSwitch() :
+      domain === "climate" ? this._renderClimate() :
+      html`<div class="pop-body">No quick controls for this entity yet.</div>`;
     return html`
       <div
         class="pop"
@@ -89,7 +97,78 @@ export class RadialPopover extends LitElement {
         };"
       >
         <div class="pop-title">${this._req.entity}</div>
-        <div class="pop-body">${domain ?? "No quick controls for this entity yet."}</div>
+        ${body}
+      </div>
+    `;
+  }
+
+  private _toggle(): void {
+    if (!this._req) return;
+    executeAction(this, this._req.hass, { entity: this._req.entity }, { action: "toggle" });
+  }
+
+  private _renderLight(): TemplateResult {
+    const req = this._req!;
+    const state = req.hass.states[req.entity];
+    const on = state?.state === "on";
+    const brightness = (state?.attributes?.brightness as number | undefined) ?? 0;
+    const pct = Math.round((brightness / 255) * 100);
+    return html`
+      <div class="pop-row">
+        <button class="pop-toggle ${on ? "on" : ""}" @click=${() => this._toggle()}>
+          <ha-icon icon=${on ? "mdi:lightbulb" : "mdi:lightbulb-off-outline"}></ha-icon>
+        </button>
+        <input
+          type="range"
+          min="1"
+          max="100"
+          step="1"
+          .value=${String(pct)}
+          @change=${(e: Event) => {
+            const value = Number((e.target as HTMLInputElement).value);
+            const call = lightBrightnessCall(req.entity, value);
+            req.hass.callService(call.domain, call.service, call.data);
+          }}
+        />
+      </div>
+    `;
+  }
+
+  private _renderSwitch(): TemplateResult {
+    const req = this._req!;
+    const on = req.hass.states[req.entity]?.state === "on";
+    return html`
+      <button class="pop-toggle pop-toggle-wide ${on ? "on" : ""}" @click=${() => this._toggle()}>
+        <ha-icon icon=${on ? "mdi:toggle-switch" : "mdi:toggle-switch-off-outline"}></ha-icon>
+        ${on ? "On" : "Off"}
+      </button>
+    `;
+  }
+
+  private _renderClimate(): TemplateResult {
+    const req = this._req!;
+    const attrs = req.hass.states[req.entity]?.attributes ?? {};
+    const current = attrs.current_temperature as number | undefined;
+    const target = (attrs.temperature as number | undefined) ?? 20;
+    const min = (attrs.min_temp as number | undefined) ?? 7;
+    const max = (attrs.max_temp as number | undefined) ?? 35;
+    const step = (attrs.target_temp_step as number | undefined) ?? 0.5;
+    const setTarget = (next: number) => {
+      const call = climateSetpointCall(req.entity, next);
+      req.hass.callService(call.domain, call.service, call.data);
+    };
+    return html`
+      <div class="pop-climate">
+        <div class="pop-current">${current !== undefined ? `${current}°` : "—"}</div>
+        <div class="pop-setpoint">
+          <button @click=${() => setTarget(climateStep(target, -1, step, min, max))}>
+            <ha-icon icon="mdi:minus"></ha-icon>
+          </button>
+          <span>${target}°</span>
+          <button @click=${() => setTarget(climateStep(target, 1, step, min, max))}>
+            <ha-icon icon="mdi:plus"></ha-icon>
+          </button>
+        </div>
       </div>
     `;
   }
@@ -120,6 +199,63 @@ export class RadialPopover extends LitElement {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .pop-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pop-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      border-radius: 8px;
+      padding: 6px 8px;
+      cursor: pointer;
+    }
+    .pop-toggle.on {
+      background: var(--state-light-active-color, var(--state-active-color, #fdd835));
+      border-color: var(--state-light-active-color, var(--state-active-color, #fdd835));
+      color: var(--text-primary-color, #212121);
+    }
+    .pop-toggle-wide {
+      width: 100%;
+      justify-content: center;
+    }
+    .pop-row input[type="range"] {
+      flex: 1;
+      min-width: 0;
+    }
+    .pop-climate {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .pop-current {
+      font-size: 12px;
+      color: var(--secondary-text-color);
+    }
+    .pop-setpoint {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+    }
+    .pop-setpoint button {
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
     }
   `;
 }

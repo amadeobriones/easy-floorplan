@@ -173,6 +173,26 @@ const hass = {
       state: "49.31",
       attributes: { friendly_name: "Living Area Humidity", unit_of_measurement: "%" },
     },
+    // Radial quick-controls (2b) demo entities: bind an item's Entity field to
+    // one of these and long-press it to exercise the light/switch/climate
+    // popover bodies without Home Assistant.
+    "switch.kitchen_lamp": {
+      entity_id: "switch.kitchen_lamp",
+      state: "off",
+      attributes: { friendly_name: "Kitchen Lamp" },
+    },
+    "climate.hall": {
+      entity_id: "climate.hall",
+      state: "heat",
+      attributes: {
+        friendly_name: "Hall Thermostat",
+        current_temperature: 19.5,
+        temperature: 21,
+        min_temp: 7,
+        max_temp: 30,
+        target_temp_step: 0.5,
+      },
+    },
   },
   entities: entityRegistry,
   locale: { language: "en" },
@@ -270,6 +290,7 @@ const config: FloorplanCardConfig = {
   furniture: [],
   defaultFloor: "f1",
   floors: [START_WITH_DEMO ? demoFloor : emptyFloor],
+  features: { radialControls: true },
 };
 
 // ---- mount -----------------------------------------------------------------
