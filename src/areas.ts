@@ -48,26 +48,44 @@ export function entitiesInArea(hass: unknown, areaId: string): string[] {
   return out.sort();
 }
 
-export interface Bbox { minX: number; minY: number; maxX: number; maxY: number }
+export interface Point { x: number; y: number }
 
-/** `count` points on a near-square grid inside `bbox`, inset by `gap` of each side. */
-export function gridLayout(count: number, bbox: Bbox, gap = 0.15): Array<[number, number]> {
-  if (count <= 0) return [];
-  const cols = Math.ceil(Math.sqrt(count));
-  const rows = Math.ceil(count / cols);
-  const w = bbox.maxX - bbox.minX;
-  const h = bbox.maxY - bbox.minY;
+/**
+ * `n` points scattered inside a polygon's bounding box, on a near-square
+ * grid, inset by `gap` of each side. Pure and deterministic — same inputs,
+ * same output, no Math.random — so it's safe to unit-test and to call on
+ * every render. Uses the bbox rather than true point-in-polygon containment:
+ * good enough for "stays within bounds" (an L-shaped room's scatter can sit
+ * in its bbox's empty notch) and keeps this O(n) instead of rejection-
+ * sampling against polygon edges.
+ */
+export function scatterInPolygon(
+  points: Array<[number, number]>,
+  n: number,
+  gap = 0.15
+): Point[] {
+  if (n <= 0 || !points.length) return [];
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const maxX = Math.max(...xs);
+  const maxY = Math.max(...ys);
+  const cols = Math.ceil(Math.sqrt(n));
+  const rows = Math.ceil(n / cols);
+  const w = maxX - minX;
+  const h = maxY - minY;
   const mx = w * gap;
   const my = h * gap;
   const innerW = w - 2 * mx;
   const innerH = h - 2 * my;
-  const out: Array<[number, number]> = [];
-  for (let i = 0; i < count; i++) {
+  const out: Point[] = [];
+  for (let i = 0; i < n; i++) {
     const r = Math.floor(i / cols);
     const c = i % cols;
-    const x = bbox.minX + mx + (cols === 1 ? innerW / 2 : (innerW * c) / (cols - 1));
-    const y = bbox.minY + my + (rows === 1 ? innerH / 2 : (innerH * r) / (rows - 1));
-    out.push([Math.round(x), Math.round(y)]);
+    const x = minX + mx + (cols === 1 ? innerW / 2 : (innerW * c) / (cols - 1));
+    const y = minY + my + (rows === 1 ? innerH / 2 : (innerH * r) / (rows - 1));
+    out.push({ x: Math.round(x), y: Math.round(y) });
   }
   return out;
 }
@@ -94,9 +112,6 @@ export function devicesToAdd(
     if (e?.hidden_by || e?.disabled_by) return false;
     return true;
   });
-  const xs = room.points.map((p) => p[0]);
-  const ys = room.points.map((p) => p[1]);
-  const bbox = { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
-  const pts = gridLayout(ids.length, bbox);
-  return ids.map((entity, i) => ({ entity, x: pts[i][0], y: pts[i][1], kind: kindFromEntity(entity) }));
+  const pts = scatterInPolygon(room.points, ids.length);
+  return ids.map((entity, i) => ({ entity, x: pts[i].x, y: pts[i].y, kind: kindFromEntity(entity) }));
 }

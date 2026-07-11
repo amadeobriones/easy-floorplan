@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { haAreasOf, entitiesInArea, gridLayout, devicesToAdd } from "./areas";
+import { haAreasOf, entitiesInArea, scatterInPolygon, devicesToAdd } from "./areas";
 import type { Room } from "./types";
 
 const hass = {
@@ -48,14 +48,14 @@ describe("entitiesInArea", () => {
   });
 });
 
-describe("gridLayout", () => {
-  const bbox = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
+describe("scatterInPolygon", () => {
+  const square: Array<[number, number]> = [[0, 0], [100, 0], [100, 100], [0, 100]];
   it("returns the requested count", () => {
-    expect(gridLayout(5, bbox)).toHaveLength(5);
-    expect(gridLayout(0, bbox)).toEqual([]);
+    expect(scatterInPolygon(square, 5)).toHaveLength(5);
+    expect(scatterInPolygon(square, 0)).toEqual([]);
   });
-  it("keeps every point inside the bbox", () => {
-    for (const [x, y] of gridLayout(7, bbox)) {
+  it("keeps every point inside the polygon's bbox", () => {
+    for (const { x, y } of scatterInPolygon(square, 7)) {
       expect(x).toBeGreaterThanOrEqual(0);
       expect(x).toBeLessThanOrEqual(100);
       expect(y).toBeGreaterThanOrEqual(0);
@@ -63,16 +63,31 @@ describe("gridLayout", () => {
     }
   });
   it("does not stack every point on one spot", () => {
-    const pts = gridLayout(4, bbox).map((p) => p.join(","));
+    const pts = scatterInPolygon(square, 4).map((p) => `${p.x},${p.y}`);
     expect(new Set(pts).size).toBe(4);
   });
   it("handles a single item (1x1) and a single row (2 items)", () => {
-    expect(gridLayout(1, { minX: 0, minY: 0, maxX: 100, maxY: 100 })).toHaveLength(1);
-    const two = gridLayout(2, { minX: 0, minY: 0, maxX: 100, maxY: 100 });
+    expect(scatterInPolygon(square, 1)).toHaveLength(1);
+    const two = scatterInPolygon(square, 2);
     expect(two).toHaveLength(2);
-    for (const [x, y] of [...gridLayout(1, { minX: 0, minY: 0, maxX: 100, maxY: 100 }), ...two]) {
+    for (const { x, y } of [...scatterInPolygon(square, 1), ...two]) {
       expect(Number.isFinite(x) && Number.isFinite(y)).toBe(true);
-      expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(100);
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(100);
+    }
+  });
+  it("is deterministic given the same inputs (no Math.random)", () => {
+    expect(scatterInPolygon(square, 6)).toEqual(scatterInPolygon(square, 6));
+  });
+  it("handles a non-rectangular (L-shaped) polygon via its bbox", () => {
+    const lshape: Array<[number, number]> = [
+      [0, 0], [100, 0], [100, 50], [50, 50], [50, 100], [0, 100],
+    ];
+    for (const { x, y } of scatterInPolygon(lshape, 5)) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(100);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(100);
     }
   });
 });
