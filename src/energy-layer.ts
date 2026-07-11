@@ -1,3 +1,9 @@
+import { svg, type SVGTemplateResult } from "lit";
+import type { FloorItem, FloorplanCardConfig, RenderHass } from "./types";
+import { getFloors } from "./types";
+import type { LayerRenderCtx, LiveLayer } from "./layers";
+import { LIVE_LAYERS } from "./layers";
+
 export interface EnergyRampOpts {
   lowW: number;
   highW: number;
@@ -41,4 +47,54 @@ export function powerCueBump(
   opts?: Partial<EnergyRampOpts>,
 ): number {
   return Math.round(rampT(watts, opts) * maxBumpPx);
+}
+
+const CUE_BASE_R = 22; // SVG user units; roughly the badge footprint
+
+/** A single item's power cue: a soft halo under its badge, coloured/sized by
+ * live wattage. An unavailable/non-numeric reading draws neutral at low
+ * opacity rather than lying about draw or skipping the item entirely. */
+function renderEnergyCue(it: FloorItem & { powerEntity: string }, hass: RenderHass): SVGTemplateResult {
+  const watts = parseWatts(hass.states[it.powerEntity]?.state);
+  const color = powerColor(watts ?? 0);
+  const r = CUE_BASE_R + powerCueBump(watts ?? 0);
+  const opacity = watts !== undefined && watts > DEFAULT_ENERGY_RAMP.lowW ? 0.55 : 0.2;
+  return svg`<circle cx=${it.x} cy=${it.y} r=${r} fill=${color} opacity=${opacity} />`;
+}
+
+/**
+ * The energy live layer (roadmap 1e): overlays a power-coloured halo under
+ * every item that carries a `powerEntity`. Rendered and gated entirely by the
+ * layer framework (src/layers.ts) once registered -- this object only needs
+ * to answer "what do you draw" and "what do you watch".
+ */
+export const energyLayer: LiveLayer = {
+  id: "energyLayer",
+  label: "Energy",
+  icon: "mdi:flash",
+  render(ctx: LayerRenderCtx): SVGTemplateResult {
+    const items = ctx.floor.items.filter(
+      (it): it is FloorItem & { powerEntity: string } => !!it.powerEntity,
+    );
+    if (!items.length) return svg``;
+    return svg`<g class="fp-energy-layer" pointer-events="none">
+      ${items.map((it) => renderEnergyCue(it, ctx.hass))}
+    </g>`;
+  },
+  watched(c: FloorplanCardConfig): string[] {
+    const ids = new Set<string>();
+    for (const f of getFloors(c)) {
+      for (const it of f.items) {
+        if (it.powerEntity) ids.add(it.powerEntity);
+      }
+    }
+    return [...ids];
+  },
+};
+
+// Registration side effect. Guarded so importing this module more than once
+// in the same process (e.g. from more than one entry point) never double-adds
+// the layer to the shared registry.
+if (!LIVE_LAYERS.some((l) => l.id === "energyLayer")) {
+  LIVE_LAYERS.push(energyLayer);
 }

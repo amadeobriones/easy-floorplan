@@ -49,6 +49,10 @@ import "./thermal";
 // framework's LIVE_LAYERS registry. Nothing else in this file changes --
 // the framework renders/toggles/watches it generically once registered.
 import "./awareness-layer";
+// Side-effect import: registers the energy layer (power-coloured item cues)
+// into the layer framework's LIVE_LAYERS registry, the same way the three
+// imports above do. See energy-layer.ts's energyLayer.
+import "./energy-layer";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
