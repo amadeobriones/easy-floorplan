@@ -3058,8 +3058,13 @@ export class FloorplanCardEditor extends LitElement {
       if (!r) return html`${nothing}`;
       const areaEntities = r.areaId ? entitiesInArea(this.hass, r.areaId) : undefined;
       return html`
-        ${this._renderForm(roomForm(r), (patch, live) =>
-          this._updateRoom(r.id, patch as Partial<Room>, live),
+        ${this._renderForm(
+          roomForm(
+            r,
+            featureEnabled(this._config, "thermalLayer"),
+            featureEnabled(this._config, "roomTapScenes"),
+          ),
+          (patch, live) => this._updateRoom(r.id, patch as Partial<Room>, live),
         )}
         ${this._renderAddDevicesRow(r)}
         ${this._renderStateStyleRows(r.stateStyles ?? [], "room", r.id, undefined, areaEntities)}
