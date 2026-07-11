@@ -41,6 +41,23 @@ describe("validateConfig", () => {
     };
     expect(validateConfig(cfg).ok).toBe(false);
   });
+  it("accepts a room with tap_action/hold_action/double_tap_action (rides as allowed-unknown, like furniture's actions)", () => {
+    const cfg = {
+      type: "x",
+      width: 10,
+      height: 10,
+      rooms: [
+        {
+          id: "r1",
+          points: [[0, 0], [1, 0], [1, 1], [0, 1]],
+          tap_action: { action: "toggle-area-lights" },
+          hold_action: { action: "more-info" },
+          double_tap_action: { action: "none" },
+        },
+      ],
+    };
+    expect(validateConfig(cfg).ok).toBe(true);
+  });
   it("accepts a valid config", () => {
     const r = validateConfig(valid);
     expect(r.ok).toBe(true);

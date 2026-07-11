@@ -615,6 +615,10 @@
                     "description": "Home Assistant area id. Stored, not yet acted on (see Floor.haFloor).",
                     "type": "string"
                 },
+                "double_tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
                 "fill": {
                     "description": "A CSS colour. Default: none.",
                     "type": "string"
@@ -622,6 +626,10 @@
                 "fillOpacity": {
                     "description": "0..1. Default 0.25 — a room tint must not fight the walls drawn over it.",
                     "type": "number"
+                },
+                "hold_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
                 },
                 "id": {
                     "type": "string"
@@ -652,6 +660,10 @@
                         "$ref": "#/definitions/StateStyle"
                     },
                     "type": "array"
+                },
+                "tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "Lovelace actions (see {@link ActionConfig}), mirroring `Furniture`. Unlike\nitems/furniture, a room has no entity of its own, so there is no implicit\ndefault tap action — an unconfigured room stays a non-interactive shape.\n`{ action: \"toggle-area-lights\" }` is a card-specific convenience: toggle\nevery `light.*` entity in the room's `areaId` (see {@link resolveRoomAction}\nin `./areas`)."
                 },
                 "tempEntity": {
                     "description": "Temperature-class entity (e.g. a `sensor` with `device_class: temperature`)\nthat drives this room's thermal-layer tint. Unset = the room is not shaded\nby the thermal layer, even when the feature is on (see\ndocs/superpowers/plans/2026-07-10-thermal-layer.md).",
