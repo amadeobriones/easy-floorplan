@@ -1340,6 +1340,7 @@ export class FloorplanCardEditor extends LitElement {
 
   /** "Add devices in this area" — shown when the room links an HA area. */
   private _renderAddDevicesRow(r: Room): TemplateResult {
+    if (!featureEnabled(this._config, "autoPopulateArea")) return html`${nothing}`;
     const areas = haAreasOf(this.hass);
     if (!areas.length || !r.areaId) return html`${nothing}`;
     const areaName = areas.find((a) => a.area_id === r.areaId)?.name ?? r.areaId;
@@ -1355,7 +1356,7 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   private _addDevicesFromArea(r: Room): void {
-    if (!r.areaId) return;
+    if (!r.areaId || !featureEnabled(this._config, "autoPopulateArea")) return;
     const placed = new Set(
       this._floor().items.map((it) => it.entity).filter((e): e is string => !!e)
     );
