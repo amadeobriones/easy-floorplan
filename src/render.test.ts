@@ -903,6 +903,38 @@ describe("renderFurniture reactive glyphs (active variant)", () => {
     expect(active).toContain("fp-furn-glow");
   });
 
+  it("ceilingLight: glowIntensity omitted keeps the exact fixed-radius glow", () => {
+    const noGlowIntensity = serialize(renderFurniture(ceilingLight, undefined, true));
+    const explicitUndefined = serialize(renderFurniture(ceilingLight, undefined, true, undefined));
+    expect(explicitUndefined).toEqual(noGlowIntensity);
+    expect(noGlowIntensity).not.toContain("--fp-glow-intensity");
+  });
+
+  // Extracts the numeric r=... on the glow circle specifically (it is the
+  // first attribute-bearing element with class="fp-furn-glow" in the markup).
+  // Numeric SVG attributes in this codebase's templates are unquoted (e.g.
+  // r=4.95), matching every other numeric attribute here (cx, cy, rx, ...).
+  const glowRadius = (markup: string): number => {
+    const m = markup.match(/class="fp-furn-glow"[^>]*\sr=([-\d.]+)/);
+    return Number(m?.[1]);
+  };
+
+  it("ceilingLight: glowIntensity scales the glow radius (m=18: 0.55x..1x of r=9)", () => {
+    const dim = serialize(renderFurniture(ceilingLight, undefined, true, 0));
+    const bright = serialize(renderFurniture(ceilingLight, undefined, true, 1));
+    expect(glowRadius(dim)).toBeCloseTo(18 * 0.5 * 0.55); // 4.95
+    expect(dim).toContain("--fp-glow-intensity:0.55");
+    // Full brightness reproduces the exact pre-feature radius.
+    expect(glowRadius(bright)).toBeCloseTo(18 * 0.5); // 9
+  });
+
+  it("ceilingLight: glowIntensity clamps out-of-range values into 0..1", () => {
+    const over = serialize(renderFurniture(ceilingLight, undefined, true, 2));
+    const under = serialize(renderFurniture(ceilingLight, undefined, true, -1));
+    expect(glowRadius(over)).toBeCloseTo(18 * 0.5); // 9, same as intensity 1
+    expect(glowRadius(under)).toBeCloseTo(18 * 0.5 * 0.55); // 4.95, same as intensity 0
+  });
+
   it("lamp: active true adds fp-furn-glow; omitted/false is byte-identical", () => {
     const withoutParam = serialize(renderFurniture(lamp, undefined));
     const explicitFalse = serialize(renderFurniture(lamp, undefined, false));
@@ -910,6 +942,13 @@ describe("renderFurniture reactive glyphs (active variant)", () => {
     expect(withoutParam).not.toContain("fp-furn-glow");
     expect(explicitFalse).toEqual(withoutParam);
     expect(active).toContain("fp-furn-glow");
+  });
+
+  it("lamp: glowIntensity scales the glow radius (m=20: 0.55x..1x of r=15.6)", () => {
+    const dim = serialize(renderFurniture(lamp, undefined, true, 0));
+    const bright = serialize(renderFurniture(lamp, undefined, true, 1));
+    expect(glowRadius(dim)).toBeCloseTo(20 * 0.78 * 0.55); // ~8.58
+    expect(glowRadius(bright)).toBeCloseTo(20 * 0.78); // ~15.6
   });
 
   // Real drift protection: pin the idle markup of every reactive type so a

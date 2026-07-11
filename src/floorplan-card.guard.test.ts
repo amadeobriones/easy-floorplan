@@ -16,6 +16,10 @@ describe("floorplan-card source guards", () => {
   it("wraps the svg and the overlay in a single .plate", () => {
     expect(src).toContain('class="plate');
   });
+
+  it("gates the furniture light glow behind the lightsLayer feature flag", () => {
+    expect(src).toContain('featureEnabled(c, "lightsLayer")');
+  });
 });
 
 // Task 2 (layer framework): the card's watched-entity set must union in

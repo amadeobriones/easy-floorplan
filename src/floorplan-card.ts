@@ -31,10 +31,12 @@ import {
   collectWatchedEntities,
   entityIsActive,
   resolveItemIcon,
+  lightVisual,
 } from "./render";
 import type { Opening } from "./types";
 import { enabledLayers, layerWatchedEntities, type LiveLayer } from "./layers";
 import type { FeatureName } from "./features";
+import { featureEnabled } from "./features";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
@@ -383,7 +385,15 @@ export class FloorplanCard extends LitElement {
               // glyph bound to e.g. a climate/media_player animates on its real
               // active states, not only literal on/open/home/playing.
               const isActive = !!f.entity && entityIsActive(f.entity, this.hass?.states[f.entity]?.state);
-              const shape = renderFurniture(f, style, isActive);
+              // Lights layer (off by default): a lit ceilingLight/lamp's glow
+              // scales with its bulb's real brightness. The piece's own entity is
+              // already in this._watchedEntities (collectWatchedEntities), so
+              // this needs no new watched entity.
+              const glowIntensity =
+                featureEnabled(c, "lightsLayer") && f.entity
+                  ? lightVisual(this.hass?.states[f.entity]).intensity
+                  : undefined;
+              const shape = renderFurniture(f, style, isActive, glowIntensity);
               if (!f.entity) return shape;
               // Entity-bound furniture is tappable -- a transparent rect over the
               // piece's oriented bounding box gives a reliable hit target even
@@ -838,14 +848,17 @@ export class FloorplanCard extends LitElement {
        The resting opacity doubles as the reduced-motion pose, so animation: none
        leaves a steadily lit fixture. The 2.6 s period is deliberately out of
        step with the TV screen's 3 s so co-located glyphs do not pulse in
-       lockstep. */
+       lockstep. --fp-glow-intensity (set inline by renderFurniture only when the
+       lightsLayer feature is on and the light reports a brightness reading)
+       scales both the radius and this opacity together; it is unset everywhere
+       else, so var(...,1) keeps every existing look identical. */
     .fp-furn-glow {
-      opacity: 0.25;
+      opacity: calc(0.25 * var(--fp-glow-intensity, 1));
       animation: fp-furn-glow-swell 2.6s ease-in-out infinite;
     }
     @keyframes fp-furn-glow-swell {
-      0%, 100% { opacity: 0.12; }
-      50%      { opacity: 0.35; }
+      0%, 100% { opacity: calc(0.12 * var(--fp-glow-intensity, 1)); }
+      50%      { opacity: calc(0.35 * var(--fp-glow-intensity, 1)); }
     }
     @media (prefers-reduced-motion: reduce) {
       .fp-furn-drum,

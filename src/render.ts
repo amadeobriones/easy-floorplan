@@ -1,4 +1,4 @@
-import { svg, html, type SVGTemplateResult, type TemplateResult } from "lit";
+import { svg, html, nothing, type SVGTemplateResult, type TemplateResult } from "lit";
 import type {
   SectionalHand, FloorplanCardConfig, Opening, ItemKind, Furniture, Tracker, RenderHass,
   StateStyle, StateAnimation, Room,
@@ -961,6 +961,7 @@ export function renderFurniture(
   f: Furniture,
   resolved?: ResolvedStyle,
   active = false,
+  glowIntensity?: number,
 ): SVGTemplateResult {
   const color = resolved?.color ?? f.color ?? FURNITURE_COLOR;
   // A matched rule's colour is the one thing that steps up fill-opacity — an
@@ -968,6 +969,14 @@ export function renderFurniture(
   const tinted = !!resolved?.color;
   const fillOpacity = tinted ? 0.3 : 0.12;
   const rugFillOpacity = tinted ? 0.2 : 0.08;
+  // Lights layer (off by default; see docs/superpowers/plans/2026-07-10-lights-layer.md):
+  // a lit ceilingLight/lamp's glow scales with its bulb's real brightness instead
+  // of the fixed idle/active look. Omitted (feature off, no entity, or no
+  // brightness reading) keeps glowScale at 1 and adds no style attribute at all,
+  // so the markup is byte-identical to the pre-feature output.
+  const glowScale =
+    glowIntensity === undefined ? 1 : 0.55 + 0.45 * Math.max(0, Math.min(1, glowIntensity));
+  const glowStyle = glowIntensity === undefined ? nothing : `--fp-glow-intensity:${glowScale}`;
   const w = f.w;
   const h = f.h;
   const hw = w / 2;
@@ -1348,7 +1357,8 @@ export function renderFurniture(
         <circle cx="0" cy="0" r=${m * 0.1} fill="none" stroke=${color} stroke-width="1.5" />`;
       detail = active
         ? svg`
-        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.5} fill=${color} />
+        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.5 * glowScale} fill=${color}
+                style=${glowStyle} />
         ${ring}`
         : ring;
       break;
@@ -1363,7 +1373,8 @@ export function renderFurniture(
         <circle cx="0" cy="0" r=${m * 0.14} fill="none" stroke=${color} stroke-width="1.5" />`;
       detail = active
         ? svg`
-        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.78} fill=${color} />
+        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.78 * glowScale} fill=${color}
+                style=${glowStyle} />
         ${shade}`
         : shade;
       break;
