@@ -509,6 +509,34 @@ export interface Floor {
   trackers: Tracker[];
 }
 
+/**
+ * Optional feature toggles. Every flag defaults to off; enabling one turns on
+ * a layer, interaction, or editor affordance that is otherwise inert. See
+ * `FEATURE_META` in `features.ts` for user-facing labels/descriptions.
+ */
+export interface FeaturesConfig {
+  /** Tint rooms/lamps to a bulb's real colour and brightness. */
+  lightsLayer?: boolean;
+  /** Shade rooms warm/cool by temperature. */
+  thermalLayer?: boolean;
+  /** Motion pings and safety alerts. */
+  awarenessLayer?: boolean;
+  /** Colour devices by live power draw. */
+  energyLayer?: boolean;
+  /** Show a now-playing cue on TVs/speakers. */
+  mediaNowPlaying?: boolean;
+  /** Tap a room to run a scene or toggle its lights. */
+  roomTapScenes?: boolean;
+  /** Inline brightness/colour/thermostat on long-press. */
+  radialControls?: boolean;
+  /** Editor: drop an HA area's entities into a room. */
+  autoPopulateArea?: boolean;
+  /** Editor: trace over a blueprint image. */
+  backgroundTrace?: boolean;
+  /** Dim the plan with the sun. */
+  dayNightTheme?: boolean;
+}
+
 export interface FloorplanCardConfig extends LovelaceCardConfig {
   type: string;
   title?: string;
@@ -544,6 +572,8 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   texts?: FloorText[];
   furniture?: Furniture[];
   trackers?: Tracker[];
+  /** Optional feature toggles; every flag defaults to off. See {@link FeaturesConfig}. */
+  features?: FeaturesConfig;
 }
 
 export const DEFAULT_WIDTH = 1000;
