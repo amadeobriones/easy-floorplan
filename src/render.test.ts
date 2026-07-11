@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { FurnitureType, ItemKind } from "./types";
+import type { Furniture, FurnitureType, ItemKind } from "./types";
 import { FURNITURE_DEFAULT_SIZE, FURNITURE_COLOR } from "./types";
 import {
   snapToWall,
@@ -16,6 +16,7 @@ import {
   kindFromEntity,
   defaultIcon,
   renderFurniture,
+  furnitureNowPlaying,
   sectionalPoints,
   SECTIONAL_CHAISE_FRACTION,
   SECTIONAL_SEAT_FRACTION,
@@ -1418,5 +1419,80 @@ describe("state_not fails closed on an outage", () => {
   // A rule naming no condition is the deliberate catch-all and keeps matching.
   it("a rule with no conditions still matches a missing entity", () => {
     expect(stateStyleMatches({ color: "grey" }, undefined)).toBe(true);
+  });
+});
+
+describe("feature 1f -- media now-playing cue", () => {
+  // The cue markup lives inside a nested `detail` template, so a top-level
+  // .strings.join misses it; recurse into nested templates like the reactive
+  // glyph tests do. `playing` is the FIFTH renderFurniture arg (after the
+  // already-landed glowIntensity), so slot 4 carries a real glowIntensity /
+  // undefined and slot 5 carries playing.
+  interface TplLike { strings: readonly string[]; values: unknown[] }
+  const isTpl = (v: unknown): v is TplLike =>
+    !!v && typeof v === "object" && "strings" in v && "values" in v;
+  const serialize = (t: unknown): string => {
+    const tpl = t as TplLike;
+    let out = tpl.strings[0];
+    for (let i = 0; i < tpl.values.length; i++) {
+      const v = tpl.values[i];
+      out += isTpl(v) ? serialize(v) : String(v);
+      out += tpl.strings[i + 1];
+    }
+    return out;
+  };
+
+  const tv: Furniture = { id: "t", type: "tv", x: 0, y: 0, w: 60, h: 40, entity: "media_player.lr" };
+  const spk: Furniture = { id: "s", type: "smartSpeaker", x: 0, y: 0, w: 28, h: 28, entity: "media_player.k" };
+  const str = (f: Furniture, active: boolean, playing: boolean) =>
+    serialize(renderFurniture(f, undefined, active, undefined, playing));
+
+  it("adds the equalizer cue to a playing TV", () => {
+    expect(str(tv, true, true)).toContain("fp-furn-eq");
+    expect(str(tv, true, true)).toContain("fp-furn-eq--2");
+    expect(str(tv, true, true)).toContain("fp-furn-eq--3");
+  });
+
+  it("adds the equalizer cue to a playing smart speaker", () => {
+    expect(str(spk, true, true)).toContain("fp-furn-eq");
+  });
+
+  it("a NOT-playing TV is byte-identical to the pre-1f render (active glow only, no cue)", () => {
+    // Same active glyph as before feature 1f: screen glows, but NO eq bars.
+    const before = serialize(renderFurniture(tv, undefined, true)); // 3-arg call = today
+    const now = serialize(renderFurniture(tv, undefined, true, undefined, false));
+    expect(now).toBe(before);
+    expect(now).not.toContain("fp-furn-eq");
+  });
+
+  it("an idle (inactive, not-playing) speaker is byte-identical and cue-free", () => {
+    const before = serialize(renderFurniture(spk, undefined, false));
+    const now = serialize(renderFurniture(spk, undefined, false, undefined, false));
+    expect(now).toBe(before);
+    expect(now).not.toContain("fp-furn-eq");
+  });
+
+  it("playing defaults to false (omitted 5th arg = no cue)", () => {
+    expect(serialize(renderFurniture(tv, undefined, true))).not.toContain("fp-furn-eq");
+  });
+});
+
+describe("furnitureNowPlaying (feature 1f gate)", () => {
+  const on = { features: { mediaNowPlaying: true } };
+  it("true only when flag on AND entity set AND state is exactly playing", () => {
+    expect(furnitureNowPlaying(on, "playing", "media_player.lr")).toBe(true);
+  });
+  it("false when the flag is off, even while playing (default off)", () => {
+    expect(furnitureNowPlaying({}, "playing", "media_player.lr")).toBe(false);
+    expect(furnitureNowPlaying(undefined, "playing", "media_player.lr")).toBe(false);
+  });
+  it("false for paused/on/idle -- distinct from merely active", () => {
+    expect(furnitureNowPlaying(on, "paused", "media_player.lr")).toBe(false);
+    expect(furnitureNowPlaying(on, "on", "media_player.lr")).toBe(false);
+    expect(furnitureNowPlaying(on, "idle", "media_player.lr")).toBe(false);
+  });
+  it("false when there is no entity or no state", () => {
+    expect(furnitureNowPlaying(on, "playing", undefined)).toBe(false);
+    expect(furnitureNowPlaying(on, undefined, "media_player.lr")).toBe(false);
   });
 });

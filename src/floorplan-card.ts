@@ -30,6 +30,7 @@ import {
   hassRenderInputsChanged,
   collectWatchedEntities,
   entityIsActive,
+  furnitureNowPlaying,
   resolveItemIcon,
   lightVisual,
 } from "./render";
@@ -409,7 +410,13 @@ export class FloorplanCard extends LitElement {
                 featureEnabled(c, "lightsLayer") && f.entity
                   ? lightVisual(this.hass?.states[f.entity]).intensity
                   : undefined;
-              const shape = renderFurniture(f, style, isActive, glowIntensity);
+              // Feature 1f: literally "playing" (narrower than isActive), flag-gated.
+              const isPlaying = furnitureNowPlaying(
+                c,
+                f.entity ? this.hass?.states[f.entity]?.state : undefined,
+                f.entity,
+              );
+              const shape = renderFurniture(f, style, isActive, glowIntensity, isPlaying);
               if (!f.entity) return shape;
               // Entity-bound furniture is tappable -- a transparent rect over the
               // piece's oriented bounding box gives a reliable hit target even
@@ -888,12 +895,30 @@ export class FloorplanCard extends LitElement {
       0%, 100% { opacity: calc(0.12 * var(--fp-glow-intensity, 1)); }
       50%      { opacity: calc(0.35 * var(--fp-glow-intensity, 1)); }
     }
+    /* Media now-playing cue (feature 1f): a tiny equalizer on a TV or smart
+       speaker whose media_player is playing. Extends the reactive glyph -- the
+       bars are inner sub-elements of the drawing, animating only the standalone
+       scale, so the placement transform is never touched. Gated upstream by the
+       mediaNowPlaying flag; a not-playing render never emits these. */
+    .fp-furn-eq {
+      transform-box: fill-box;
+      transform-origin: center bottom;
+      scale: 1 0.7;
+      animation: fp-furn-eq-bounce 0.9s ease-in-out infinite;
+    }
+    .fp-furn-eq--2 { animation-delay: -0.3s; }
+    .fp-furn-eq--3 { animation-delay: -0.6s; }
+    @keyframes fp-furn-eq-bounce {
+      0%, 100% { scale: 1 0.4; }
+      50%      { scale: 1 1; }
+    }
     @media (prefers-reduced-motion: reduce) {
       .fp-furn-drum,
       .fp-furn-screen,
       .fp-furn-flame,
       .fp-furn-fan,
-      .fp-furn-glow {
+      .fp-furn-glow,
+      .fp-furn-eq {
         animation: none;
       }
     }
