@@ -328,6 +328,12 @@ describe("entityDefaultIcon for domains without a device class", () => {
     expect(entityDefaultIcon("lock.front", undefined, true)).toBe("mdi:lock-open-variant");
     expect(entityDefaultIcon("lock.front", undefined, false)).toBe("mdi:lock");
   });
+  it("reflects a light's and switch's on/off state (upstream shauneccles#2)", () => {
+    expect(entityDefaultIcon("light.kitchen", undefined, true)).toBe("mdi:lightbulb");
+    expect(entityDefaultIcon("light.kitchen", undefined, false)).toBe("mdi:lightbulb-outline");
+    expect(entityDefaultIcon("switch.pump", undefined, true)).toBe("mdi:toggle-switch-variant");
+    expect(entityDefaultIcon("switch.pump", undefined, false)).toBe("mdi:toggle-switch-variant-off");
+  });
   it("still returns undefined for a domain it knows nothing about", () => {
     expect(entityDefaultIcon("automation.x", undefined, true)).toBeUndefined();
   });
@@ -381,7 +387,7 @@ describe("entityDefaultIcon", () => {
   it("returns undefined for unknown device classes, missing class, or unmapped domains", () => {
     expect(entityDefaultIcon("binary_sensor.x", "made_up", true)).toBeUndefined();
     expect(entityDefaultIcon("binary_sensor.x", undefined, true)).toBeUndefined();
-    expect(entityDefaultIcon("light.x", "lock", true)).toBeUndefined();
+    expect(entityDefaultIcon("input_boolean.x", "lock", true)).toBeUndefined();
   });
 });
 
@@ -1055,7 +1061,9 @@ describe("the entity-registry icon override (shauneccles#2)", () => {
 
   it("is skipped when unset, leaving the old precedence intact", () => {
     expect(resolveItemIcon(item, st, undefined)).toBe("mdi:from-integration");
-    expect(resolveItemIcon(item, undefined, undefined)).toBe(defaultIcon("light"));
+    // With no state object, light now resolves its state-aware domain icon
+    // (off) rather than the generic kind default -- see shauneccles#2.
+    expect(resolveItemIcon(item, undefined, undefined)).toBe("mdi:lightbulb-outline");
   });
 });
 
