@@ -62,10 +62,19 @@ export class RadialPopover extends LitElement {
     const box = this.shadowRoot?.querySelector(".pop") as HTMLElement | null;
     if (!box) return;
     const measured = { width: box.offsetWidth, height: box.offsetHeight };
-    this._pos = clampPopoverPosition(this._req.anchor, measured, {
+    const next = clampPopoverPosition(this._req.anchor, measured, {
       width: window.innerWidth,
       height: window.innerHeight,
     });
+    // A fresh {left,top} object literal is never === the previous one, so
+    // assigning unconditionally on every pass would fail Lit's `notEqual`
+    // check forever and infinite-loop update->updated->update. Only assign
+    // (and thus only request a further update) when the numbers actually
+    // moved; once the measured box size stabilizes (typically the very next
+    // pass) this converges instead of spinning.
+    if (next.left !== this._pos.left || next.top !== this._pos.top) {
+      this._pos = next;
+    }
     if (!this._measured) this._measured = true;
   }
 
