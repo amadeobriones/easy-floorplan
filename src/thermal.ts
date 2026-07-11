@@ -2,6 +2,7 @@ import { svg, type SVGTemplateResult } from "lit";
 import type { Room, RenderHass, FloorplanCardConfig } from "./types";
 import { getFloors } from "./types";
 import type { LayerRenderCtx, LiveLayer } from "./layers";
+import { LIVE_LAYERS } from "./layers";
 
 /** A comfort band: `min`/`max` are where the gradient saturates to pure
  * cold/hot; `mid` is the "neutral" comfort point the room reads as unstyled. */
@@ -114,3 +115,5 @@ export const THERMAL_LAYER: LiveLayer = {
     return [...ids];
   },
 };
+
+LIVE_LAYERS.push(THERMAL_LAYER);

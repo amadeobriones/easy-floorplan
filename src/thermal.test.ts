@@ -7,6 +7,7 @@ import {
   THERMAL_LAYER,
 } from "./thermal";
 import type { Room, Floor, RenderHass, FloorplanCardConfig } from "./types";
+import { LIVE_LAYERS, enabledLayers, layerWatchedEntities } from "./layers";
 
 function fakeHass(states: Record<string, { state: string }>): RenderHass {
   return { states, formatEntityState: (s: { state: string }) => s.state } as unknown as RenderHass;
@@ -131,5 +132,29 @@ describe("THERMAL_LAYER", () => {
   it("watched: empty when no room has a tempEntity", () => {
     const cfg = { floors: [fakeFloor([{ id: "a", points: [] }])] } as unknown as FloorplanCardConfig;
     expect([...THERMAL_LAYER.watched(cfg)]).toEqual([]);
+  });
+});
+
+describe("thermalLayer registration", () => {
+  const cfg = {
+    type: "x",
+    width: 10,
+    height: 10,
+    floors: [fakeFloor([{ id: "r1", points: [[0, 0], [1, 1]], tempEntity: "sensor.living_temp" }])],
+  } as unknown as FloorplanCardConfig;
+
+  it("is registered in LIVE_LAYERS", () => {
+    expect(LIVE_LAYERS).toContain(THERMAL_LAYER);
+  });
+
+  it("is excluded by default (flag off) -- byte-identical, zero watched entities", () => {
+    expect(enabledLayers(cfg).some((l) => l.id === "thermalLayer")).toBe(false);
+    expect(layerWatchedEntities(cfg).has("sensor.living_temp")).toBe(false);
+  });
+
+  it("is included and watched once the flag is on", () => {
+    const on = { ...cfg, features: { thermalLayer: true } };
+    expect(enabledLayers(on).some((l) => l.id === "thermalLayer")).toBe(true);
+    expect(layerWatchedEntities(on).has("sensor.living_temp")).toBe(true);
   });
 });

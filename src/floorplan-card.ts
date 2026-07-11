@@ -42,6 +42,9 @@ import { featureEnabled } from "./features";
 // watched entity into the card automatically once features.lightsLayer is on.
 // Nothing else in this file references lights.ts directly.
 import "./lights";
+// Registers the room warm/cool thermal tint into the live-layer registry, the
+// same way "./lights" does above -- see thermal.ts's THERMAL_LAYER.
+import "./thermal";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
