@@ -3734,6 +3734,61 @@ export class FloorplanCardEditor extends LitElement {
         animation: none;
       }
     }
+    /* Reactive glyphs: bespoke active-state animation on inner sub-elements of a
+       furniture drawing. These classes sit inside the placement transform (and
+       inside g.fp-furn when a stateStyles rule resolves) and animate only the
+       standalone rotate/scale/opacity properties, so placement is never touched. */
+    .fp-furn-drum,
+    .fp-furn-flame {
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    /* Drum tumble: one revolution every 3.6 s at constant speed. Real drums spin
+       faster, but at glyph scale that strobes; this reads as turning, calmly. */
+    .fp-furn-drum {
+      animation: fp-furn-drum-spin 3.6s linear infinite;
+    }
+    /* The dryer turns the opposite way, so a laundry pair reads as two machines. */
+    .fp-furn-drum--reverse {
+      animation-direction: reverse;
+    }
+    @keyframes fp-furn-drum-spin {
+      from { rotate: 0deg; }
+      to   { rotate: 360deg; }
+    }
+    /* TV screen glow: a slow brightness swell. The resting opacity doubles as the
+       reduced-motion pose, so animation: none leaves a steadily lit screen. */
+    .fp-furn-screen {
+      opacity: 0.2;
+      animation: fp-furn-screen-glow 3s ease-in-out infinite;
+    }
+    @keyframes fp-furn-screen-glow {
+      0%, 100% { opacity: 0.1; }
+      50%      { opacity: 0.3; }
+    }
+    /* Fire flicker: uneven stops so it dances instead of pulsing. The alt flame
+       runs a shorter period with a negative delay, so the two tongues never sync
+       and the combined pattern only repeats every ~22 s. */
+    .fp-furn-flame {
+      animation: fp-furn-flame-flicker 1.7s ease-in-out infinite;
+    }
+    .fp-furn-flame--alt {
+      animation-duration: 1.3s;
+      animation-delay: -0.9s;
+    }
+    @keyframes fp-furn-flame-flicker {
+      0%, 100% { opacity: 0.85; scale: 1; }
+      27%      { opacity: 0.55; scale: 0.97; }
+      52%      { opacity: 1;    scale: 1.05; }
+      71%      { opacity: 0.65; scale: 0.98; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .fp-furn-drum,
+      .fp-furn-screen,
+      .fp-furn-flame {
+        animation: none;
+      }
+    }
     /* Toolbar icons sit inline with their labels; smaller than content icons. */
     .toolbar ha-icon {
       --mdc-icon-size: 16px;

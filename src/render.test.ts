@@ -723,6 +723,75 @@ describe("renderFurniture stateStyles tint (smart furniture)", () => {
   });
 });
 
+describe("renderFurniture reactive glyphs (active variant)", () => {
+  interface TplLike { strings: readonly string[]; values: unknown[] }
+  const isTpl = (v: unknown): v is TplLike =>
+    !!v && typeof v === "object" && "strings" in v && "values" in v;
+  const serialize = (t: unknown): string => {
+    const tpl = t as TplLike;
+    let out = tpl.strings[0];
+    for (let i = 0; i < tpl.values.length; i++) {
+      const v = tpl.values[i];
+      out += isTpl(v) ? serialize(v) : String(v);
+      out += tpl.strings[i + 1];
+    }
+    return out;
+  };
+
+  const washer = { id: "w", type: "washer" as const, x: 120, y: 80, w: 60, h: 60 };
+  const dryer = { id: "d", type: "dryer" as const, x: 120, y: 80, w: 60, h: 60 };
+  const tv = { id: "t", type: "tv" as const, x: 0, y: 0, w: 50, h: 20 };
+  const fireplace = { id: "f", type: "fireplace" as const, x: 0, y: 0, w: 60, h: 20 };
+  const sofa = { id: "s", type: "sofa" as const, x: 0, y: 0, w: 180, h: 90 };
+
+  it("washer: active omitted/false is byte-identical to the pre-Phase-3 output", () => {
+    const withoutParam = serialize(renderFurniture(washer, undefined));
+    const explicitFalse = serialize(renderFurniture(washer, undefined, false));
+    expect(withoutParam).not.toContain("fp-furn-drum");
+    expect(explicitFalse).toEqual(withoutParam);
+  });
+
+  it("washer: active true renders a spinning drum with vanes", () => {
+    const v = serialize(renderFurniture(washer, undefined, true));
+    expect(v).toContain("fp-furn-drum");
+    expect(v).not.toContain("fp-furn-drum--reverse");
+  });
+
+  it("dryer: active true renders the drum reversed", () => {
+    const v = serialize(renderFurniture(dryer, undefined, true));
+    expect(v).toContain("fp-furn-drum--reverse");
+  });
+
+  it("dryer: active omitted is byte-identical to the pre-Phase-3 output", () => {
+    const withoutParam = serialize(renderFurniture(dryer, undefined));
+    const explicitFalse = serialize(renderFurniture(dryer, undefined, false));
+    expect(withoutParam).not.toContain("fp-furn-drum");
+    expect(explicitFalse).toEqual(withoutParam);
+  });
+
+  it("tv: active true adds fp-furn-screen; omitted does not", () => {
+    const idle = serialize(renderFurniture(tv, undefined));
+    const active = serialize(renderFurniture(tv, undefined, true));
+    expect(idle).not.toContain("fp-furn-screen");
+    expect(active).toContain("fp-furn-screen");
+    expect(serialize(renderFurniture(tv, undefined, false))).toEqual(idle);
+  });
+
+  it("fireplace: active true adds fp-furn-flame and fp-furn-flame--alt; omitted keeps a single unclassed flame", () => {
+    const idle = serialize(renderFurniture(fireplace, undefined));
+    const active = serialize(renderFurniture(fireplace, undefined, true));
+    expect(idle).not.toContain("fp-furn-flame");
+    expect(active).toContain("fp-furn-flame");
+    expect(active).toContain("fp-furn-flame--alt");
+    expect(serialize(renderFurniture(fireplace, undefined, false))).toEqual(idle);
+  });
+
+  it("a non-reactive type (sofa) is unchanged whether active or not", () => {
+    const idle = serialize(renderFurniture(sofa, undefined));
+    const active = serialize(renderFurniture(sofa, undefined, true));
+    expect(active).toEqual(idle);
+  });
+});
 
 describe("isEntityOn / resolveItemIcon", () => {
   it("treats on/open/home/playing as on", () => {

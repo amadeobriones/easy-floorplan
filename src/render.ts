@@ -829,8 +829,17 @@ export function renderRoom(r: Room, style?: ResolvedStyle): SVGTemplateResult {
  * transform, so nothing this adds can move the piece. With no `resolved` the
  * output is byte-identical to the pre-smart-furniture render — see
  * docs/superpowers/specs/smart-furniture-look.md.
+ *
+ * When `active` is true, washer/dryer/tv/fireplace render a bespoke animated
+ * variant (drum spin, screen glow, flame flicker) — see
+ * docs/superpowers/specs/reactive-glyphs.md. `active === false` (or omitted)
+ * is byte-identical to today for every type.
  */
-export function renderFurniture(f: Furniture, resolved?: ResolvedStyle): SVGTemplateResult {
+export function renderFurniture(
+  f: Furniture,
+  resolved?: ResolvedStyle,
+  active = false,
+): SVGTemplateResult {
   const color = resolved?.color ?? f.color ?? FURNITURE_COLOR;
   // A matched rule's colour is the one thing that steps up fill-opacity — an
   // animation-only rule (no colour) keeps the idle grey and idle opacity.
@@ -930,7 +939,13 @@ export function renderFurniture(f: Furniture, resolved?: ResolvedStyle): SVGTemp
       break;
     }
     case "tv":
-      detail = svg`<line x1=${-w * 0.18} y1=${hh} x2=${w * 0.18} y2=${hh + h}
+      detail = active
+        ? svg`
+        <rect class="fp-furn-screen" x=${-hw + w * 0.06} y=${-hh + h * 0.18}
+              width=${w * 0.88} height=${h * 0.64} rx="2" fill=${color} />
+        <line x1=${-w * 0.18} y1=${hh} x2=${w * 0.18} y2=${hh + h}
+              stroke=${color} stroke-width="2" />`
+        : svg`<line x1=${-w * 0.18} y1=${hh} x2=${w * 0.18} y2=${hh + h}
                          stroke=${color} stroke-width="2" />`;
       break;
     case "desk":
@@ -958,18 +973,56 @@ export function renderFurniture(f: Furniture, resolved?: ResolvedStyle): SVGTemp
                          rx=${Math.min(w, h) * 0.08} fill="none" stroke=${color}
                          stroke-width="1.5" opacity="0.6" />`;
       break;
-    case "washer":
-    case "dryer": {
+    case "washer": {
       const r = Math.min(w, h) * 0.3;
-      detail = svg`
+      const cy = h * 0.06;
+      detail = active
+        ? svg`
+        <line x1=${-hw + w * 0.06} y1=${-hh + h * 0.18} x2=${hw - w * 0.06} y2=${-hh + h * 0.18}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <g class="fp-furn-drum">
+          <circle cx="0" cy=${cy} r=${r} fill="none" stroke=${color} stroke-width="2" />
+          <line x1="0" y1=${cy - r * 0.3} x2="0" y2=${cy - r * 0.85}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+          <line x1=${r * 0.26} y1=${cy + r * 0.15} x2=${r * 0.736} y2=${cy + r * 0.425}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+          <line x1=${-r * 0.26} y1=${cy + r * 0.15} x2=${-r * 0.736} y2=${cy + r * 0.425}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+        </g>
+        <circle cx=${-hw + w * 0.16} cy=${-hh + h * 0.09} r=${Math.min(w, h) * 0.045}
+                fill="none" stroke=${color} stroke-width="1.5" />`
+        : svg`
         <line x1=${-hw + w * 0.06} y1=${-hh + h * 0.18} x2=${hw - w * 0.06} y2=${-hh + h * 0.18}
               stroke=${color} stroke-width="1.5" opacity="0.7" />
         <circle cx="0" cy=${h * 0.06} r=${r} fill="none" stroke=${color} stroke-width="2" />
-        ${f.type === "dryer"
-          ? svg`<circle cx="0" cy=${h * 0.06} r=${r * 0.45}
-                        fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`
-          : svg`<circle cx=${-hw + w * 0.16} cy=${-hh + h * 0.09} r=${Math.min(w, h) * 0.045}
-                        fill="none" stroke=${color} stroke-width="1.5" />`}`;
+        <circle cx=${-hw + w * 0.16} cy=${-hh + h * 0.09} r=${Math.min(w, h) * 0.045}
+                        fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    }
+    case "dryer": {
+      const r = Math.min(w, h) * 0.3;
+      const cy = h * 0.06;
+      detail = active
+        ? svg`
+        <line x1=${-hw + w * 0.06} y1=${-hh + h * 0.18} x2=${hw - w * 0.06} y2=${-hh + h * 0.18}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <g class="fp-furn-drum fp-furn-drum--reverse">
+          <circle cx="0" cy=${cy} r=${r} fill="none" stroke=${color} stroke-width="2" />
+          <line x1="0" y1=${cy - r * 0.6} x2="0" y2=${cy - r * 0.9}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+          <line x1=${r * 0.52} y1=${cy + r * 0.3} x2=${r * 0.779} y2=${cy + r * 0.45}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+          <line x1=${-r * 0.52} y1=${cy + r * 0.3} x2=${-r * 0.779} y2=${cy + r * 0.45}
+                stroke=${color} stroke-width="1.5" opacity="0.7" />
+        </g>
+        <circle cx="0" cy=${cy} r=${r * 0.45}
+                fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`
+        : svg`
+        <line x1=${-hw + w * 0.06} y1=${-hh + h * 0.18} x2=${hw - w * 0.06} y2=${-hh + h * 0.18}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <circle cx="0" cy=${h * 0.06} r=${r} fill="none" stroke=${color} stroke-width="2" />
+        <circle cx="0" cy=${h * 0.06} r=${r * 0.45}
+                        fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`;
       break;
     }
     case "dishwasher":
@@ -1114,7 +1167,19 @@ export function renderFurniture(f: Furniture, resolved?: ResolvedStyle): SVGTemp
                 fill="none" stroke=${color} stroke-width="1.5" />`;
       break;
     case "fireplace":
-      detail = svg`
+      detail = active
+        ? svg`
+        <line x1=${-w * 0.26} y1=${-hh} x2=${-w * 0.26} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <line x1=${w * 0.26} y1=${-hh} x2=${w * 0.26} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <path class="fp-furn-flame"
+              d="M ${-w * 0.14} ${h * 0.18} L ${-w * 0.05} ${-h * 0.18} L 0 ${h * 0.02} L ${w * 0.05} ${-h * 0.18} L ${w * 0.14} ${h * 0.18}"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <path class="fp-furn-flame fp-furn-flame--alt"
+              d="M ${-w * 0.08} ${h * 0.16} L ${-w * 0.03} ${-h * 0.05} L 0 ${h * 0.07} L ${w * 0.03} ${-h * 0.05} L ${w * 0.08} ${h * 0.16}"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`
+        : svg`
         <line x1=${-w * 0.26} y1=${-hh} x2=${-w * 0.26} y2=${hh}
               stroke=${color} stroke-width="2" />
         <line x1=${w * 0.26} y1=${-hh} x2=${w * 0.26} y2=${hh}
