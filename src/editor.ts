@@ -156,6 +156,8 @@ interface Drag {
   moved?: boolean;
   /** The exact history entry this drag pushed, so cancel can remove it by identity. */
   snapshot?: FloorplanCardConfig;
+  /** The redo stack as it stood before the drag's history push cleared it. */
+  priorFuture?: FloorplanCardConfig[];
 }
 
 type Marquee = Rect;
@@ -176,6 +178,28 @@ const WALL_SNAP = 35;
 const HISTORY_MAX = 60;
 /** Angle (degrees) within which a drawn wall is snapped flat to horizontal/vertical. */
 const WALL_AXIS_SNAP_DEG = 10;
+
+/**
+ * True when the event's composed path sits in a form field / picker — keys
+ * typed there belong to the field, not the canvas. ha-form covers all its
+ * inner controls — ha-select dropdowns have no native input in the event
+ * path, so arrows/Escape/Delete would otherwise reach the canvas.
+ */
+function isTypingPath(path: EventTarget[]): boolean {
+  return path.some((el) => {
+    const node = el as HTMLElement;
+    const tag = node.tagName?.toLowerCase();
+    return (
+      tag === "input" ||
+      tag === "textarea" ||
+      tag === "select" ||
+      tag === "ha-form" ||
+      tag === "ha-entity-picker" ||
+      tag === "ha-icon-picker" ||
+      node.isContentEditable === true
+    );
+  });
+}
 
 @customElement("easy-floorplan-card-editor")
 export class FloorplanCardEditor extends LitElement {
@@ -235,6 +259,21 @@ export class FloorplanCardEditor extends LitElement {
   private _marqueeAdd = false;
   private _clipboard: Clipboard | null = null;
   private _onKeyDown = (ev: KeyboardEvent) => this._handleKeyDown(ev);
+  private _onHostKeyDown = (ev: KeyboardEvent) => {
+    // Bubble-phase backstop for Escape typed in a form field while fullscreen.
+    // The capture listener above lets those through so an open picker/select
+    // overlay can close itself and absorb the key; one that bubbles this far
+    // was declined by every overlay, and the host sits below HA's dialog in
+    // the bubble path — contain it here or the dialog closes underneath the
+    // top-layer workspace (and a dirty config pops an invisible confirm
+    // behind it). Park focus on the canvas (not a bare blur, which would
+    // strand focus on `body`) so the next Escape runs the normal cascade.
+    if (ev.key !== "Escape" || !this._fullscreen) return;
+    if (!isTypingPath(ev.composedPath())) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    this._canvasWrap?.focus();
+  };
   private _onFocusIn = (ev: FocusEvent) => {
     // While the fullscreen popover is up, anything that pulls focus outside the
     // editor (Tab past the last control, a dialog opening above) lands on UI
@@ -246,11 +285,15 @@ export class FloorplanCardEditor extends LitElement {
     super.connectedCallback();
     // Capture phase so HA's dialog can't swallow the arrow keys before we see them.
     window.addEventListener("keydown", this._onKeyDown, true);
+    // Bubble phase on the host: fires only after the editor's own form
+    // overlays had their chance to absorb the key (see _onHostKeyDown).
+    this.addEventListener("keydown", this._onHostKeyDown);
     window.addEventListener("focusin", this._onFocusIn);
   }
 
   public disconnectedCallback(): void {
     window.removeEventListener("keydown", this._onKeyDown, true);
+    this.removeEventListener("keydown", this._onHostKeyDown);
     window.removeEventListener("focusin", this._onFocusIn);
     super.disconnectedCallback();
   }
@@ -629,26 +672,20 @@ export class FloorplanCardEditor extends LitElement {
       }
       return;
     }
-    // Don't hijack keys while typing in a field / picker. A <select> and an
-    // ha-form are not fields: they consume bare keys (type-to-jump, arrows,
-    // Escape) but a modifier combination belongs to the canvas. The floor
-    // switcher is a <select> and keeps focus after you change floors, which is
-    // why Cmd+V looked broken "between floors". See {@link isTypingTarget}.
-    const typing = isTypingTarget(pathTags(path), ev.ctrlKey || ev.metaKey);
-    if (typing) {
-      // While fullscreen, Escape must never fall through to HA's dialog — it
-      // would close it underneath the top-layer workspace (and a dirty config
-      // pops an invisible confirm behind it). First Esc leaves the field; the
-      // next one runs the normal cascade below.
-      if (ev.key === "Escape" && this._fullscreen) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        // Move focus to the canvas (not a bare blur, which would strand focus
-        // on `body` and route the next Escape around the editor entirely).
-        this._canvasWrap?.focus();
-      }
-      return;
-    }
+    // Don't hijack keys while typing in a field / picker. Escape is not
+    // swallowed here even in fullscreen: HA's pickers hold focus while their
+    // dropdown is open and close it on their own Escape (absorbing the
+    // event), so a capture-phase swallow starves them and leaves an orphaned
+    // dropdown that focus can't escape. Escapes no overlay absorbs are
+    // contained by the bubble-phase host listener (_onHostKeyDown) before
+    // they can reach — and close — HA's dialog.
+    //
+    // The predicate is modifier-aware where the host listener's is not: a
+    // <select> and an ha-form consume *bare* keys (type-to-jump, arrows) but a
+    // modifier combination belongs to the canvas. The floor switcher is a
+    // <select> and keeps focus after you change floors, which is why Cmd+V
+    // looked broken "between floors". See {@link isTypingTarget}.
+    if (isTypingTarget(pathTags(path), ev.ctrlKey || ev.metaKey)) return;
 
     const mod = ev.ctrlKey || ev.metaKey;
     const key = ev.key.toLowerCase();
@@ -868,6 +905,9 @@ export class FloorplanCardEditor extends LitElement {
     if (drag?.moved && drag.snapshot) {
       this._history = this._history.filter((c) => c !== drag.snapshot);
       this._emit(drag.snapshot);
+      // The push at first movement cleared the redo stack; a canceled drag
+      // must be a complete no-op, so put it back.
+      this._future = drag.priorFuture ?? [];
     }
   }
 
@@ -1029,6 +1069,7 @@ export class FloorplanCardEditor extends LitElement {
     if (!drag.moved) {
       if (Math.hypot(p.x - drag.start.x, p.y - drag.start.y) <= 4) return;
       drag.moved = true;
+      drag.priorFuture = this._future;
       this._pushHistory();
       drag.snapshot = this._history[this._history.length - 1];
     }
@@ -1694,6 +1735,17 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   /**
+   * Every new pointer interaction ends the current live-edit burst, so two
+   * separate drags of the same slider (or two picker sessions on the same
+   * color field) become two undo steps instead of silently merging into one.
+   * Canvas gestures stop propagation before reaching this, but they snapshot
+   * history themselves. `_liveEditKey` is non-reactive — no render triggered.
+   */
+  private _onEditorPointerDown = (): void => {
+    this._liveEditKey = null;
+  };
+
+  /**
    * Live variants for continuous controls (sliders, color pickers, typing):
    * one undo snapshot per edit burst — keyed by element and fields — then
    * plain emits, instead of a full-config clone per input event.
@@ -2059,6 +2111,7 @@ export class FloorplanCardEditor extends LitElement {
       <div
         class="editor ${this._fullscreen ? "fullscreen" : ""}"
         popover=${this._fullscreen ? "manual" : nothing}
+        @pointerdown=${this._onEditorPointerDown}
       >
         ${this._floorMenuOpen || this._addMenuOpen
           ? html`<div
