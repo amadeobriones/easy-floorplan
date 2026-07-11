@@ -26,6 +26,7 @@ import {
 } from "./types";
 import { defaultIcon, openingMotion, sliderStyleOf, doorStyleOf, foldPanelsOf, ROOM_FILL_OPACITY } from "./render";
 import { defaultItemAction } from "./actions";
+import { FEATURE_META, featureEnabled, type FeatureName } from "./features";
 
 /** One ha-form schema item, extended with our label/helper (read by computeLabel). */
 export interface FormField {
@@ -576,6 +577,34 @@ export function projectForm(c: FloorplanCardConfig): FormSpec {
     ],
     data: { title: c.title ?? "", width: c.width, height: c.height, grid: c.grid ?? DEFAULT_GRID },
     toPatch: identity,
+  };
+}
+
+/**
+ * One boolean field per `FEATURE_META` entry. Fields are keyed by feature
+ * name (flat), and `toPatch` folds a changed flag back into the config's
+ * nested `features` map — a flag going back to false deletes its key rather
+ * than storing `false`, so a plan with every feature off keeps the same
+ * minimal config it had before this panel existed.
+ */
+export function featuresForm(c: FloorplanCardConfig): FormSpec {
+  const current = c.features ?? {};
+  return {
+    fields: FEATURE_META.map((m) => ({
+      name: m.name,
+      label: m.label,
+      helper: m.help,
+      selector: { boolean: {} },
+    })),
+    data: Object.fromEntries(FEATURE_META.map((m) => [m.name, featureEnabled(c, m.name)])),
+    toPatch: (patch) => {
+      const features = { ...current };
+      for (const [name, value] of Object.entries(patch)) {
+        if (value) features[name as FeatureName] = true;
+        else delete features[name as FeatureName];
+      }
+      return { features };
+    },
   };
 }
 

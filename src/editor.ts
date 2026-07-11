@@ -84,6 +84,7 @@ import {
   FURNITURE_LABELS,
   FURNITURE_CATEGORIES,
   diffFormValue,
+  featuresForm,
   floorImageForm,
   furnitureForm,
   roomForm,
@@ -100,6 +101,7 @@ import {
 } from "./editor-forms";
 import { addRule, removeRule, setRule } from "./statestyles";
 import type { StateStyle } from "./types";
+import { FEATURE_META, featureEnabled } from "./features";
 
 const formLabel = (s: FormField): string => s.label;
 const formHelper = (s: FormField): string | undefined => s.helper;
@@ -204,6 +206,7 @@ export class FloorplanCardEditor extends LitElement {
   @state() private _addClosedCats: Set<string> = new Set();
   /** Project section expanded? Collapsed by default — page settings are touched rarely. */
   @state() private _projectOpen = false;
+  @state() private _featuresOpen = false;
   @state() private _importText = "";
   @state() private _importErrors: string[] = [];
   /**
@@ -2295,6 +2298,7 @@ export class FloorplanCardEditor extends LitElement {
         <div class="side">
           ${this._renderElementEdit()}
           ${this._renderPanel()}
+          ${this._renderFeaturesPanel()}
         </div>
         </div>
       </div>
@@ -3000,6 +3004,39 @@ export class FloorplanCardEditor extends LitElement {
             : nothing}
         </div>
       </div>
+    `;
+  }
+
+  private _renderFeaturesPanel(): TemplateResult {
+    // Collapsed by default, same rationale as the Project panel — these are
+    // opt-in flags most plans never touch.
+    const enabledCount = FEATURE_META.filter((m) => featureEnabled(this._config, m.name)).length;
+    return html`
+      <section class="panel">
+        <button
+          class="section-toggle"
+          aria-expanded=${this._featuresOpen}
+          @click=${() => {
+            this._featuresOpen = !this._featuresOpen;
+          }}
+        >
+          <ha-icon icon=${this._featuresOpen ? "mdi:chevron-down" : "mdi:chevron-right"}></ha-icon>
+          <span class="section-title-inline">Features</span>
+          ${this._featuresOpen
+            ? nothing
+            : html`<span class="section-summary"
+                >${enabledCount ? `${enabledCount} of ${FEATURE_META.length} enabled` : "All off"}</span
+              >`}
+        </button>
+        ${this._featuresOpen
+          ? html`<div class="rows panel-body">
+              ${this._renderForm(featuresForm(this._config), (patch, live) => {
+                if (live) this._patchConfigLive(patch as Partial<FloorplanCardConfig>);
+                else this._patchConfig(patch as Partial<FloorplanCardConfig>);
+              })}
+            </div>`
+          : nothing}
+      </section>
     `;
   }
 
