@@ -221,6 +221,36 @@ describe("wallForm / projectForm / floorImageForm", () => {
     );
     expect(floorImageForm({} as Floor).fields.map((x) => x.name)).not.toContain("imageOpacity");
   });
+
+  it("omits the lock field and never disables anything when traceEnabled is false (default)", () => {
+    const locked = { image: "x.png", imageOpacity: 0.5, imageLocked: true } as Floor;
+    const spec = floorImageForm(locked); // traceEnabled omitted — must match today exactly
+    expect(spec.fields.map((x) => x.name)).not.toContain("imageLocked");
+    expect(spec.fields.find((x) => x.name === "image")!.disabled).toBeFalsy();
+    expect(spec.fields.find((x) => x.name === "imageOpacity")!.disabled).toBeFalsy();
+  });
+
+  it("adds the lock field only once an image is set and traceEnabled is true", () => {
+    expect(floorImageForm({ image: "x.png" } as Floor, true).fields.map((x) => x.name)).toContain(
+      "imageLocked"
+    );
+    expect(floorImageForm({} as Floor, true).fields.map((x) => x.name)).not.toContain("imageLocked");
+  });
+
+  it("disables the URL/opacity fields (not the lock field itself) while locked and traceEnabled", () => {
+    const locked = { image: "x.png", imageOpacity: 0.5, imageLocked: true } as Floor;
+    const spec = floorImageForm(locked, true);
+    expect(spec.fields.find((x) => x.name === "image")!.disabled).toBe(true);
+    expect(spec.fields.find((x) => x.name === "imageOpacity")!.disabled).toBe(true);
+    expect(spec.fields.find((x) => x.name === "imageLocked")!.disabled).toBeFalsy();
+  });
+
+  it("leaves the URL/opacity fields enabled when traceEnabled but not locked", () => {
+    const unlocked = { image: "x.png", imageOpacity: 0.5 } as Floor;
+    const spec = floorImageForm(unlocked, true);
+    expect(spec.fields.find((x) => x.name === "image")!.disabled).toBeFalsy();
+    expect(spec.fields.find((x) => x.name === "imageOpacity")!.disabled).toBeFalsy();
+  });
 });
 
 describe("furnitureForm", () => {
