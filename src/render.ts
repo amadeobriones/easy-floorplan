@@ -275,6 +275,27 @@ export function rgbColorOf(st: { attributes?: Record<string, unknown> } | undefi
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+/**
+ * A light's actual look right now: its colour (same as {@link rgbColorOf}) and a
+ * 0..1 intensity from `brightness` (0-255). Off/unavailable/missing yields `{}`
+ * rather than a fabricated dim reading, matching `rgbColorOf`'s own "no colour
+ * rather than black" rule. `brightness: 0` is a real reading, not a missing one.
+ */
+export function lightVisual(
+  st: { state: string; attributes?: Record<string, unknown> } | undefined,
+): LightVisual {
+  if (!st || st.state !== "on") return {};
+  const b = st.attributes?.brightness;
+  const intensity =
+    typeof b === "number" && Number.isFinite(b) ? Math.max(0, Math.min(1, b / 255)) : undefined;
+  return { color: rgbColorOf(st), intensity };
+}
+
+export interface LightVisual {
+  color?: string;
+  intensity?: number;
+}
+
 /** Does one rule hold? Every condition it names must hold; a rule naming none always does. */
 export function stateStyleMatches(
   rule: StateStyle,

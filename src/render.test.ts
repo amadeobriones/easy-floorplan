@@ -34,6 +34,7 @@ import {
   stateStyleMatches,
   stateStyleEntities,
   rgbColorOf,
+  lightVisual,
   renderRoom,
   ROOM_FILL_OPACITY,
 } from "./render";
@@ -1161,6 +1162,42 @@ describe("rgbColorOf", () => {
     expect(rgbColorOf({ attributes: {} })).toBeUndefined();
     expect(rgbColorOf({ attributes: { rgb_color: [1, 2] } })).toBeUndefined();
     expect(rgbColorOf({ attributes: { rgb_color: ["a", "b", "c"] } })).toBeUndefined();
+  });
+});
+
+describe("lightVisual", () => {
+  it("yields nothing for a light that is off, unavailable, or missing", () => {
+    expect(lightVisual(undefined)).toEqual({});
+    expect(lightVisual({ state: "off", attributes: { brightness: 200 } })).toEqual({});
+    expect(lightVisual({ state: "unavailable", attributes: { brightness: 200 } })).toEqual({});
+  });
+
+  it("reads colour and a 0..1 intensity from a lit bulb", () => {
+    const v = lightVisual({
+      state: "on",
+      attributes: { rgb_color: [10, 20, 30], brightness: 128 },
+    });
+    expect(v.color).toBe("rgb(10, 20, 30)");
+    expect(v.intensity).toBeCloseTo(128 / 255);
+  });
+
+  it("intensity is undefined when brightness is absent, even while on", () => {
+    const v = lightVisual({ state: "on", attributes: { rgb_color: [1, 2, 3] } });
+    expect(v.color).toBe("rgb(1, 2, 3)");
+    expect(v.intensity).toBeUndefined();
+  });
+
+  it("brightness 0 is a real reading of zero, not a missing one", () => {
+    expect(lightVisual({ state: "on", attributes: { brightness: 0 } }).intensity).toBe(0);
+  });
+
+  it("clamps an out-of-range brightness into 0..1", () => {
+    expect(lightVisual({ state: "on", attributes: { brightness: 500 } }).intensity).toBe(1);
+    expect(lightVisual({ state: "on", attributes: { brightness: -50 } }).intensity).toBe(0);
+  });
+
+  it("colour is undefined when the light is on but has no rgb_color", () => {
+    expect(lightVisual({ state: "on", attributes: { brightness: 100 } }).color).toBeUndefined();
   });
 });
 
