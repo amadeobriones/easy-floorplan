@@ -1,4 +1,4 @@
-import { svg, html, type SVGTemplateResult, type TemplateResult } from "lit";
+import { svg, html, nothing, type SVGTemplateResult, type TemplateResult } from "lit";
 import type {
   SectionalHand, FloorplanCardConfig, Opening, ItemKind, Furniture, Tracker, RenderHass,
   StateStyle, StateAnimation, Room,
@@ -273,6 +273,27 @@ export function rgbColorOf(st: { attributes?: Record<string, unknown> } | undefi
   const [r, g, b] = rgb;
   if ([r, g, b].some((v) => typeof v !== "number")) return undefined;
   return `rgb(${r}, ${g}, ${b})`;
+}
+
+/**
+ * A light's actual look right now: its colour (same as {@link rgbColorOf}) and a
+ * 0..1 intensity from `brightness` (0-255). Off/unavailable/missing yields `{}`
+ * rather than a fabricated dim reading, matching `rgbColorOf`'s own "no colour
+ * rather than black" rule. `brightness: 0` is a real reading, not a missing one.
+ */
+export function lightVisual(
+  st: { state: string; attributes?: Record<string, unknown> } | undefined,
+): LightVisual {
+  if (!st || st.state !== "on") return {};
+  const b = st.attributes?.brightness;
+  const intensity =
+    typeof b === "number" && Number.isFinite(b) ? Math.max(0, Math.min(1, b / 255)) : undefined;
+  return { color: rgbColorOf(st), intensity };
+}
+
+export interface LightVisual {
+  color?: string;
+  intensity?: number;
 }
 
 /** Does one rule hold? Every condition it names must hold; a rule naming none always does. */
@@ -940,6 +961,7 @@ export function renderFurniture(
   f: Furniture,
   resolved?: ResolvedStyle,
   active = false,
+  glowIntensity?: number,
 ): SVGTemplateResult {
   const color = resolved?.color ?? f.color ?? FURNITURE_COLOR;
   // A matched rule's colour is the one thing that steps up fill-opacity — an
@@ -947,6 +969,14 @@ export function renderFurniture(
   const tinted = !!resolved?.color;
   const fillOpacity = tinted ? 0.3 : 0.12;
   const rugFillOpacity = tinted ? 0.2 : 0.08;
+  // Lights layer (off by default; see docs/superpowers/plans/2026-07-10-lights-layer.md):
+  // a lit ceilingLight/lamp's glow scales with its bulb's real brightness instead
+  // of the fixed idle/active look. Omitted (feature off, no entity, or no
+  // brightness reading) keeps glowScale at 1 and adds no style attribute at all,
+  // so the markup is byte-identical to the pre-feature output.
+  const glowScale =
+    glowIntensity === undefined ? 1 : 0.55 + 0.45 * Math.max(0, Math.min(1, glowIntensity));
+  const glowStyle = glowIntensity === undefined ? nothing : `--fp-glow-intensity:${glowScale}`;
   const w = f.w;
   const h = f.h;
   const hw = w / 2;
@@ -1327,7 +1357,8 @@ export function renderFurniture(
         <circle cx="0" cy="0" r=${m * 0.1} fill="none" stroke=${color} stroke-width="1.5" />`;
       detail = active
         ? svg`
-        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.5} fill=${color} />
+        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.5 * glowScale} fill=${color}
+                style=${glowStyle} />
         ${ring}`
         : ring;
       break;
@@ -1342,7 +1373,8 @@ export function renderFurniture(
         <circle cx="0" cy="0" r=${m * 0.14} fill="none" stroke=${color} stroke-width="1.5" />`;
       detail = active
         ? svg`
-        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.78} fill=${color} />
+        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.78 * glowScale} fill=${color}
+                style=${glowStyle} />
         ${shade}`
         : shade;
       break;
