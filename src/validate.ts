@@ -76,11 +76,20 @@ const floor = shape(
   { name: str, haFloor: str, image: str, imageOpacity: num, rotation: oneOf(0, 90, 180, 270), ...elementLists }
 );
 
+const features = shape(
+  {},
+  {
+    lightsLayer: bool, thermalLayer: bool, awarenessLayer: bool, energyLayer: bool,
+    mediaNowPlaying: bool, roomTapScenes: bool, radialControls: bool,
+    autoPopulateArea: bool, backgroundTrace: bool, dayNightTheme: bool,
+  }
+);
+
 const config = shape(
   {},
   {
     type: str, title: str, width: posNum, height: posNum, grid: num, snap: num,
-    background: str, defaultFloor: str, floors: arrayOf(floor), ...elementLists,
+    background: str, defaultFloor: str, floors: arrayOf(floor), features, ...elementLists,
   }
 );
 

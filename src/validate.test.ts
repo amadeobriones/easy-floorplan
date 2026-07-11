@@ -20,6 +20,13 @@ const valid = {
 };
 
 describe("validateConfig", () => {
+  it("accepts a features block", () => {
+    expect(validateConfig({ type: "x", width: 10, height: 10, features: { thermalLayer: true } }).ok).toBe(true);
+  });
+  it("rejects a non-boolean feature flag", () => {
+    const r = validateConfig({ type: "x", width: 10, height: 10, features: { thermalLayer: "yes" } });
+    expect(r.ok).toBe(false);
+  });
   it("accepts a valid config", () => {
     const r = validateConfig(valid);
     expect(r.ok).toBe(true);
