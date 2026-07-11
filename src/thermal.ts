@@ -1,3 +1,6 @@
+import { svg, type SVGTemplateResult } from "lit";
+import type { Room } from "./types";
+
 /** A comfort band: `min`/`max` are where the gradient saturates to pure
  * cold/hot; `mid` is the "neutral" comfort point the room reads as unstyled. */
 export interface ThermalRange {
@@ -44,4 +47,27 @@ export function tempColor(celsius: number, range: ThermalRange = DEFAULT_THERMAL
   const span = max - mid;
   const t = span === 0 ? 1 : (c - mid) / span;
   return rgbToCss(lerpRgb(NEUTRAL_RGB, HOT_RGB, t));
+}
+
+/** Overlay opacity: visible over a room's own fill/stateStyles colour without
+ * washing it out -- this is a second polygon stacked on top, not a replacement. */
+export const THERMAL_FILL_OPACITY = 0.28;
+
+/** A room's temperature tint as its own SVG polygon, stacked over the room's
+ * existing fill. Never a click target -- it is decoration over whatever the
+ * room / items beneath it already handle. */
+export function renderThermalOverlay(
+  room: Room,
+  celsius: number,
+  range?: ThermalRange,
+): SVGTemplateResult {
+  const pts = room.points.map(([x, y]) => `${x},${y}`).join(" ");
+  return svg`<polygon
+    class="fp-thermal-room"
+    points=${pts}
+    fill=${tempColor(celsius, range)}
+    fill-opacity=${THERMAL_FILL_OPACITY}
+    pointer-events="none"
+    style="transition: fill 0.6s ease;"
+  />`;
 }
