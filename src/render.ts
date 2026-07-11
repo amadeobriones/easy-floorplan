@@ -1017,6 +1017,111 @@ export function renderFurniture(f: Furniture, resolved?: ResolvedStyle): SVGTemp
         <line x1=${divX} y1=${backY} x2=${divX} y2=${hh} stroke=${color} stroke-width="2" />`;
       break;
     }
+    case "armchair":
+      detail = svg`
+        <line x1=${-hw} y1=${-hh + h * 0.26} x2=${hw} y2=${-hh + h * 0.26}
+              stroke=${color} stroke-width="2" />
+        <line x1=${-hw + w * 0.16} y1=${-hh + h * 0.26} x2=${-hw + w * 0.16} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <line x1=${hw - w * 0.16} y1=${-hh + h * 0.26} x2=${hw - w * 0.16} y2=${hh}
+              stroke=${color} stroke-width="2" />`;
+      break;
+    case "bench":
+      detail = svg`
+        <line x1=${-hw + w * 0.06} y1=${-h * 0.16} x2=${hw - w * 0.06} y2=${-h * 0.16}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <line x1=${-hw + w * 0.06} y1=${h * 0.16} x2=${hw - w * 0.06} y2=${h * 0.16}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />`;
+      break;
+    case "crib": {
+      const ticks = [];
+      for (const ty of [-h * 0.25, 0, h * 0.25]) {
+        ticks.push(svg`<line x1=${-hw} y1=${ty} x2=${-hw + w * 0.16} y2=${ty}
+                             stroke=${color} stroke-width="1.5" opacity="0.7" />`);
+        ticks.push(svg`<line x1=${hw - w * 0.16} y1=${ty} x2=${hw} y2=${ty}
+                             stroke=${color} stroke-width="1.5" opacity="0.7" />`);
+      }
+      detail = svg`
+        <rect x=${-hw + w * 0.16} y=${-hh + h * 0.12} width=${w * 0.68} height=${h * 0.76} rx="3"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        ${ticks}`;
+      break;
+    }
+    case "coffeeTable":
+      detail = svg`
+        <rect x=${-hw + w * 0.12} y=${-hh + h * 0.15} width=${w * 0.76} height=${h * 0.7} rx="3"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />`;
+      break;
+    case "nightstand":
+      detail = svg`
+        <circle cx="0" cy="0" r=${Math.min(w, h) * 0.09}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "dresser":
+      detail = svg`
+        <line x1=${-w * 0.15} y1=${-hh + h * 0.15} x2=${-w * 0.15} y2=${hh - h * 0.15}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${w * 0.15} y1=${-hh + h * 0.15} x2=${w * 0.15} y2=${hh - h * 0.15}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <circle cx=${-w * 0.3} cy="0" r=${Math.min(w, h) * 0.07}
+                fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx="0" cy="0" r=${Math.min(w, h) * 0.07}
+                fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx=${w * 0.3} cy="0" r=${Math.min(w, h) * 0.07}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "bookshelf": {
+      const spines = [];
+      for (let i = 1; i < 6; i++) {
+        const x = -hw + (w / 6) * i;
+        spines.push(svg`<line x1=${x} y1=${-hh} x2=${x} y2=${hh} stroke=${color} stroke-width="1.5" />`);
+      }
+      detail = svg`${spines}`;
+      break;
+    }
+    case "cabinet":
+      detail = svg`
+        <line x1=${-hw + w * 0.08} y1=${-hh + h * 0.08} x2=${hw - w * 0.08} y2=${hh - h * 0.08}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />`;
+      break;
+    case "microwave":
+      detail = svg`
+        <rect x=${-hw + w * 0.1} y=${-hh + h * 0.18} width=${w * 0.55} height=${h * 0.64} rx="2"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <line x1=${hw - w * 0.2} y1=${-hh + h * 0.18} x2=${hw - w * 0.2} y2=${hh - h * 0.18}
+              stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "shower": {
+      const r = Math.min(w, h) * 0.07;
+      detail = svg`
+        <circle cx="0" cy="0" r=${r}
+                fill="none" stroke=${color} stroke-width="1.5" />
+        <line x1=${-hw + w * 0.08} y1=${-hh + h * 0.08} x2=${-w * 0.1} y2=${-h * 0.1}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${hw - w * 0.08} y1=${-hh + h * 0.08} x2=${w * 0.1} y2=${-h * 0.1}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${-hw + w * 0.08} y1=${hh - h * 0.08} x2=${-w * 0.1} y2=${h * 0.1}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${hw - w * 0.08} y1=${hh - h * 0.08} x2=${w * 0.1} y2=${h * 0.1}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />`;
+      break;
+    }
+    case "bidet":
+      detail = svg`
+        <ellipse cx="0" cy=${h * 0.08} rx=${w * 0.32} ry=${h * 0.34}
+                 fill="none" stroke=${color} stroke-width="2" />
+        <circle cx="0" cy=${-hh + h * 0.16} r=${Math.min(w, h) * 0.07}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "fireplace":
+      detail = svg`
+        <line x1=${-w * 0.26} y1=${-hh} x2=${-w * 0.26} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <line x1=${w * 0.26} y1=${-hh} x2=${w * 0.26} y2=${hh}
+              stroke=${color} stroke-width="2" />
+        <path d="M ${-w * 0.14} ${h * 0.18} L ${-w * 0.05} ${-h * 0.18} L 0 ${h * 0.02} L ${w * 0.05} ${-h * 0.18} L ${w * 0.14} ${h * 0.18}"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />`;
+      break;
     case "table":
     case "roundTable":
     default:

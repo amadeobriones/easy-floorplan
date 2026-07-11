@@ -610,6 +610,8 @@ describe("every furniture type renders and has a default size", () => {
     "plant", "fridge", "stove", "sink", "toilet", "stairs", "tv",
     "washer", "dryer", "dishwasher", "waterHeater", "airHandler", "bathtub",
     "vanity", "sectional",
+    "armchair", "bench", "crib", "coffeeTable", "nightstand", "dresser",
+    "bookshelf", "cabinet", "microwave", "shower", "bidet", "fireplace",
   ];
 
   it("has a default size for each", () => {
@@ -633,6 +635,38 @@ describe("every furniture type renders and has a default size", () => {
       expect(() =>
         renderFurniture({ id: "s", type: "sectional", x: 0, y: 0, w: 230, h: 180, hand }),
       ).not.toThrow();
+    }
+  });
+});
+
+describe("the 12 Phase-2 furniture types (armchair..fireplace)", () => {
+  const newTypes: FurnitureType[] = [
+    "armchair", "bench", "crib", "coffeeTable", "nightstand", "dresser",
+    "bookshelf", "cabinet", "microwave", "shower", "bidet", "fireplace",
+  ];
+
+  interface TplLike { strings: readonly string[]; values: unknown[] }
+  const isTpl = (v: unknown): v is TplLike =>
+    !!v && typeof v === "object" && "strings" in v && "values" in v;
+  const serialize = (t: unknown): string => {
+    const tpl = t as TplLike;
+    let out = tpl.strings[0];
+    for (let i = 0; i < tpl.values.length; i++) {
+      const v = tpl.values[i];
+      out += isTpl(v) ? serialize(v) : String(v);
+      out += tpl.strings[i + 1];
+    }
+    return out;
+  };
+
+  it("renders each without throwing, and its output contains FURNITURE_COLOR", () => {
+    for (const t of newTypes) {
+      const { w, h } = FURNITURE_DEFAULT_SIZE[t];
+      let result;
+      expect(() => {
+        result = renderFurniture({ id: t, type: t, x: 0, y: 0, w, h });
+      }, t).not.toThrow();
+      expect(serialize(result), t).toContain(FURNITURE_COLOR);
     }
   });
 });

@@ -42,7 +42,7 @@ const shape =
   };
 
 const ITEM_KINDS = ["light","switch","sensor","binary_sensor","climate","cover","media_player","fan","camera","lock","humidifier","vacuum","generic"];
-const FURNITURE_TYPES = ["table","roundTable","desk","chair","sofa","bed","wardrobe","rug","plant","fridge","stove","sink","toilet","stairs","tv","washer","dryer","dishwasher","waterHeater","airHandler","bathtub","vanity","sectional"];
+const FURNITURE_TYPES = ["table","roundTable","desk","chair","sofa","bed","wardrobe","rug","plant","fridge","stove","sink","toilet","stairs","tv","washer","dryer","dishwasher","waterHeater","airHandler","bathtub","vanity","sectional","armchair","bench","crib","coffeeTable","nightstand","dresser","bookshelf","cabinet","microwave","shower","bidet","fireplace"];
 
 const wall = shape({ id: str, x1: num, y1: num, x2: num, y2: num });
 const opening = shape(

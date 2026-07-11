@@ -88,6 +88,18 @@ describe("validateConfig", () => {
       furniture: [{ id: "u1", type: "sofa", x: 1, y: 1, w: 10, h: 10 }] }] };
     expect(validateConfig(cfg).ok).toBe(true);
   });
+  it("accepts a furniture piece of each of the 12 Phase-2 types", () => {
+    const newTypes = [
+      "armchair", "bench", "crib", "coffeeTable", "nightstand", "dresser",
+      "bookshelf", "cabinet", "microwave", "shower", "bidet", "fireplace",
+    ];
+    for (const type of newTypes) {
+      const cfg = { type: "custom:floorplan-card", width: 100, height: 100, floors: [{ id: "f",
+        furniture: [{ id: "u1", type, x: 1, y: 1, w: 10, h: 10 }] }] };
+      const r = validateConfig(cfg);
+      expect(r.ok, type).toBe(true);
+    }
+  });
 });
 
 describe("parseAndValidate", () => {

@@ -271,7 +271,19 @@ export type FurnitureType =
   | "airHandler"
   | "bathtub"
   | "vanity"
-  | "sectional";
+  | "sectional"
+  | "armchair"
+  | "bench"
+  | "crib"
+  | "coffeeTable"
+  | "nightstand"
+  | "dresser"
+  | "bookshelf"
+  | "cabinet"
+  | "microwave"
+  | "shower"
+  | "bidet"
+  | "fireplace";
 
 /**
  * Which end of an L-shaped sectional the chaise sits on, facing the sofa from
@@ -415,6 +427,18 @@ export const FURNITURE_DEFAULT_SIZE: Record<FurnitureType, { w: number; h: numbe
   bathtub: { w: 150, h: 76 },
   vanity: { w: 110, h: 55 },
   sectional: { w: 230, h: 180 },
+  armchair: { w: 72, h: 72 },
+  bench: { w: 110, h: 35 },
+  crib: { w: 70, h: 130 },
+  coffeeTable: { w: 100, h: 55 },
+  nightstand: { w: 42, h: 40 },
+  dresser: { w: 110, h: 50 },
+  bookshelf: { w: 110, h: 30 },
+  cabinet: { w: 90, h: 50 },
+  microwave: { w: 50, h: 35 },
+  shower: { w: 90, h: 90 },
+  bidet: { w: 44, h: 62 },
+  fireplace: { w: 110, h: 40 },
 };
 
 /** A quarter-turn display rotation for a floor. Absent means 0. */
