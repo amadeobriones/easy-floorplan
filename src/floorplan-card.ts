@@ -31,7 +31,6 @@ import {
   collectWatchedEntities,
   entityIsActive,
   resolveItemIcon,
-  isEntityOn,
 } from "./render";
 import type { Opening } from "./types";
 import { actionForGesture, executeAction, hasAction } from "./actions";
@@ -358,7 +357,10 @@ export class FloorplanCard extends LitElement {
             )}
             ${active.furniture.map((f) => {
               const style = resolveStateStyle(f.stateStyles, this.hass, f.entity);
-              const isActive = !!f.entity && isEntityOn(this.hass?.states[f.entity]?.state);
+              // Domain-aware active state (same as items' _isOn), so a reactive
+              // glyph bound to e.g. a climate/media_player animates on its real
+              // active states, not only literal on/open/home/playing.
+              const isActive = !!f.entity && entityIsActive(f.entity, this.hass?.states[f.entity]?.state);
               const shape = renderFurniture(f, style, isActive);
               if (!f.entity) return shape;
               // Entity-bound furniture is tappable -- a transparent rect over the

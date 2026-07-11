@@ -3685,6 +3685,13 @@ export class FloorplanCardEditor extends LitElement {
     .fp-door-arc {
       transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
     }
+    .fp-slide-panel {
+      transform-box: fill-box;
+      transition: transform 0.5s ease;
+    }
+    .fp-slide-panel rect {
+      transition: fill 0.5s ease;
+    }
     /* Garage panel: retracts toward the hinge-side jamb (scaleX about the left
        jamb via fill-box left center; the group content is static so the box is
        stable) and fades as the door rolls up out of the cut plane. */

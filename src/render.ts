@@ -67,6 +67,7 @@ export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
     }
     for (const fu of f.furniture) {
       if (fu.entity) ids.add(fu.entity);
+      if (fu.secondaryEntity) ids.add(fu.secondaryEntity);
       // Same reasoning as items: a rule may watch an entity the piece itself
       // does not, and the card only re-renders for what it watches.
       for (const id of stateStyleEntities(fu.stateStyles, fu.entity)) ids.add(id);
