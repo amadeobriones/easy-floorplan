@@ -948,7 +948,9 @@ export function renderFurniture(
   const hh = h / 2;
 
   const roundBase =
-    f.type === "roundTable" || f.type === "plant" || f.type === "waterHeater";
+    f.type === "roundTable" || f.type === "plant" || f.type === "waterHeater" ||
+    f.type === "ceilingFan" || f.type === "ceilingLight" || f.type === "lamp" ||
+    f.type === "smartSpeaker";
   const base = f.type === "sectional"
     ? svg`<polygon points=${sectionalPoints(w, h, f.hand).map((p) => p.join(",")).join(" ")}
                    fill=${color} fill-opacity=${fillOpacity} stroke=${color} stroke-width="2"
@@ -1283,6 +1285,101 @@ export function renderFurniture(
         <path d="M ${-w * 0.14} ${h * 0.18} L ${-w * 0.05} ${-h * 0.18} L 0 ${h * 0.02} L ${w * 0.05} ${-h * 0.18} L ${w * 0.14} ${h * 0.18}"
               fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />`;
       break;
+    case "ceilingFan": {
+      const r = Math.min(hw, hh);
+      // One blade pointing up, trailing edge bowed left; three rotate() copies.
+      const blade = `M ${-r * 0.08} ${-r * 0.2} C ${-r * 0.2} ${-r * 0.45} ${-r * 0.24} ${-r * 0.68} ${-r * 0.14} ${-r * 0.88} Q ${-r * 0.02} ${-r * 0.98} ${r * 0.06} ${-r * 0.85} C ${r * 0.12} ${-r * 0.62} ${r * 0.1} ${-r * 0.4} ${r * 0.06} ${-r * 0.2} Z`;
+      // Trail arc at 0.88 r spanning 235..262 deg, just behind the up blade for
+      // clockwise rotation (cos/sin of 235 and 262 deg premultiplied by 0.88:
+      // -0.574/-0.819 -> -0.505/-0.721, -0.139/-0.990 -> -0.122/-0.871).
+      const trail = `M ${-r * 0.505} ${-r * 0.721} A ${r * 0.88} ${r * 0.88} 0 0 1 ${-r * 0.122} ${-r * 0.871}`;
+      const blades = svg`
+        <path d=${blade} fill="none" stroke=${color} stroke-width="2" />
+        <path d=${blade} transform="rotate(90)" fill="none" stroke=${color} stroke-width="2" />
+        <path d=${blade} transform="rotate(180)" fill="none" stroke=${color} stroke-width="2" />
+        <path d=${blade} transform="rotate(270)" fill="none" stroke=${color} stroke-width="2" />`;
+      detail = active
+        ? svg`
+        <g class="fp-furn-fan">
+          ${blades}
+          <path d=${trail} fill="none" stroke=${color} stroke-width="1.5" opacity="0.45" />
+          <path d=${trail} transform="rotate(180)" fill="none" stroke=${color} stroke-width="1.5" opacity="0.45" />
+        </g>
+        <circle cx="0" cy="0" r=${r * 0.15} fill="none" stroke=${color} stroke-width="2" />`
+        : svg`
+        ${blades}
+        <circle cx="0" cy="0" r=${r * 0.15} fill="none" stroke=${color} stroke-width="2" />`;
+      break;
+    }
+    case "ceilingLight": {
+      const m = Math.min(hw, hh);
+      const ring = svg`
+        <circle cx="0" cy="0" r=${m * 0.6} fill="none" stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <line x1="0" y1=${-m * 0.6} x2="0" y2=${-m * 0.86} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${m * 0.6} y1="0" x2=${m * 0.86} y2="0" stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1="0" y1=${m * 0.6} x2="0" y2=${m * 0.86} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${-m * 0.6} y1="0" x2=${-m * 0.86} y2="0" stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <circle cx="0" cy="0" r=${m * 0.1} fill="none" stroke=${color} stroke-width="1.5" />`;
+      detail = active
+        ? svg`
+        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.5} fill=${color} />
+        ${ring}`
+        : ring;
+      break;
+    }
+    case "lamp": {
+      const m = Math.min(hw, hh);
+      const shade = svg`
+        <line x1=${m * 0.27} y1=${m * 0.27} x2=${m * 0.57} y2=${m * 0.57} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${-m * 0.27} y1=${m * 0.27} x2=${-m * 0.57} y2=${m * 0.57} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${m * 0.27} y1=${-m * 0.27} x2=${m * 0.57} y2=${-m * 0.57} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${-m * 0.27} y1=${-m * 0.27} x2=${-m * 0.57} y2=${-m * 0.57} stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <circle cx="0" cy="0" r=${m * 0.14} fill="none" stroke=${color} stroke-width="1.5" />`;
+      detail = active
+        ? svg`
+        <circle class="fp-furn-glow" cx="0" cy="0" r=${m * 0.78} fill=${color} />
+        ${shade}`
+        : shade;
+      break;
+    }
+    case "coffeeMaker": {
+      const cr = Math.min(w, h) * 0.28;
+      detail = svg`
+        <line x1=${-hw + w * 0.08} y1=${-hh + h * 0.28} x2=${hw - w * 0.08} y2=${-hh + h * 0.28}
+              stroke=${color} stroke-width="1.5" opacity="0.7" />
+        <circle cx="0" cy=${h * 0.18} r=${cr} fill="none" stroke=${color} stroke-width="2" />
+        <line x1=${cr} y1=${h * 0.18} x2=${cr + w * 0.12} y2=${h * 0.18}
+              stroke=${color} stroke-width="1.5" />`;
+      break;
+    }
+    case "toaster":
+      detail = svg`
+        <rect x=${-hw + w * 0.08} y=${-h * 0.24} width=${w * 0.64} height=${h * 0.16} rx="2"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <rect x=${-hw + w * 0.08} y=${h * 0.08} width=${w * 0.64} height=${h * 0.16} rx="2"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <circle cx=${hw - w * 0.12} cy="0" r=${Math.min(w, h) * 0.09}
+                fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    case "rangeHood":
+      detail = svg`
+        <rect x=${-w * 0.14} y=${-hh + h * 0.1} width=${w * 0.28} height=${h * 0.34} rx="2"
+              fill="none" stroke=${color} stroke-width="1.5" opacity="0.8" />
+        <line x1=${-hw + w * 0.08} y1=${hh - h * 0.1} x2=${-w * 0.14} y2=${-hh + h * 0.44}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />
+        <line x1=${hw - w * 0.08} y1=${hh - h * 0.1} x2=${w * 0.14} y2=${-hh + h * 0.44}
+              stroke=${color} stroke-width="1.5" opacity="0.6" />`;
+      break;
+    case "smartSpeaker": {
+      const m = Math.min(hw, hh);
+      detail = svg`
+        <circle cx="0" cy="0" r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx="0" cy=${-m * 0.5} r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx=${m * 0.5} cy="0" r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx="0" cy=${m * 0.5} r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />
+        <circle cx=${-m * 0.5} cy="0" r=${m * 0.12} fill="none" stroke=${color} stroke-width="1.5" />`;
+      break;
+    }
     case "table":
     case "roundTable":
     default:

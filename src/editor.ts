@@ -3807,10 +3807,34 @@ export class FloorplanCardEditor extends LitElement {
       52%      { opacity: 1;    scale: 1.05; }
       71%      { opacity: 0.65; scale: 0.98; }
     }
+    /* Fan spin: one revolution every 1.8 s, twice the washer drum's speed, so a
+       fan and a laundry pair on one card never read as the same motion. Four
+       blades pass a fixed point every 0.45 s: clearly spinning, not strobing.
+       Reuses the drum's full-revolution keyframes at a shorter duration. */
+    .fp-furn-fan {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: fp-furn-drum-spin 1.8s linear infinite;
+    }
+    /* Light glow: a slow brightness swell on a lit disc (ceiling light, lamp).
+       The resting opacity doubles as the reduced-motion pose, so animation: none
+       leaves a steadily lit fixture. The 2.6 s period is deliberately out of
+       step with the TV screen's 3 s so co-located glyphs do not pulse in
+       lockstep. */
+    .fp-furn-glow {
+      opacity: 0.25;
+      animation: fp-furn-glow-swell 2.6s ease-in-out infinite;
+    }
+    @keyframes fp-furn-glow-swell {
+      0%, 100% { opacity: 0.12; }
+      50%      { opacity: 0.35; }
+    }
     @media (prefers-reduced-motion: reduce) {
       .fp-furn-drum,
       .fp-furn-screen,
-      .fp-furn-flame {
+      .fp-furn-flame,
+      .fp-furn-fan,
+      .fp-furn-glow {
         animation: none;
       }
     }

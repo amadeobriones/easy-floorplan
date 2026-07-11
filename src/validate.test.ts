@@ -118,6 +118,18 @@ describe("validateConfig", () => {
       expect(r.ok, type).toBe(true);
     }
   });
+  it("accepts a furniture piece of each of the 7 catalog-glyphs types", () => {
+    const newTypes = [
+      "ceilingFan", "ceilingLight", "lamp", "coffeeMaker", "toaster",
+      "rangeHood", "smartSpeaker",
+    ];
+    for (const type of newTypes) {
+      const cfg = { type: "custom:floorplan-card", width: 100, height: 100, floors: [{ id: "f",
+        furniture: [{ id: "u1", type, x: 1, y: 1, w: 10, h: 10 }] }] };
+      const r = validateConfig(cfg);
+      expect(r.ok, type).toBe(true);
+    }
+  });
 });
 
 describe("parseAndValidate", () => {

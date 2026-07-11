@@ -295,7 +295,14 @@ export type FurnitureType =
   | "microwave"
   | "shower"
   | "bidet"
-  | "fireplace";
+  | "fireplace"
+  | "ceilingFan"
+  | "ceilingLight"
+  | "lamp"
+  | "coffeeMaker"
+  | "toaster"
+  | "rangeHood"
+  | "smartSpeaker";
 
 /**
  * Which end of an L-shaped sectional the chaise sits on, facing the sofa from
@@ -451,6 +458,13 @@ export const FURNITURE_DEFAULT_SIZE: Record<FurnitureType, { w: number; h: numbe
   shower: { w: 90, h: 90 },
   bidet: { w: 44, h: 62 },
   fireplace: { w: 110, h: 40 },
+  ceilingFan: { w: 90, h: 90 },
+  ceilingLight: { w: 36, h: 36 },
+  lamp: { w: 40, h: 40 },
+  coffeeMaker: { w: 34, h: 40 },
+  toaster: { w: 34, h: 22 },
+  rangeHood: { w: 70, h: 48 },
+  smartSpeaker: { w: 28, h: 28 },
 };
 
 /** A quarter-turn display rotation for a floor. Absent means 0. */

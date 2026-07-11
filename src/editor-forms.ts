@@ -153,6 +153,13 @@ export const FURNITURE_TYPES: FurnitureType[] = [
   "shower",
   "waterHeater",
   "airHandler",
+  "ceilingFan",
+  "ceilingLight",
+  "lamp",
+  "coffeeMaker",
+  "toaster",
+  "rangeHood",
+  "smartSpeaker",
 ];
 
 /** User-facing labels for furniture types (the enum uses camelCase). */
@@ -192,6 +199,13 @@ export const FURNITURE_LABELS: Record<FurnitureType, string> = {
   shower: "shower",
   waterHeater: "water heater",
   airHandler: "air handler",
+  ceilingFan: "ceiling fan",
+  ceilingLight: "ceiling light",
+  lamp: "lamp",
+  coffeeMaker: "coffee maker",
+  toaster: "toaster",
+  rangeHood: "range hood",
+  smartSpeaker: "smart speaker",
 };
 
 /** The Add-menu grouping. Every FurnitureType appears in exactly one category. */
@@ -199,9 +213,11 @@ export const FURNITURE_CATEGORIES: { label: string; types: FurnitureType[] }[] =
   { label: "Seating & beds", types: ["chair", "armchair", "sofa", "sectional", "bench", "bed", "crib"] },
   { label: "Tables & desks", types: ["table", "roundTable", "desk", "coffeeTable", "nightstand"] },
   { label: "Storage", types: ["wardrobe", "dresser", "bookshelf", "cabinet"] },
+  { label: "Lighting & fans", types: ["ceilingFan", "ceilingLight", "lamp"] },
   {
     label: "Appliances",
-    types: ["fridge", "stove", "microwave", "dishwasher", "washer", "dryer", "waterHeater", "airHandler", "tv"],
+    types: ["fridge", "stove", "rangeHood", "microwave", "coffeeMaker", "toaster",
+            "dishwasher", "washer", "dryer", "waterHeater", "airHandler", "tv", "smartSpeaker"],
   },
   { label: "Fixtures", types: ["sink", "toilet", "bathtub", "shower", "vanity", "bidet"] },
   { label: "Decor & misc", types: ["rug", "plant", "fireplace", "stairs"] },

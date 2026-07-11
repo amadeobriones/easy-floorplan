@@ -651,6 +651,8 @@ describe("every furniture type renders and has a default size", () => {
     "vanity", "sectional",
     "armchair", "bench", "crib", "coffeeTable", "nightstand", "dresser",
     "bookshelf", "cabinet", "microwave", "shower", "bidet", "fireplace",
+    "ceilingFan", "ceilingLight", "lamp", "coffeeMaker", "toaster",
+    "rangeHood", "smartSpeaker",
   ];
 
   it("has a default size for each", () => {
@@ -706,6 +708,48 @@ describe("the 12 Phase-2 furniture types (armchair..fireplace)", () => {
         result = renderFurniture({ id: t, type: t, x: 0, y: 0, w, h });
       }, t).not.toThrow();
       expect(serialize(result), t).toContain(FURNITURE_COLOR);
+    }
+  });
+});
+
+describe("the 7 catalog-glyphs furniture types (ceilingFan..smartSpeaker)", () => {
+  const newTypes: FurnitureType[] = [
+    "ceilingFan", "ceilingLight", "lamp", "coffeeMaker", "toaster",
+    "rangeHood", "smartSpeaker",
+  ];
+
+  interface TplLike { strings: readonly string[]; values: unknown[] }
+  const isTpl = (v: unknown): v is TplLike =>
+    !!v && typeof v === "object" && "strings" in v && "values" in v;
+  const serialize = (t: unknown): string => {
+    const tpl = t as TplLike;
+    let out = tpl.strings[0];
+    for (let i = 0; i < tpl.values.length; i++) {
+      const v = tpl.values[i];
+      out += isTpl(v) ? serialize(v) : String(v);
+      out += tpl.strings[i + 1];
+    }
+    return out;
+  };
+
+  it("renders each without throwing, and its output contains FURNITURE_COLOR", () => {
+    for (const t of newTypes) {
+      const { w, h } = FURNITURE_DEFAULT_SIZE[t];
+      let result;
+      expect(() => {
+        result = renderFurniture({ id: t, type: t, x: 0, y: 0, w, h });
+      }, t).not.toThrow();
+      expect(serialize(result), t).toContain(FURNITURE_COLOR);
+    }
+  });
+
+  it("the 4 static types render identically whether active is true or false", () => {
+    for (const t of ["coffeeMaker", "toaster", "rangeHood", "smartSpeaker"] as FurnitureType[]) {
+      const { w, h } = FURNITURE_DEFAULT_SIZE[t];
+      const f = { id: t, type: t, x: 0, y: 0, w, h };
+      const idle = serialize(renderFurniture(f, undefined, false));
+      const active = serialize(renderFurniture(f, undefined, true));
+      expect(active, t).toEqual(idle);
     }
   });
 });
@@ -782,6 +826,9 @@ describe("renderFurniture reactive glyphs (active variant)", () => {
   const tv = { id: "t", type: "tv" as const, x: 0, y: 0, w: 50, h: 20 };
   const fireplace = { id: "f", type: "fireplace" as const, x: 0, y: 0, w: 60, h: 20 };
   const sofa = { id: "s", type: "sofa" as const, x: 0, y: 0, w: 180, h: 90 };
+  const ceilingFan = { id: "cf", type: "ceilingFan" as const, x: 0, y: 0, w: 90, h: 90 };
+  const ceilingLight = { id: "cl", type: "ceilingLight" as const, x: 0, y: 0, w: 36, h: 36 };
+  const lamp = { id: "lp", type: "lamp" as const, x: 0, y: 0, w: 40, h: 40 };
 
   it("washer: active omitted/false is byte-identical to the pre-Phase-3 output", () => {
     const withoutParam = serialize(renderFurniture(washer, undefined));
@@ -831,6 +878,33 @@ describe("renderFurniture reactive glyphs (active variant)", () => {
     expect(active).toEqual(idle);
   });
 
+  it("ceilingFan: active true adds fp-furn-fan; omitted/false is byte-identical", () => {
+    const withoutParam = serialize(renderFurniture(ceilingFan, undefined));
+    const explicitFalse = serialize(renderFurniture(ceilingFan, undefined, false));
+    const active = serialize(renderFurniture(ceilingFan, undefined, true));
+    expect(withoutParam).not.toContain("fp-furn-fan");
+    expect(explicitFalse).toEqual(withoutParam);
+    expect(active).toContain("fp-furn-fan");
+  });
+
+  it("ceilingLight: active true adds fp-furn-glow; omitted/false is byte-identical", () => {
+    const withoutParam = serialize(renderFurniture(ceilingLight, undefined));
+    const explicitFalse = serialize(renderFurniture(ceilingLight, undefined, false));
+    const active = serialize(renderFurniture(ceilingLight, undefined, true));
+    expect(withoutParam).not.toContain("fp-furn-glow");
+    expect(explicitFalse).toEqual(withoutParam);
+    expect(active).toContain("fp-furn-glow");
+  });
+
+  it("lamp: active true adds fp-furn-glow; omitted/false is byte-identical", () => {
+    const withoutParam = serialize(renderFurniture(lamp, undefined));
+    const explicitFalse = serialize(renderFurniture(lamp, undefined, false));
+    const active = serialize(renderFurniture(lamp, undefined, true));
+    expect(withoutParam).not.toContain("fp-furn-glow");
+    expect(explicitFalse).toEqual(withoutParam);
+    expect(active).toContain("fp-furn-glow");
+  });
+
   // Real drift protection: pin the idle markup of every reactive type so a
   // future refactor of the active/idle ternary cannot silently change what a
   // no-entity piece draws. (The washer idle is already pinned elsewhere.)
@@ -842,6 +916,15 @@ describe("renderFurniture reactive glyphs (active variant)", () => {
   });
   it("fireplace idle markup is pinned", () => {
     expect(serialize(renderFurniture(fireplace, undefined))).toMatchSnapshot();
+  });
+  it("ceilingFan idle markup is pinned", () => {
+    expect(serialize(renderFurniture(ceilingFan, undefined))).toMatchSnapshot();
+  });
+  it("ceilingLight idle markup is pinned", () => {
+    expect(serialize(renderFurniture(ceilingLight, undefined))).toMatchSnapshot();
+  });
+  it("lamp idle markup is pinned", () => {
+    expect(serialize(renderFurniture(lamp, undefined))).toMatchSnapshot();
   });
 });
 
