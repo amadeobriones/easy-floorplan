@@ -45,6 +45,10 @@ import "./lights";
 // Registers the room warm/cool thermal tint into the live-layer registry, the
 // same way "./lights" does above -- see thermal.ts's THERMAL_LAYER.
 import "./thermal";
+// Side-effect import: registers the awareness layer into the layer
+// framework's LIVE_LAYERS registry. Nothing else in this file changes --
+// the framework renders/toggles/watches it generically once registered.
+import "./awareness-layer";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
