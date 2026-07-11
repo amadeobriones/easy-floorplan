@@ -51,7 +51,10 @@ const opening = shape(
 );
 const item = shape(
   { id: str, x: num, y: num, kind: oneOf(...ITEM_KINDS) },
-  { entity: str, secondaryEntity: str, name: str, icon: str, size: num, angle: num, showState: bool, showIcon: bool }
+  {
+    entity: str, secondaryEntity: str, name: str, icon: str, size: num, angle: num,
+    showState: bool, showIcon: bool, powerEntity: str,
+  }
 );
 const text = shape({ id: str, x: num, y: num, text: str }, { size: num, color: str, angle: num });
 const furniture = shape(

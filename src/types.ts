@@ -199,6 +199,8 @@ export interface FloorItem {
    * same element. The primary `entity` drives on/off state and click actions.
    */
   secondaryEntity?: string;
+  /** A power/energy sensor (watts) whose live value colours this item in the energy layer. */
+  powerEntity?: string;
   x: number;
   y: number;
   kind: ItemKind;

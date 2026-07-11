@@ -270,6 +270,10 @@
                     "description": "Optional label override. Falls back to the entity's friendly name.",
                     "type": "string"
                 },
+                "powerEntity": {
+                    "description": "A power/energy sensor (watts) whose live value colours this item in the energy layer.",
+                    "type": "string"
+                },
                 "rippleColor": {
                     "description": "Ripple ring color (CSS/hex). Falls back to the primary color.",
                     "type": "string"

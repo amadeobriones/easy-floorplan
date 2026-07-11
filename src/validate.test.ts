@@ -206,3 +206,18 @@ it("rejects an awareness marker missing its entity", () => {
   });
   expect(r.ok).toBe(false);
 });
+
+it("accepts an item with a powerEntity", () => {
+  const r = validateConfig({
+    type: "x", width: 10, height: 10,
+    items: [{ id: "plug1", x: 1, y: 1, kind: "switch", powerEntity: "sensor.plug_power" }],
+  });
+  expect(r.ok).toBe(true);
+});
+it("rejects a non-string powerEntity", () => {
+  const r = validateConfig({
+    type: "x", width: 10, height: 10,
+    items: [{ id: "plug1", x: 1, y: 1, kind: "switch", powerEntity: 42 }],
+  });
+  expect(r.ok).toBe(false);
+});
