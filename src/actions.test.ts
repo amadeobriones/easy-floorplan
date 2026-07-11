@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   defaultItemAction,
   hasAction,
+  hasAnyAction,
   actionForGesture,
   serviceFromAction,
   executeAction,
@@ -48,6 +49,22 @@ describe("hasAction", () => {
     expect(hasAction(undefined)).toBe(false);
     expect(hasAction({ action: "none" })).toBe(false);
     expect(hasAction({ action: "toggle" })).toBe(true);
+  });
+});
+
+describe("hasAnyAction", () => {
+  it("false with no actions configured", () => {
+    expect(hasAnyAction({})).toBe(false);
+  });
+  it("false when every configured action is explicitly none", () => {
+    expect(hasAnyAction({ tap_action: { action: "none" } })).toBe(false);
+  });
+  it("true when tap_action is a real action", () => {
+    expect(hasAnyAction({ tap_action: { action: "toggle-area-lights" } })).toBe(true);
+  });
+  it("true when only hold_action or double_tap_action is set", () => {
+    expect(hasAnyAction({ hold_action: { action: "more-info" } })).toBe(true);
+    expect(hasAnyAction({ double_tap_action: { action: "navigate" } })).toBe(true);
   });
 });
 
