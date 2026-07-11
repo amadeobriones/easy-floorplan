@@ -53,6 +53,52 @@
             ],
             "type": "object"
         },
+        "FeaturesConfig": {
+            "description": "Optional feature toggles. Every flag defaults to off; enabling one turns on\na layer, interaction, or editor affordance that is otherwise inert. See\n`FEATURE_META` in `features.ts` for user-facing labels/descriptions.",
+            "properties": {
+                "autoPopulateArea": {
+                    "description": "Editor: drop an HA area's entities into a room.",
+                    "type": "boolean"
+                },
+                "awarenessLayer": {
+                    "description": "Motion pings and safety alerts.",
+                    "type": "boolean"
+                },
+                "backgroundTrace": {
+                    "description": "Editor: trace over a blueprint image.",
+                    "type": "boolean"
+                },
+                "dayNightTheme": {
+                    "description": "Dim the plan with the sun.",
+                    "type": "boolean"
+                },
+                "energyLayer": {
+                    "description": "Colour devices by live power draw.",
+                    "type": "boolean"
+                },
+                "lightsLayer": {
+                    "description": "Tint rooms/lamps to a bulb's real colour and brightness.",
+                    "type": "boolean"
+                },
+                "mediaNowPlaying": {
+                    "description": "Show a now-playing cue on TVs/speakers.",
+                    "type": "boolean"
+                },
+                "radialControls": {
+                    "description": "Inline brightness/colour/thermostat on long-press.",
+                    "type": "boolean"
+                },
+                "roomTapScenes": {
+                    "description": "Tap a room to run a scene or toggle its lights.",
+                    "type": "boolean"
+                },
+                "thermalLayer": {
+                    "description": "Shade rooms warm/cool by temperature.",
+                    "type": "boolean"
+                }
+            },
+            "type": "object"
+        },
         "Floor": {
             "description": "A single floor/level. Each floor owns its own set of elements. The canvas\nsize, grid and background are shared across floors (config-level).",
             "properties": {
@@ -735,6 +781,10 @@
         "defaultFloor": {
             "description": "Id of the floor shown first. Falls back to the first floor.",
             "type": "string"
+        },
+        "features": {
+            "$ref": "#/definitions/FeaturesConfig",
+            "description": "Optional feature toggles; every flag defaults to off. See {@link FeaturesConfig}."
         },
         "floors": {
             "description": "Multi-floor data. When present and non-empty this is the source of truth.\nWhen absent, the legacy flat arrays below describe a single implicit floor\n(kept for backward compatibility with hand-written configs).",
