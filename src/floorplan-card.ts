@@ -33,6 +33,8 @@ import {
   resolveItemIcon,
 } from "./render";
 import type { Opening } from "./types";
+import { enabledLayers, layerWatchedEntities, type LiveLayer } from "./layers";
+import type { FeatureName } from "./features";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
@@ -45,6 +47,8 @@ export class FloorplanCard extends LitElement {
   @state() private _config?: FloorplanCardConfig;
   /** View-state: which floor is shown. Never persisted to config. */
   @state() private _activeFloorId?: string;
+  /** View-state: enabled live layers the user has hidden via a toggle chip. Never persisted to config. */
+  @state() private _hiddenLayers = new Set<FeatureName>();
   private readonly _wallMaskId = `fp-wall-mask-${FloorplanCard._nextWallMaskId++}`;
   /** Entity ids this plan actually displays; used to skip irrelevant hass updates. */
   private _watchedEntities: Set<string> = new Set();
@@ -72,7 +76,14 @@ export class FloorplanCard extends LitElement {
       texts: config.texts ?? [],
       furniture: config.furniture ?? [],
     };
-    this._watchedEntities = collectWatchedEntities(this._config);
+    // Enabled live layers can watch entities the plan itself doesn't
+    // reference (e.g. a whole-home energy sensor); union them in so the card
+    // re-renders when those change too. A disabled/unregistered layer
+    // contributes nothing.
+    this._watchedEntities = new Set([
+      ...collectWatchedEntities(this._config),
+      ...layerWatchedEntities(this._config),
+    ]);
   }
 
   /**
@@ -333,6 +344,12 @@ export class FloorplanCard extends LitElement {
       floors.find((f) => f.id === c.defaultFloor) ??
       floors[0];
     const rot = normalizeRotation(active.rotation);
+    // Captured so the closure below narrows to non-undefined -- LiveLayer's
+    // ctx wants a definite RenderHass, and with no hass yet there is nothing
+    // live to draw anyway.
+    const hass = this.hass;
+    const layers = enabledLayers(c);
+    const visibleLayers = layers.filter((l) => !this._hiddenLayers.has(l.id));
     return html`
       <ha-card .header=${c.title ?? nothing}>
         <div
@@ -355,6 +372,11 @@ export class FloorplanCard extends LitElement {
             ${(active.rooms ?? []).map((r) =>
               renderRoom(r, resolveStateStyle(r.stateStyles, this.hass, undefined)),
             )}
+            ${hass && visibleLayers.length > 0
+              ? svg`<g class="fp-layers">
+                  ${visibleLayers.map((l) => l.render({ floor: active, hass, config: c }))}
+                </g>`
+              : nothing}
             ${active.furniture.map((f) => {
               const style = resolveStateStyle(f.stateStyles, this.hass, f.entity);
               // Domain-aware active state (same as items' _isOn), so a reactive
@@ -430,9 +452,36 @@ export class FloorplanCard extends LitElement {
             )}
           </div>
           </div>
+          ${layers.length > 0 ? this._renderLayerToggles(layers) : nothing}
           ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
         </div>
       </ha-card>
+    `;
+  }
+
+  private _toggleLayer(id: FeatureName): void {
+    const next = new Set(this._hiddenLayers);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this._hiddenLayers = next;
+  }
+
+  private _renderLayerToggles(layers: LiveLayer[]): TemplateResult {
+    return html`
+      <div class="layer-toggles">
+        ${layers.map(
+          (l) => html`
+            <button
+              class="layer-chip ${this._hiddenLayers.has(l.id) ? "off" : ""}"
+              title=${l.label}
+              @click=${() => this._toggleLayer(l.id)}
+            >
+              <ha-icon icon=${l.icon}></ha-icon>
+              <span>${l.label}</span>
+            </button>
+          `
+        )}
+      </div>
     `;
   }
 
@@ -498,6 +547,45 @@ export class FloorplanCard extends LitElement {
       background: var(--primary-color, #03a9f4);
       color: var(--text-primary-color, #fff);
       border-color: var(--primary-color, #03a9f4);
+    }
+    /* Live-layer toggle chips: a corner overlay, one chip per enabled layer.
+       Opposite corner from the floor switcher so the two never collide. */
+    .layer-toggles {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      pointer-events: auto;
+      z-index: 1;
+    }
+    .layer-chip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      line-height: 1;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      max-width: 160px;
+    }
+    .layer-chip ha-icon {
+      --mdc-icon-size: 16px;
+    }
+    .layer-chip span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .layer-chip.off {
+      opacity: 0.5;
+      background: var(--secondary-background-color, #eee);
     }
     svg {
       position: absolute;
