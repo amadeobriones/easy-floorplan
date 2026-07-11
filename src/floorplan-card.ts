@@ -62,6 +62,8 @@ import "./awareness-layer";
 import "./energy-layer";
 import { actionForGesture, executeAction, hasAction } from "./actions";
 import { actionHandler } from "./action-handler";
+import { radialHasHold, shouldOpenRadial } from "./radial-controls";
+import { openRadialPopover } from "./radial-popover";
 import { resolveRoomAction } from "./areas";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
 
@@ -194,6 +196,10 @@ export class FloorplanCard extends LitElement {
     item: FloorItem
   ): void {
     if (!this.hass) return;
+    if (ev.detail.action === "hold" && shouldOpenRadial(this._config, item.entity, item.hold_action)) {
+      this._openRadial(ev, item.entity!);
+      return;
+    }
     executeAction(this, this.hass, item, actionForGesture(item, ev.detail.action));
   }
 
@@ -202,7 +208,23 @@ export class FloorplanCard extends LitElement {
     f: Furniture
   ): void {
     if (!this.hass) return;
+    if (ev.detail.action === "hold" && shouldOpenRadial(this._config, f.entity, f.hold_action)) {
+      this._openRadial(ev, f.entity!);
+      return;
+    }
     executeAction(this, this.hass, f, actionForGesture(f, ev.detail.action));
+  }
+
+  /**
+   * Opens the radial popover anchored to the piece that was held. The
+   * anchor is the DOM element the gesture fired on -- `.item`/`.badge` div
+   * or the furniture's `<g class="fp-furn-tap">` -- so `getBoundingClientRect()`
+   * works the same for both the HTML overlay and the SVG tap target.
+   */
+  private _openRadial(ev: CustomEvent, entity: string): void {
+    if (!this.hass) return;
+    const anchor = (ev.currentTarget as Element).getBoundingClientRect();
+    openRadialPopover({ hass: this.hass, entity, anchor });
   }
 
   /**
@@ -314,7 +336,7 @@ export class FloorplanCard extends LitElement {
         @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
           this._handleItemAction(ev, item)}
         .actionHandler=${actionHandler({
-          hasHold: hasAction(item.hold_action),
+          hasHold: radialHasHold(this._config, item.entity, item.hold_action),
           hasDoubleClick: hasAction(item.double_tap_action),
         })}
       >
@@ -357,7 +379,7 @@ export class FloorplanCard extends LitElement {
         @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
           this._handleFurnitureAction(ev, f)}
         .actionHandler=${actionHandler({
-          hasHold: hasAction(f.hold_action),
+          hasHold: radialHasHold(this._config, f.entity, f.hold_action),
           hasDoubleClick: hasAction(f.double_tap_action),
         })}
       >
@@ -473,7 +495,7 @@ export class FloorplanCard extends LitElement {
                   @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
                     this._handleFurnitureAction(ev, f)}
                   .actionHandler=${actionHandler({
-                    hasHold: hasAction(f.hold_action),
+                    hasHold: radialHasHold(this._config, f.entity, f.hold_action),
                     hasDoubleClick: hasAction(f.double_tap_action),
                   })}>
                   ${shape}
