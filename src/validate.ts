@@ -63,6 +63,8 @@ const room = shape(
   { id: str, points: arrayOf(point) },
   { name: str, areaId: str, fill: str, fillOpacity: num, tempEntity: str },
 );
+const AWARENESS_KINDS = ["motion", "safety"];
+const awarenessMarker = shape({ id: str, x: num, y: num, entity: str, kind: oneOf(...AWARENESS_KINDS) });
 
 const elementLists = {
   walls: arrayOf(wall),
@@ -72,6 +74,7 @@ const elementLists = {
   furniture: arrayOf(furniture),
   trackers: arrayOf(tracker),
   rooms: arrayOf(room),
+  awareness: arrayOf(awarenessMarker),
 };
 
 const floor = shape(

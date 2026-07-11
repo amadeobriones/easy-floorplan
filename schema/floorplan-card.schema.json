@@ -53,6 +53,42 @@
             ],
             "type": "object"
         },
+        "AwarenessKind": {
+            "description": "What a placement marker on the awareness/security layer watches for.",
+            "enum": [
+                "motion",
+                "safety"
+            ],
+            "type": "string"
+        },
+        "AwarenessMarker": {
+            "description": "A placement point for the awareness/security layer (feature flag\n\"awarenessLayer\", see src/features.ts): a motion marker pings a ripple\nwhere its sensor fires; a safety marker (leak, smoke, door left open)\nblinks in an alert palette when its sensor trips. One entity per marker;\n`kind` selects which visual and which trip rule apply — see\nisMarkerTripped in awareness.ts.",
+            "properties": {
+                "entity": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "$ref": "#/definitions/AwarenessKind"
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "entity",
+                "id",
+                "kind",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
         "FeaturesConfig": {
             "description": "Optional feature toggles. Every flag defaults to off; enabling one turns on\na layer, interaction, or editor affordance that is otherwise inert. See\n`FEATURE_META` in `features.ts` for user-facing labels/descriptions.",
             "properties": {
@@ -102,6 +138,13 @@
         "Floor": {
             "description": "A single floor/level. Each floor owns its own set of elements. The canvas\nsize, grid and background are shared across floors (config-level).",
             "properties": {
+                "awareness": {
+                    "description": "Awareness/security markers (feature flag \"awarenessLayer\"): motion pings\nand safety alerts. Optional, like `rooms` — an older config simply has\nnone, and normalizeFloor deliberately does not backfill an empty array\nhere (see the `rooms` handling in normalizeFloor, unchanged by this).",
+                    "items": {
+                        "$ref": "#/definitions/AwarenessMarker"
+                    },
+                    "type": "array"
+                },
                 "furniture": {
                     "items": {
                         "$ref": "#/definitions/Furniture"
@@ -778,6 +821,12 @@
         }
     },
     "properties": {
+        "awareness": {
+            "items": {
+                "$ref": "#/definitions/AwarenessMarker"
+            },
+            "type": "array"
+        },
         "background": {
             "description": "Canvas background color (CSS / hex). Falls back to the card background.",
             "type": "string"
