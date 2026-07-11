@@ -1,6 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { tempColor, DEFAULT_THERMAL_RANGE, renderThermalOverlay, THERMAL_FILL_OPACITY } from "./thermal";
-import type { Room } from "./types";
+import {
+  tempColor,
+  DEFAULT_THERMAL_RANGE,
+  renderThermalOverlay,
+  THERMAL_FILL_OPACITY,
+  THERMAL_LAYER,
+} from "./thermal";
+import type { Room, Floor, RenderHass, FloorplanCardConfig } from "./types";
+
+function fakeHass(states: Record<string, { state: string }>): RenderHass {
+  return { states, formatEntityState: (s: { state: string }) => s.state } as unknown as RenderHass;
+}
+
+function fakeFloor(rooms: Room[]): Floor {
+  return { id: "f1", name: "F1", walls: [], openings: [], items: [], texts: [], furniture: [], trackers: [], rooms };
+}
 
 describe("tempColor", () => {
   it("renders the cold colour at/below the range minimum", () => {
@@ -61,5 +75,61 @@ describe("renderThermalOverlay", () => {
   it("never intercepts clicks (pointer-events: none)", () => {
     const html = (renderThermalOverlay(room, DEFAULT_THERMAL_RANGE.max).strings ?? []).join("");
     expect(html).toContain('pointer-events="none"');
+  });
+});
+
+describe("THERMAL_LAYER", () => {
+  it("has the layer-chip identity", () => {
+    expect(THERMAL_LAYER.id).toBe("thermalLayer");
+    expect(THERMAL_LAYER.icon).toBe("mdi:thermometer");
+    expect(THERMAL_LAYER.label).toBe("Climate layer");
+  });
+
+  it("render: draws an overlay for each room with a tempEntity and a numeric reading", () => {
+    const rooms: Room[] = [
+      { id: "warm", points: [[0, 0], [10, 0], [10, 10], [0, 10]], tempEntity: "sensor.warm" },
+      { id: "no-sensor", points: [[20, 20], [30, 20], [30, 30], [20, 30]] }, // no tempEntity
+    ];
+    const hass = fakeHass({ "sensor.warm": { state: "26" } });
+    const out = THERMAL_LAYER.render({ floor: fakeFloor(rooms), hass, config: {} as FloorplanCardConfig });
+    const html = JSON.stringify(out);
+    expect(html).toContain("0,0 10,0 10,10 0,10"); // the shaded room's polygon is drawn
+    expect(html).toContain("rgb("); // a colour was resolved
+    expect(html).not.toContain("20,20 30,20 30,30 20,30"); // the sensor-less room is skipped entirely
+  });
+
+  it("render: skips a room whose sensor is unavailable/unknown/non-numeric", () => {
+    const rooms: Room[] = [
+      { id: "r1", points: [[0, 0], [10, 0], [10, 10], [0, 10]], tempEntity: "sensor.dead" },
+    ];
+    const hass = fakeHass({ "sensor.dead": { state: "unavailable" } });
+    const out = THERMAL_LAYER.render({ floor: fakeFloor(rooms), hass, config: {} as FloorplanCardConfig });
+    expect(JSON.stringify(out)).not.toContain("rgb(");
+  });
+
+  it("render: skips a room with no tempEntity even with hass present", () => {
+    const rooms: Room[] = [{ id: "r1", points: [[0, 0], [10, 0], [10, 10], [0, 10]] }];
+    const out = THERMAL_LAYER.render({
+      floor: fakeFloor(rooms), hass: fakeHass({}), config: {} as FloorplanCardConfig,
+    });
+    expect(JSON.stringify(out)).not.toContain("rgb(");
+  });
+
+  it("watched: every room's tempEntity, across all floors", () => {
+    const cfg = {
+      floors: [
+        fakeFloor([
+          { id: "a", points: [], tempEntity: "sensor.a" },
+          { id: "b", points: [] }, // no tempEntity -- not watched
+        ]),
+        fakeFloor([{ id: "c", points: [], tempEntity: "sensor.c" }]),
+      ],
+    } as unknown as FloorplanCardConfig;
+    expect([...THERMAL_LAYER.watched(cfg)].sort()).toEqual(["sensor.a", "sensor.c"]);
+  });
+
+  it("watched: empty when no room has a tempEntity", () => {
+    const cfg = { floors: [fakeFloor([{ id: "a", points: [] }])] } as unknown as FloorplanCardConfig;
+    expect([...THERMAL_LAYER.watched(cfg)]).toEqual([]);
   });
 });

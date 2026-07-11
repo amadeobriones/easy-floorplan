@@ -1,5 +1,7 @@
 import { svg, type SVGTemplateResult } from "lit";
-import type { Room } from "./types";
+import type { Room, RenderHass, FloorplanCardConfig } from "./types";
+import { getFloors } from "./types";
+import type { LayerRenderCtx, LiveLayer } from "./layers";
 
 /** A comfort band: `min`/`max` are where the gradient saturates to pure
  * cold/hot; `mid` is the "neutral" comfort point the room reads as unstyled. */
@@ -71,3 +73,44 @@ export function renderThermalOverlay(
     style="transition: fill 0.6s ease;"
   />`;
 }
+
+/** A finite numeric reading, or undefined for an outage/non-numeric state --
+ * mirrors how the rest of this card fails closed on `unavailable`/`unknown`
+ * (see stateStyleMatches in src/render.ts) rather than reading an outage as 0. */
+function numericReading(hass: RenderHass | undefined, entityId: string): number | undefined {
+  const state = hass?.states[entityId]?.state;
+  if (state === undefined) return undefined;
+  const n = Number(state);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * The thermal / climate live layer (roadmap 1c): tints every room that carries
+ * a `tempEntity` on a blue (cold) -> neutral -> red (hot) gradient. Rendered and
+ * gated entirely by the layer framework (src/layers.ts) once registered --
+ * this object only needs to answer "what do you draw" and "what do you watch".
+ */
+export const THERMAL_LAYER: LiveLayer = {
+  id: "thermalLayer",
+  label: "Climate layer",
+  icon: "mdi:thermometer",
+  render(ctx: LayerRenderCtx): SVGTemplateResult {
+    const rooms = ctx.floor.rooms ?? [];
+    const overlays = rooms
+      .filter((r): r is Room & { tempEntity: string } => !!r.tempEntity)
+      .map((r) => {
+        const c = numericReading(ctx.hass, r.tempEntity);
+        return c === undefined ? svg`` : renderThermalOverlay(r, c);
+      });
+    return svg`${overlays}`;
+  },
+  watched(c: FloorplanCardConfig): string[] {
+    const ids = new Set<string>();
+    for (const f of getFloors(c)) {
+      for (const r of f.rooms ?? []) {
+        if (r.tempEntity) ids.add(r.tempEntity);
+      }
+    }
+    return [...ids];
+  },
+};
