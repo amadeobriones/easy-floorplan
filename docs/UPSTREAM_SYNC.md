@@ -81,11 +81,35 @@ Using it. Audited 2026-07-12:
   for rooms). Our own features consume it — `floorplan-card`, `areas`, `radial-controls`,
   `radial-popover`, `render`. There is no parallel implementation to collapse.
 
-### ⚠️ What the test suite does NOT prove
+### What the test suite did NOT prove (and now does)
 
-The suite runs under jsdom, where **`ha-form` is not registered** — so every test exercises
-`_renderFallbackField`, *not* the real `<ha-form>`. **A green suite says nothing about whether
-the editor works in HA.** That path is only verifiable in a live instance.
+An earlier version of this file claimed the suite ran under jsdom and exercised the *fallback*
+form path. **That was wrong, and the truth was worse:** `jsdom` was not a dependency at all.
+No test imported `editor.ts` or `floorplan-card.ts` as components. The suite was pure modules
+plus "source guard" tests that read the `.ts` file **as text** and assert on strings.
+
+So **neither branch of `_renderForm` had ever been executed by a test** — and neither had any of
+the four fixes we adopted from upstream on 2026-07-11. A green suite could not have caught a
+regression in a single one of them.
+
+`editor.dom.test.ts` closes that. It mounts the editor under jsdom with a **strict `ha-form`
+stub** that rejects any selector outside HA's vocabulary — because a selector HA does not
+implement renders as a **blank row and throws nothing**, which is the failure we can least
+afford to find in production. It covers:
+
+- the editor really renders `<ha-form>` (not the fallback) once the element is registered;
+- **every** form builder emits a valid schema — not just the selected element's, which is all a
+  mounted render ever exercises;
+- `value-changed` does not escape the editor (without `stopPropagation` it reaches HA's
+  card-config dialog, which reads it as a config edit);
+- `getGridOptions` is an instance method;
+- an empty YAML key (`trackers:`) is unset, not malformed.
+
+Each was **mutation-tested**: the fix was reverted in the source and the corresponding test was
+confirmed to fail. A test that cannot fail is not a test.
+
+**Still not covered:** whether HA's *real* `ha-form` accepts our selectors. The stub proves our
+side of the contract; only a live instance proves theirs.
 
 Verified live 2026-07-12 (HA core 2026.7.x, HACS-served `v0.7.104`, byte-checked):
 card renders; the **thermostat badge reads `Cool` and is highlighted active** (the bug upstream
