@@ -27,6 +27,55 @@ const HA_SELECTORS = new Set([
   "area",
 ]);
 
+/**
+ * Validate one field the way HA would. Exported so the all-builders test uses the
+ * *same* rules as the mounted stub — one definition of "valid", not two that drift.
+ *
+ * The stub can only ever prove *our* side of the contract. It cannot prove HA
+ * accepts these selectors, because HA does not publish its frontend components to
+ * npm (checked: `home-assistant-frontend` is unpublished; `custom-card-helpers`
+ * carries no selector types). So the vocabulary below is hand-maintained, and the
+ * live check in docs/UPSTREAM_SYNC.md is what closes the remaining gap.
+ */
+export function selectorProblem(f: {
+  name?: string;
+  label?: string;
+  selector?: Record<string, unknown>;
+}): string | null {
+  if (!f.name) return "a field with no name cannot round-trip a value";
+  if (!f.label) return `field "${f.name}": no label — computeLabel would render it blank`;
+
+  const keys = Object.keys(f.selector ?? {});
+  if (keys.length !== 1) {
+    return `field "${f.name}": a selector must have exactly one key, got [${keys}]`;
+  }
+  const kind = keys[0];
+  if (!HA_SELECTORS.has(kind)) {
+    return `field "${f.name}": HA has no "${kind}" selector — it would render as a blank row`;
+  }
+
+  // A well-named selector with a malformed body still fails, just later and quieter.
+  const body = (f.selector as Record<string, Record<string, unknown>>)[kind];
+  if (kind === "select") {
+    const options = body?.options as Array<{ value?: unknown; label?: unknown }> | undefined;
+    if (!Array.isArray(options) || options.length === 0) {
+      return `field "${f.name}": a select with no options renders an empty dropdown`;
+    }
+    for (const o of options) {
+      if (typeof o?.value !== "string" || typeof o?.label !== "string") {
+        return `field "${f.name}": select options must be {value,label} strings, got ${JSON.stringify(o)}`;
+      }
+    }
+  }
+  if (kind === "number") {
+    const { min, max } = (body ?? {}) as { min?: number; max?: number };
+    if (min !== undefined && max !== undefined && min > max) {
+      return `field "${f.name}": number selector has min ${min} > max ${max}`;
+    }
+  }
+  return null;
+}
+
 /** Fields ha-form was handed, per instance, so tests can assert on the schema. */
 class HaFormStub extends HTMLElement {
   public hass: unknown;
@@ -35,15 +84,8 @@ class HaFormStub extends HTMLElement {
 
   set schema(fields: Array<{ name: string; selector: Record<string, unknown> }>) {
     for (const f of fields) {
-      const keys = Object.keys(f.selector ?? {});
-      if (keys.length !== 1) {
-        throw new Error(`field "${f.name}": a selector must have exactly one key, got [${keys}]`);
-      }
-      if (!HA_SELECTORS.has(keys[0])) {
-        throw new Error(
-          `field "${f.name}": HA has no "${keys[0]}" selector — it would render as a blank row`
-        );
-      }
+      const problem = selectorProblem(f);
+      if (problem) throw new Error(problem);
     }
     this._schema = fields;
   }
@@ -157,11 +199,9 @@ describe("every form builder emits a schema HA can render", () => {
 
     const offenders: string[] = [];
     for (const spec of specs) {
-      for (const field of spec.fields as Array<{ name: string; selector: object }>) {
-        const keys = Object.keys(field.selector ?? {});
-        if (keys.length !== 1 || !HA_SELECTORS.has(keys[0])) {
-          offenders.push(`${field.name} -> [${keys}]`);
-        }
+      for (const field of spec.fields as Array<Parameters<typeof selectorProblem>[0]>) {
+        const problem = selectorProblem(field);
+        if (problem) offenders.push(problem);
       }
     }
     expect(offenders).toEqual([]);

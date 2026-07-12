@@ -108,8 +108,20 @@ afford to find in production. It covers:
 Each was **mutation-tested**: the fix was reverted in the source and the corresponding test was
 confirmed to fail. A test that cannot fail is not a test.
 
-**Still not covered:** whether HA's *real* `ha-form` accepts our selectors. The stub proves our
-side of the contract; only a live instance proves theirs.
+**The remaining limit, and why it cannot be closed in CI.** The stub proves *our* side of the
+contract; only a live instance proves HA's. We checked whether that could be fixed properly:
+**`home-assistant-frontend` is not published to npm**, and `custom-card-helpers` (which we
+already depend on) carries no selector types. There is no package-level source of truth for
+HA's selector vocabulary, so the list in the stub is hand-maintained by necessity — not by
+laziness. If HA renames or drops a selector, only a live check will tell us.
+
+What we *can* do is narrow it, and have: the stub now validates the selector **body**, not just
+its key. A `select` with options shaped `{value, name}` instead of `{value, label}` has a
+perfectly valid selector key and renders an **empty dropdown** in HA — correct-looking,
+completely broken, silent. That now fails the build.
+
+The live check below is the only thing that covers the last mile. Re-run it after any change to
+`editor-forms.ts`.
 
 Verified live 2026-07-12 (HA core 2026.7.x, HACS-served `v0.7.104`, byte-checked):
 card renders; the **thermostat badge reads `Cool` and is highlighted active** (the bug upstream
