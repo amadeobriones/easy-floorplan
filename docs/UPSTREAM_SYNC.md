@@ -10,6 +10,65 @@ that" turned out to be wrong once, expensively, and the reasoning is worth writi
 
 ---
 
+## Where we stand — 2026-07-12
+
+### Against `shauneccles`: fully in sync, nothing outstanding
+
+He has **no open PRs**. All six of his are merged upstream, and we hold every one of them:
+
+| His PR | What it is | In our `main` |
+|---|---|---|
+| #22 | Openings: sliding / biparting doors and windows, live cover position | yes |
+| #26 | Render entity state at HA's configured display precision | yes (`hass.formatEntityState`) |
+| #27 | CI: skip HACS validation on PRs from forks | yes |
+| #28 | Accent a cover still in transit | yes |
+| #43 | Editor: full-screen mode, input correctness, `editor-geometry` | yes |
+| #44 | Editor: `ha-form` schema-driven rows, tap/hold/double-tap actions | yes |
+
+His branches that still read "ahead" of upstream are squash artifacts or superseded
+iterations; `feat/ha-form-editor` has a **`+0/-0` content diff** against `upstream/main` —
+it *is* upstream now. There is nothing left of his to take.
+
+### Against `nicosandller`: we hold all of upstream's code
+
+`git` reports us "4 behind" `upstream/main`. That is squash noise — we applied his content
+against the true ancestor rather than merging his commits. By content we contain every line
+of upstream except the code we **deliberately replaced**, listed below.
+
+### Where we intentionally diverge from upstream
+
+These are not drift. Each is a decision, and each would be a regression to "fix" back.
+
+- **`entityIsActive` — we invert the table.** Upstream keeps an `ACTIVE_STATES` **allowlist**
+  covering only `lock`, `vacuum`, `camera`; every other domain falls back to the generic
+  on/off test. But a `climate` entity's state *is its hvac mode* (`heat`, `cool`, `fan_only`) —
+  never the string `on` — so upstream renders **a running thermostat as off, permanently**.
+  Same for `water_heater`. A *paused* `media_player` also reads off, where HA itself treats
+  paused as on. We list what counts as **inactive** per domain instead (`INACTIVE_STATES`),
+  which is correct for every domain including the ones nobody has enumerated yet.
+- **Editor key handling.** The capture handler uses our modifier-aware `isTypingTarget`, not
+  upstream's `isTypingPath`. Upstream's is modifier-blind; adopting it regresses #37, because
+  the floor switcher is a `<select>` that keeps focus and `Cmd+V` then reads as typing.
+  Upstream's `isTypingPath` still backs the bubble-phase host listener, where the key is
+  always Escape and modifiers are moot.
+
+### Upstream work in flight that will supersede ours
+
+`nicosandller` has three open PRs re-implementing features this fork already carries. When
+they merge, per `FORK_STRATEGY.md` we **drop ours whole** rather than untangle them — but note
+they are not drop-in, because the designs differ:
+
+| Upstream PR | Closes | Our equivalent | Divergence |
+|---|---|---|---|
+| #57 | #30 #34 #37 #38 #39 #50 | `editor-walls`, icon anchor, select-focus, zoom, entity-less items | Wall welding: theirs `CORNER_ATTACH_EPS = 0.75` in `editor-geometry`; ours `WELD_EPS = 1` in `editor-walls`. Two modules, one feature. Their #34 also carries the `showIcon: false` guard ours lacked. |
+| #58 | #48 | our `stateStyles` `animation` | Theirs is `iconAnimation` (`auto`/`none`/`spin`/`pulse`) with a domain map on `FloorItem`; ours is rule-driven off `stateStyles`. Overlapping, not identical. |
+| #60 | #33 | our per-floor `rotation` | Theirs is **top-level** (whole card); ours is **per `Floor`**. Ours is the superset — folding down to theirs loses per-floor rotation. |
+
+**Do not re-send** #30/#34/#37/#38/#39/#50, rotation, or icon animation as patches — upstream is
+already building them.
+
+---
+
 ## 2026-07-11 — adopt the landed editor base (upstream v0.7.3 + v0.7.4)
 
 ### What upstream shipped
