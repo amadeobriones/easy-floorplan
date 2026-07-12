@@ -67,6 +67,32 @@ they are not drop-in, because the designs differ:
 **Do not re-send** #30/#34/#37/#38/#39/#50, rotation, or icon animation as patches — upstream is
 already building them.
 
+### Are we actually *using* their code, or just carrying it?
+
+Using it. Audited 2026-07-12:
+
+- **`ha-form`.** `_renderForm` renders a real `<ha-form>` (`.hass`, `.schema=${spec.fields}`)
+  whenever HA has registered the element. All ten form-spec builders are called from
+  `editor.ts` — eight are upstream's (`openingForm`, `itemForm`, `textForm`, `furnitureForm`,
+  `trackerForm`, `wallForm`, `projectForm`, `floorImageForm`); two are ours (`roomForm`,
+  `featuresForm`), written into their module in their idiom. No hand-rolled row remains.
+- **Actions.** Upstream's `actions.ts` / `action-handler.ts` are the *only* action path. Our
+  `actions.ts` is their file plus 16 lines (entity-less items are markers; `hasAnyAction()`
+  for rooms). Our own features consume it — `floorplan-card`, `areas`, `radial-controls`,
+  `radial-popover`, `render`. There is no parallel implementation to collapse.
+
+### ⚠️ What the test suite does NOT prove
+
+The suite runs under jsdom, where **`ha-form` is not registered** — so every test exercises
+`_renderFallbackField`, *not* the real `<ha-form>`. **A green suite says nothing about whether
+the editor works in HA.** That path is only verifiable in a live instance.
+
+Verified live 2026-07-12 (HA core 2026.7.x, HACS-served `v0.7.104`, byte-checked):
+card renders; the **thermostat badge reads `Cool` and is highlighted active** (the bug upstream
+still has); the editor opens; the ELEMENT panel renders a genuine `<ha-form>` with HA selectors
+(`ha-entity-picker` with clear/dropdown, `ha-icon-picker`, textfield); and **our** "Power sensor
+(energy layer)" field renders *through* their ha-form pipeline. Expand/fullscreen present.
+
 ---
 
 ## 2026-07-11 — adopt the landed editor base (upstream v0.7.3 + v0.7.4)
