@@ -223,7 +223,8 @@ const INACTIVE_STATES: Record<string, ReadonlySet<string>> = {
   vacuum: new Set(["docked", "idle", "paused", "error"]),
   camera: new Set(["idle"]),
   // Paused is not off. Home Assistant's own UI treats a paused player as on.
-  media_player: new Set(["off", "standby"]),
+  // Idle is on but nothing playing — it must not draw the "playing" icon or glow.
+  media_player: new Set(["off", "standby", "idle"]),
 };
 
 /**

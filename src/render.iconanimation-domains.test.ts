@@ -28,6 +28,8 @@ describe("forced icon animation reaches the domains an allowlist missed", () => 
     // A forced spin must not run on something that is off/unavailable.
     expect(resolveIconAnimation(item("climate.hvac", "spin"), "off")).toBeUndefined();
     expect(resolveIconAnimation(item("media_player.tv", "spin"), "off")).toBeUndefined();
+    // Idle = on but nothing playing: no animation (and no glow / playing icon).
+    expect(resolveIconAnimation(item("media_player.tv", "spin"), "idle")).toBeUndefined();
     expect(resolveIconAnimation(item("light.k", "spin"), "unavailable")).toBeUndefined();
   });
 
