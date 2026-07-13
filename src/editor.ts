@@ -1092,11 +1092,14 @@ export class FloorplanCardEditor extends LitElement {
     // corner stretches the room (issue #30).
     if (drag.endpoint) {
       const attach = ev.altKey ? [] : (drag.attached ?? []);
-      // The moving cluster must not be a snap candidate for itself — the
-      // dragged corner would stick to its own last emitted position.
+      // What travels is Alt-gated (above); what is excluded from snapping is not.
+      // The coincident neighbour corners must never be snap candidates even when
+      // Alt detaches — otherwise the dragged endpoint sticks to the very corner it
+      // is detaching from, for the whole ENDPOINT_SNAP radius (the #30 dead zone).
+      const cluster = drag.attached ?? [];
       const moving = new Set<string>([
         `${drag.primary.id}:${drag.endpoint}`,
-        ...attach.map((a) => `${a.id}:${a.end}`),
+        ...cluster.map((a) => `${a.id}:${a.end}`),
       ]);
       const target = this._snapWallPointExcluding(p.x, p.y, moving);
       const walls = f.walls.map((w) => {
