@@ -138,6 +138,31 @@ describe("detectRooms", () => {
     expect(rooms.map(areaOf).sort()).toEqual([5000, 5000]);
   });
 
+  it("two partition walls that cross (an X-junction) split the room into four", () => {
+    // A `+` through the middle: the two partitions cross at (50,50), where neither
+    // ends. Without splitting at that interior crossing the whole square read as
+    // one room; now it is four 50x50 quarters.
+    const rooms = detectRooms([
+      ...SQUARE,
+      w("v", 50, 0, 50, 100), // vertical partition
+      w("h", 0, 50, 100, 50), // horizontal partition
+    ]);
+    expect(rooms).toHaveLength(4);
+    expect(rooms.map(areaOf).sort()).toEqual([2500, 2500, 2500, 2500]);
+  });
+
+  it("an off-centre crossing splits into four unequal rooms with the right total", () => {
+    const rooms = detectRooms([
+      ...SQUARE,
+      w("v", 30, 0, 30, 100),
+      w("h", 0, 70, 100, 70),
+    ]);
+    expect(rooms).toHaveLength(4);
+    // 30x70, 70x70, 30x30, 70x30 — total is the whole 100x100 square.
+    expect(rooms.reduce((t, p) => t + areaOf(p), 0)).toBe(10000);
+    expect(rooms.map(areaOf).sort((a, b) => a - b)).toEqual([900, 2100, 2100, 4900]);
+  });
+
   it("an L-shaped room comes back with all six corners", () => {
     const L = [
       w("a", 0, 0, 100, 0),

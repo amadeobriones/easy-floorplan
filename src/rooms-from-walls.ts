@@ -72,11 +72,41 @@ function projectOnSegment(
 }
 
 /**
- * Split every wall wherever another wall's endpoint lands in the middle of it.
+ * Where two segments cross strictly in the interior of both, or null.
  *
- * A partition wall meets the wall it divides at a T, not at a corner. Left alone,
- * the T-junction is invisible to the graph -- the crossbar is one edge, the stem
- * touches it nowhere -- and the two spaces either side of the stem read as one.
+ * "Strictly" excludes crossings at an endpoint of either segment — those are
+ * T-junctions (or shared corners), handled by the welded-corner pass, not here.
+ * Parallel and collinear pairs return null (no single crossing point).
+ */
+function interiorCrossing(
+  a: readonly [number, number],
+  b: readonly [number, number],
+  c: readonly [number, number],
+  d: readonly [number, number],
+): [number, number] | null {
+  const rx = b[0] - a[0];
+  const ry = b[1] - a[1];
+  const sx = d[0] - c[0];
+  const sy = d[1] - c[1];
+  const denom = rx * sy - ry * sx;
+  if (Math.abs(denom) < 1e-9) return null; // parallel or collinear
+  const t = ((c[0] - a[0]) * sy - (c[1] - a[1]) * sx) / denom;
+  const u = ((c[0] - a[0]) * ry - (c[1] - a[1]) * rx) / denom;
+  const E = 1e-6;
+  if (t > E && t < 1 - E && u > E && u < 1 - E) return [a[0] + t * rx, a[1] + t * ry];
+  return null;
+}
+
+/**
+ * Split every wall wherever another wall meets or crosses its interior.
+ *
+ * Two cases leave the planar graph unsplit and read two spaces as one:
+ *  - a **T-junction**: a partition wall's endpoint lands in the middle of the wall
+ *    it divides (its stem touches the crossbar nowhere the graph can see);
+ *  - an **X-junction**: two partition walls cross mid-span, neither ending at the
+ *    crossing (a `+`-divided room read as one instead of four).
+ * Both are split here — the T at the welded corner, the X at the interior crossing
+ * point, which is added to *both* walls so they meet at one shared graph vertex.
  *
  * Splitting is a view of the walls, not an edit of them: the ids gain a `#n`
  * suffix so nothing downstream mistakes a piece for the wall the user drew.
@@ -88,25 +118,36 @@ export function splitAtTJunctions(walls: readonly Wall[], eps: number = WELD_EPS
   for (const w of walls) {
     const a: [number, number] = [w.x1, w.y1];
     const b: [number, number] = [w.x2, w.y2];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const margin = len > 0 ? eps / len : 1;
     const cuts: Array<{ t: number; p: [number, number] }> = [];
+    // T-junctions: another wall's endpoint (a welded corner) on this interior.
     for (const c of corners) {
       const { dist, t } = projectOnSegment(c, a, b);
-      // On the segment, and not at either end -- an endpoint is already a corner.
-      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      const margin = len > 0 ? eps / len : 1;
       if (dist <= eps && t > margin && t < 1 - margin) cuts.push({ t, p: c });
+    }
+    // X-junctions: another wall crossing this one's interior mid-span.
+    for (const o of walls) {
+      if (o.id === w.id) continue;
+      const x = interiorCrossing(a, b, [o.x1, o.y1], [o.x2, o.y2]);
+      if (!x) continue;
+      const { t } = projectOnSegment(x, a, b);
+      if (t > margin && t < 1 - margin) cuts.push({ t, p: x });
     }
     if (!cuts.length) {
       out.push(w);
       continue;
     }
     cuts.sort((p, q) => p.t - q.t);
+    // Drop cuts that coincide (a corner and a crossing at the same spot) so the
+    // split never emits a zero-length piece.
+    const uniq = cuts.filter((cut, i) => i === 0 || cut.t - cuts[i - 1].t > margin);
     let from = a;
-    cuts.forEach((cut, i) => {
+    uniq.forEach((cut, i) => {
       out.push({ ...w, id: `${w.id}#${i}`, x1: from[0], y1: from[1], x2: cut.p[0], y2: cut.p[1] });
       from = cut.p;
     });
-    out.push({ ...w, id: `${w.id}#${cuts.length}`, x1: from[0], y1: from[1], x2: b[0], y2: b[1] });
+    out.push({ ...w, id: `${w.id}#${uniq.length}`, x1: from[0], y1: from[1], x2: b[0], y2: b[1] });
   }
   return out;
 }
