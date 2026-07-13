@@ -248,3 +248,26 @@ describe("upstream fixes we adopted on 2026-07-11 (previously untested)", () => 
     expect(() => card.setConfig(cfg)).not.toThrow();
   });
 });
+
+describe("editor icon preview matches the card (registry-icon override)", () => {
+  it("uses the entity-registry icon in the editor preview, as the card does", async () => {
+    const { FloorplanCardEditor } = await import("./editor");
+    const el = document.createElement("easy-floorplan-card-editor") as InstanceType<
+      typeof FloorplanCardEditor
+    >;
+    const priv = el as unknown as { hass: unknown; updateComplete: Promise<unknown> };
+    // A user's Settings→Entities icon override lives at hass.entities[id].icon,
+    // never in the state attributes — the editor preview ignored it before.
+    priv.hass = {
+      states: { "light.kitchen": { state: "on", attributes: {} } },
+      entities: { "light.kitchen": { icon: "mdi:registry-override" } },
+      formatEntityState: () => "on",
+    };
+    el.setConfig(structuredClone(CONFIG));
+    document.body.appendChild(el);
+    await priv.updateComplete;
+
+    const icons = [...el.shadowRoot!.querySelectorAll("ha-icon")].map((n) => n.getAttribute("icon"));
+    expect(icons).toContain("mdi:registry-override");
+  });
+});

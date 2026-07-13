@@ -111,9 +111,16 @@ export class FloorplanCard extends LitElement {
     if (raw.floors != null) {
       if (!Array.isArray(raw.floors))
         throw new Error(`Invalid configuration: "floors" must be a list`);
+      const seenIds = new Set<unknown>();
       raw.floors.forEach((floor, i) => {
         if (floor === null || typeof floor !== "object")
           throw new Error(`Invalid configuration: "floors[${i}]" must be an object`);
+        // A duplicate id makes the second floor unreachable (`floors.find(byId)`
+        // always returns the first) while the editor edits both under one id.
+        const id = (floor as Record<string, unknown>).id;
+        if (id != null && seenIds.has(id))
+          throw new Error(`Invalid configuration: duplicate floor id "${String(id)}"`);
+        seenIds.add(id);
         checkLists(floor as Record<string, unknown>, `floors[${i}].`);
       });
     }

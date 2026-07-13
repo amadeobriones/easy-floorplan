@@ -2862,7 +2862,9 @@ export class FloorplanCardEditor extends LitElement {
   private _renderItemOverlay(it: FloorItem, c: FloorplanCardConfig): TemplateResult {
     const selected = this._isSel("item", it.id);
     const st = it.entity ? this.hass?.states[it.entity] : undefined;
-    const icon = resolveItemIcon(it, st);
+    // Pass the registry-icon override too, so the editor preview shows the same
+    // icon the card will (a Settings→Entities icon otherwise appeared only live).
+    const icon = resolveItemIcon(it, st, it.entity ? this.hass?.entities?.[it.entity]?.icon : undefined);
     const label = it.name || it.entity || it.kind;
     const size = it.size ?? DEFAULT_ITEM_SIZE;
     const showIcon = it.showIcon ?? true;
