@@ -1,4 +1,4 @@
-import { LitElement, html, css, svg, nothing, type TemplateResult } from "lit";
+import { LitElement, html, css, svg, nothing, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type {
   HomeAssistant,
@@ -12,20 +12,18 @@ import type {
   Furniture,
   FurnitureType,
   ItemKind,
-  ItemDisplay,
   Tracker,
   TrackerSensor,
 } from "./types";
 import {
   DEFAULT_CUSTOM_PERCENT,
   DEFAULT_GRID,
-  DEFAULT_HEIGHT,
-  DEFAULT_WIDTH,
   DEFAULT_ITEM_SIZE,
   DEFAULT_TEXT_SIZE,
   DEFAULT_RIPPLE_SIZE,
   DEFAULT_TRACKER_DOT_SIZE,
   FURNITURE_DEFAULT_SIZE,
+  configsEqual,
   emptyConfig,
   getFloors,
   gridPercentToSnap,
@@ -42,58 +40,50 @@ import {
   renderWallMask,
   openingDefaultOpen,
   openingMotion,
-  sliderStyleOf,
   openingFromDeviceClass,
   renderRipple,
   renderFurniture,
   renderTracker,
   trackerSensorReading,
-  defaultIcon,
-  entityDefaultIcon,
   kindFromEntity,
+  resolveItemIcon,
   snapToWall,
+  collectWatchedEntities,
+  hassRenderInputsChanged,
 } from "./render";
+import {
+  ENDPOINT_SNAP,
+  applyDelta,
+  elementsInRect,
+  nearestCorner,
+  snapWallEnd,
+  type OrigPos,
+  type Rect,
+  type Sel,
+  type SelKind,
+} from "./editor-geometry";
+import {
+  FURNITURE_LABELS,
+  FURNITURE_TYPES,
+  diffFormValue,
+  floorImageForm,
+  furnitureForm,
+  isLiveField,
+  itemForm,
+  normalizeFormPatch,
+  openingForm,
+  projectForm,
+  textForm,
+  trackerForm,
+  wallForm,
+  type FormField,
+  type FormSpec,
+} from "./editor-forms";
 
-const FURNITURE_TYPES: FurnitureType[] = [
-  "table",
-  "roundTable",
-  "desk",
-  "chair",
-  "sofa",
-  "bed",
-  "wardrobe",
-  "rug",
-  "plant",
-  "fridge",
-  "stove",
-  "sink",
-  "toilet",
-  "stairs",
-  "tv",
-];
-
-/** User-facing labels for furniture types (the enum uses camelCase). */
-const FURNITURE_LABELS: Record<FurnitureType, string> = {
-  table: "table",
-  roundTable: "round table",
-  desk: "desk",
-  chair: "chair",
-  sofa: "sofa",
-  bed: "bed",
-  wardrobe: "wardrobe",
-  rug: "rug",
-  plant: "plant",
-  fridge: "fridge",
-  stove: "stove",
-  sink: "sink",
-  toilet: "toilet",
-  stairs: "stairs",
-  tv: "tv",
-};
+const formLabel = (s: FormField): string => s.label;
+const formHelper = (s: FormField): string | undefined => s.helper;
 
 type Tool = "select" | "wall" | "door" | "window" | "tracker";
-type SelKind = "wall" | "opening" | "item" | "text" | "furniture" | "tracker";
-type Sel = { kind: SelKind; id: string };
 type OverlaySel = { kind: "item" | "text"; id: string };
 
 /** Toolbar metadata per tool: mdi icon + label (icons make the modes scannable). */
@@ -115,11 +105,6 @@ const SEL_KIND_ICON: Record<SelKind, string> = {
   tracker: "mdi:crosshairs-gps",
 };
 
-/** Snapshot of an element's position at drag start, for group translation. */
-type OrigPos =
-  | { kind: "wall"; x1: number; y1: number; x2: number; y2: number }
-  | { kind: "pt"; x: number; y: number };
-
 interface Drag {
   /** The element under the pointer (drives snapping); the whole selection moves with it. */
   primary: Sel;
@@ -129,14 +114,15 @@ interface Drag {
   orig: Map<string, OrigPos>;
   /** Set when dragging a single wall endpoint handle. */
   endpoint?: 1 | 2;
+  /** Set once the drag actually moved something (history snapshots lazily). */
+  moved?: boolean;
+  /** The exact history entry this drag pushed, so cancel can remove it by identity. */
+  snapshot?: FloorplanCardConfig;
+  /** The redo stack as it stood before the drag's history push cleared it. */
+  priorFuture?: FloorplanCardConfig[];
 }
 
-interface Marquee {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-}
+type Marquee = Rect;
 
 /** Elements copied to the in-memory clipboard (not part of the config). */
 interface Clipboard {
@@ -148,12 +134,33 @@ interface Clipboard {
   trackers: Tracker[];
 }
 
-/** Snap distance (virtual units) for openings onto walls / wall endpoints onto each other. */
+/** Snap distance (virtual units) for openings onto walls. */
 const WALL_SNAP = 35;
-const ENDPOINT_SNAP = 26;
 const HISTORY_MAX = 60;
 /** Angle (degrees) within which a drawn wall is snapped flat to horizontal/vertical. */
 const WALL_AXIS_SNAP_DEG = 10;
+
+/**
+ * True when the event's composed path sits in a form field / picker — keys
+ * typed there belong to the field, not the canvas. ha-form covers all its
+ * inner controls — ha-select dropdowns have no native input in the event
+ * path, so arrows/Escape/Delete would otherwise reach the canvas.
+ */
+function isTypingPath(path: EventTarget[]): boolean {
+  return path.some((el) => {
+    const node = el as HTMLElement;
+    const tag = node.tagName?.toLowerCase();
+    return (
+      tag === "input" ||
+      tag === "textarea" ||
+      tag === "select" ||
+      tag === "ha-form" ||
+      tag === "ha-entity-picker" ||
+      tag === "ha-icon-picker" ||
+      node.isContentEditable === true
+    );
+  });
+}
 
 @customElement("easy-floorplan-card-editor")
 export class FloorplanCardEditor extends LitElement {
@@ -162,6 +169,8 @@ export class FloorplanCardEditor extends LitElement {
   private readonly _wallMaskId = `fp-edit-wall-mask-${FloorplanCardEditor._nextWallMaskId++}`;
 
   @property({ attribute: false }) public hass?: HomeAssistant;
+  /** Entity ids this plan displays; used to skip irrelevant hass updates. */
+  private _watchedEntities: Set<string> = new Set();
   @state() private _config!: FloorplanCardConfig;
   @state() private _tool: Tool = "select";
   @state() private _selection: Sel[] = [];
@@ -183,24 +192,61 @@ export class FloorplanCardEditor extends LitElement {
   @state() private _addMenuOpen = false;
   /** Project section expanded? Collapsed by default — page settings are touched rarely. */
   @state() private _projectOpen = false;
+  /**
+   * Expanded (fullscreen) editing. HA renders the card config editor in a
+   * narrow dialog (~480–560px), which is cramped for a visual canvas editor.
+   * When true the `.editor` root is promoted to the top layer so the canvas
+   * gets real room and the element/project sections dock beside it.
+   */
+  @state() private _fullscreen = false;
 
+  @query(".editor") private _editorEl?: HTMLElement;
   @query("svg") private _svg?: SVGSVGElement;
   @query(".canvas-wrap") private _canvasWrap?: HTMLElement;
 
   private _drag: Drag | null = null;
+  /** Pointer driving the current gesture; others are ignored while it's active. */
+  private _gesturePointer: number | null = null;
   /** True when the active marquee should add to (rather than replace) the selection. */
   private _marqueeAdd = false;
   private _clipboard: Clipboard | null = null;
   private _onKeyDown = (ev: KeyboardEvent) => this._handleKeyDown(ev);
+  private _onHostKeyDown = (ev: KeyboardEvent) => {
+    // Bubble-phase backstop for Escape typed in a form field while fullscreen.
+    // The capture listener above lets those through so an open picker/select
+    // overlay can close itself and absorb the key; one that bubbles this far
+    // was declined by every overlay, and the host sits below HA's dialog in
+    // the bubble path — contain it here or the dialog closes underneath the
+    // top-layer workspace (and a dirty config pops an invisible confirm
+    // behind it). Park focus on the canvas (not a bare blur, which would
+    // strand focus on `body`) so the next Escape runs the normal cascade.
+    if (ev.key !== "Escape" || !this._fullscreen) return;
+    if (!isTypingPath(ev.composedPath())) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    this._canvasWrap?.focus();
+  };
+  private _onFocusIn = (ev: FocusEvent) => {
+    // While the fullscreen popover is up, anything that pulls focus outside the
+    // editor (Tab past the last control, a dialog opening above) lands on UI
+    // hidden behind the top layer. Collapse instead of leaving the user blind.
+    if (this._fullscreen && !ev.composedPath().includes(this)) this._fullscreen = false;
+  };
 
   public connectedCallback(): void {
     super.connectedCallback();
     // Capture phase so HA's dialog can't swallow the arrow keys before we see them.
     window.addEventListener("keydown", this._onKeyDown, true);
+    // Bubble phase on the host: fires only after the editor's own form
+    // overlays had their chance to absorb the key (see _onHostKeyDown).
+    this.addEventListener("keydown", this._onHostKeyDown);
+    window.addEventListener("focusin", this._onFocusIn);
   }
 
   public disconnectedCallback(): void {
     window.removeEventListener("keydown", this._onKeyDown, true);
+    this.removeEventListener("keydown", this._onHostKeyDown);
+    window.removeEventListener("focusin", this._onFocusIn);
     super.disconnectedCallback();
   }
 
@@ -225,6 +271,31 @@ export class FloorplanCardEditor extends LitElement {
           ? base.defaultFloor
           : floors[0].id;
     }
+    // A setConfig that isn't the echo of our own emission is an external change
+    // (YAML-tab edit, a different card loaded into the dialog): stale undo/redo
+    // snapshots would silently revert it, so drop them.
+    if (this._lastEmitted && config !== this._lastEmitted && !configsEqual(config, this._lastEmitted)) {
+      this._history = [];
+      this._future = [];
+      this._liveEditKey = null;
+    }
+    this._watchedEntities = collectWatchedEntities(this._config);
+  }
+
+  /**
+   * HA replaces `hass` on every state change in the instance; the editor's
+   * render is expensive (full SVG + panels). Skip ticks that can't change
+   * anything we draw. Entity pickers keep the `hass` they last rendered with —
+   * acceptable, the registry data they browse changes rarely.
+   */
+  protected shouldUpdate(changed: PropertyValues): boolean {
+    if (!(changed.size === 1 && changed.has("hass"))) return true;
+    const prev = changed.get("hass") as HomeAssistant | undefined;
+    if (!prev || !this.hass) return true;
+    // The HA-floor link select reads the floor registry.
+    const floorsOf = (h: HomeAssistant) => (h as { floors?: unknown }).floors;
+    if (floorsOf(prev) !== floorsOf(this.hass)) return true;
+    return hassRenderInputsChanged(prev, this.hass, this._watchedEntities);
   }
 
   // ---- active floor access -----------------------------------------------
@@ -254,20 +325,61 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   protected firstUpdated(): void {
-    void this._ensurePickers();
+    void this._ensureHaComponents();
+    // Upgrade the plain-input fallbacks in place whenever a component gets
+    // defined later (by us or by another editor the user opened).
+    for (const tag of ["ha-form", "ha-entity-picker", "ha-icon-picker"]) {
+      if (!customElements.get(tag)) {
+        void customElements.whenDefined(tag).then(() => this.requestUpdate());
+      }
+    }
   }
 
   /**
-   * `ha-entity-picker` / `ha-icon-picker` are only defined after HA loads an
-   * entities-card editor. Force that load so both pickers work inside our editor.
+   * Promote the expanded editor into the top layer. `position: fixed` alone is
+   * not enough: HA's edit dialog puts a `transform` on its surface to offset
+   * the safe areas, and any transform makes that surface the containing block
+   * for fixed descendants — so a "full-viewport" overlay would fill the narrow
+   * dialog instead. A popover escapes it. Collapsing drops the attribute, which
+   * hides the popover on its own. Browsers without the API keep the fixed
+   * fallback, which is already correct on the mobile dialog (transform: none).
    */
-  private async _ensurePickers(): Promise<void> {
-    if (customElements.get("ha-entity-picker") && customElements.get("ha-icon-picker")) return;
+  protected updated(): void {
+    // Re-asserted on every render while fullscreen (not just the transition):
+    // idempotent via :popover-open, and it self-heals if the browser
+    // force-hid the popover, e.g. across a disconnect/reconnect.
+    if (!this._fullscreen) return;
+    const el = this._editorEl;
+    if (!el?.isConnected || typeof el.showPopover !== "function") return;
+    if (!el.matches(":popover-open")) {
+      try {
+        el.showPopover();
+      } catch {
+        // Top layer unavailable — the fixed-position styles still apply.
+      }
+    }
+  }
+
+  /**
+   * `ha-form` and the pickers are only defined once HA loads an editor that
+   * imports them. The button-card editor statically imports ha-form (and the
+   * ui_action selector chain); the entities editor defines ha-entity-picker
+   * for the custom tracker rows. Every selector rendered by ha-form
+   * lazy-loads its own picker after that.
+   */
+  private async _ensureHaComponents(): Promise<void> {
+    if (customElements.get("ha-form") && customElements.get("ha-entity-picker")) return;
     const helpers = await (window as unknown as { loadCardHelpers?: () => Promise<any> })
       .loadCardHelpers?.();
     if (!helpers) return;
-    const card = await helpers.createCardElement({ type: "entities", entities: [] });
-    await card.constructor?.getConfigElement?.();
+    for (const config of [{ type: "button" }, { type: "entities", entities: [] }]) {
+      try {
+        const card = await helpers.createCardElement(config);
+        await card?.constructor?.getConfigElement?.();
+      } catch {
+        // Fall back to plain inputs; the whenDefined hooks upgrade late arrivals.
+      }
+    }
     this.requestUpdate();
   }
 
@@ -307,14 +419,14 @@ export class FloorplanCardEditor extends LitElement {
     }
   }
 
-  /** Update the grid; rescale a custom snap so its percentage of the grid is preserved. */
-  private _setGrid(newGrid: number): void {
+  /** Grid update plus a custom-snap rescale so its percentage of the grid is preserved. */
+  private _gridPatch(newGrid: number): Partial<FloorplanCardConfig> {
     const patch: Partial<FloorplanCardConfig> = { grid: newGrid };
     if (this._snapMode === "custom") {
       const pct = snapToGridPercent(this._config.snap as number, this.grid);
       patch.snap = gridPercentToSnap(pct, newGrid);
     }
-    this._patchConfig(patch);
+    return patch;
   }
 
   private _snap(v: number): number {
@@ -332,21 +444,7 @@ export class FloorplanCardEditor extends LitElement {
 
   /** Nearest existing wall endpoint within ENDPOINT_SNAP, or null. */
   private _nearestCorner(rawX: number, rawY: number): { x: number; y: number } | null {
-    let best: { x: number; y: number } | null = null;
-    let bestDist = ENDPOINT_SNAP;
-    for (const w of this._floor().walls) {
-      for (const e of [
-        { x: w.x1, y: w.y1 },
-        { x: w.x2, y: w.y2 },
-      ]) {
-        const d = Math.hypot(rawX - e.x, rawY - e.y);
-        if (d < bestDist) {
-          bestDist = d;
-          best = { x: e.x, y: e.y };
-        }
-      }
-    }
-    return best;
+    return nearestCorner(this._floor().walls, rawX, rawY, ENDPOINT_SNAP);
   }
 
   /** Snap a raw point to a nearby existing wall endpoint, else to the snap step. */
@@ -354,43 +452,56 @@ export class FloorplanCardEditor extends LitElement {
     return this._nearestCorner(rawX, rawY) ?? { x: this._snap(rawX), y: this._snap(rawY) };
   }
 
-  /**
-   * Snap a wall's moving endpoint while drawing. Existing corners win (so rooms
-   * close/continue); otherwise, unless free-draw is on, apply "gravity" toward
-   * horizontal/vertical relative to the start point. The position itself snaps
-   * to the configured snap step (which is the grid by default, or nothing when
-   * Snap is Off) — "straighten" only governs the H/V alignment, not snapping.
-   */
+  /** See {@link snapWallEnd}: corners win, then axis gravity, then the snap step. */
   private _snapWallEnd(
     x1: number,
     y1: number,
     rawX: number,
     rawY: number
   ): { x: number; y: number } {
-    if (this._freeWalls) return { x: this._snap(rawX), y: this._snap(rawY) };
-    const corner = this._nearestCorner(rawX, rawY);
-    if (corner) return corner;
-    const dx = rawX - x1;
-    const dy = rawY - y1;
-    const t = Math.tan((WALL_AXIS_SNAP_DEG * Math.PI) / 180);
-    // Sticky: align flat to an axis when close; the free coordinate snaps to step.
-    if (Math.abs(dy) <= Math.abs(dx) * t) return { x: this._snap(rawX), y: y1 }; // horizontal
-    if (Math.abs(dx) <= Math.abs(dy) * t) return { x: x1, y: this._snap(rawY) }; // vertical
-    return { x: this._snap(rawX), y: this._snap(rawY) };
+    return snapWallEnd(
+      this._floor().walls,
+      x1,
+      y1,
+      rawX,
+      rawY,
+      (v) => this._snap(v),
+      this._freeWalls,
+      WALL_AXIS_SNAP_DEG,
+      ENDPOINT_SNAP
+    );
   }
 
   // ---- config mutation + history ----------------------------------------
 
+  /** The config most recently dispatched, to recognize HA's setConfig echo. */
+  private _lastEmitted?: FloorplanCardConfig;
+
   private _emit(config: FloorplanCardConfig): void {
     this._config = config;
+    // Recompute here, not just in setConfig: real HA deep-equal-skips the
+    // setConfig echo of our own emission, so entities bound during the
+    // session would otherwise never enter the watched set.
+    this._watchedEntities = collectWatchedEntities(config);
+    // Emit without the legacy flat arrays: `floors` is the source of truth,
+    // and empty stubs would otherwise be persisted into the user's YAML.
+    const out = { ...config };
+    for (const key of ["walls", "openings", "items", "texts", "furniture", "trackers"] as const) {
+      if (!out[key]?.length) delete out[key];
+    }
+    this._lastEmitted = out;
     this.dispatchEvent(
-      new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true })
+      new CustomEvent("config-changed", { detail: { config: out }, bubbles: true, composed: true })
     );
   }
 
-  private _pushHistory(): void {
+  /** Key of the in-progress live-edit burst (one history snapshot per burst). */
+  private _liveEditKey: string | null = null;
+
+  private _pushHistory(burstKey: string | null = null): void {
     this._history = [...this._history, structuredClone(this._config)].slice(-HISTORY_MAX);
     this._future = [];
+    this._liveEditKey = burstKey;
   }
 
   /** Discrete change: snapshot for undo, then emit. */
@@ -400,6 +511,7 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   private _undo(): void {
+    this._liveEditKey = null;
     if (!this._history.length) return;
     this._future = [structuredClone(this._config), ...this._future];
     const prev = this._history[this._history.length - 1];
@@ -409,6 +521,7 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   private _redo(): void {
+    this._liveEditKey = null;
     if (!this._future.length) return;
     this._history = [...this._history, structuredClone(this._config)];
     const next = this._future[0];
@@ -426,16 +539,21 @@ export class FloorplanCardEditor extends LitElement {
 
   private _selectOne(sel: Sel): void {
     this._selection = [sel];
+    // Selection changes end any live-edit burst: re-selecting the same
+    // element later must start a new undo step, not extend the old one.
+    this._liveEditKey = null;
   }
 
   private _toggleSel(sel: Sel): void {
     this._selection = this._isSel(sel.kind, sel.id)
       ? this._selection.filter((s) => !(s.kind === sel.kind && s.id === sel.id))
       : [...this._selection, sel];
+    this._liveEditKey = null;
   }
 
   private _clearSel(): void {
     this._selection = [];
+    this._liveEditKey = null;
   }
 
   /** Pointer-driven selection: modifier toggles; plain click selects unless already in the set. */
@@ -466,24 +584,42 @@ export class FloorplanCardEditor extends LitElement {
     // so ignore the event unless this editor is actually visible.
     const checkVisibility = (this as { checkVisibility?: () => boolean }).checkVisibility;
     if (checkVisibility && !checkVisibility.call(this)) return;
-    // Don't hijack keys while typing in a field / picker.
     const path = ev.composedPath();
-    if (
-      path.some((el) => {
-        const tag = (el as HTMLElement).tagName?.toLowerCase();
-        return (
-          tag === "input" ||
-          tag === "textarea" ||
-          tag === "select" ||
-          tag === "ha-entity-picker" ||
-          tag === "ha-icon-picker"
-        );
-      })
-    )
+    // Only react while the user is actually working in the editor — the event
+    // must originate inside it (the canvas is focusable, so canvas work counts).
+    // A window-level listener sees every key on the page; without this, keys
+    // leak in from HA UI stacked above (more-info dialog, quick-bar). The
+    // deliberate cost: shortcuts are dead until the first click inside the
+    // editor after the dialog opens.
+    if (!path.includes(this)) {
+      // While fullscreen the workspace owns the screen: an Escape that fires
+      // from `body` (focus dropped after a blur or a dead-space click) must
+      // collapse it rather than reach — and close — HA's dialog hidden
+      // underneath. A dialog stacked above us is unaffected: it takes focus,
+      // and the focusin guard has already collapsed fullscreen by then.
+      if (this._fullscreen && ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this._fullscreen = false;
+      }
       return;
+    }
+    // Don't hijack keys while typing in a field / picker. Escape is not
+    // swallowed here even in fullscreen: HA's pickers hold focus while their
+    // dropdown is open and close it on their own Escape (absorbing the
+    // event), so a capture-phase swallow starves them and leaves an orphaned
+    // dropdown that focus can't escape. Escapes no overlay absorbs are
+    // contained by the bubble-phase host listener (_onHostKeyDown) before
+    // they can reach — and close — HA's dialog.
+    if (isTypingPath(path)) return;
 
     const mod = ev.ctrlKey || ev.metaKey;
     const key = ev.key.toLowerCase();
+    // While a gesture is live, any keyboard mutation (paste, delete, nudge,
+    // undo…) would interleave with the drag's emits and history snapshot —
+    // ignore them all; Escape below still cancels the gesture itself.
+    const gestureActive = !!(this._drag || this._draft || this._draftTracker || this._marquee);
+    if (gestureActive && ev.key !== "Escape" && !(mod && key === "c")) return;
     if (mod && key === "c") {
       if (this._selection.length) {
         ev.preventDefault();
@@ -530,16 +666,20 @@ export class FloorplanCardEditor extends LitElement {
         this._addMenuOpen = false;
         return;
       }
-      if (this._draft || this._draftTracker || this._marquee) {
+      if (this._draft || this._draftTracker || this._marquee || this._drag) {
         ev.preventDefault();
         ev.stopPropagation();
-        this._draft = null;
-        this._draftTracker = null;
-        this._marquee = null;
+        this._cancelGesture();
       } else if (this._selection.length) {
         ev.preventDefault();
         ev.stopPropagation();
         this._clearSel();
+      } else if (this._fullscreen) {
+        // Nothing left to cancel — collapse the full-screen workspace before
+        // letting a further Escape reach (and close) HA's edit dialog.
+        ev.preventDefault();
+        ev.stopPropagation();
+        this._fullscreen = false;
       }
       return;
     }
@@ -620,6 +760,9 @@ export class FloorplanCardEditor extends LitElement {
 
   private _onCanvasDown(ev: PointerEvent): void {
     if (ev.button !== 0) return;
+    // One gesture at a time: a second touch must not hijack the state machine.
+    if (this._gesturePointer !== null) return;
+    this._canvasWrap?.focus();
     const raw = this._toVirtual(ev, false);
 
     if (this._tool === "wall") {
@@ -627,6 +770,7 @@ export class FloorplanCardEditor extends LitElement {
         ? { x: this._snap(raw.x), y: this._snap(raw.y) }
         : this._snapWallPoint(raw.x, raw.y);
       this._draft = { x1: s.x, y1: s.y, x2: s.x, y2: s.y };
+      this._gesturePointer = ev.pointerId;
       this._capturePointer(ev);
       return;
     }
@@ -638,16 +782,58 @@ export class FloorplanCardEditor extends LitElement {
       const x = this._snap(raw.x);
       const y = this._snap(raw.y);
       this._draftTracker = { x0: x, y0: y, x1: x, y1: y };
+      this._gesturePointer = ev.pointerId;
       this._capturePointer(ev);
       return;
     }
     // Select tool, empty canvas: start a marquee (rubber-band) selection.
     this._marqueeAdd = ev.shiftKey || ev.ctrlKey || ev.metaKey;
     this._marquee = { x0: raw.x, y0: raw.y, x1: raw.x, y1: raw.y };
+    this._gesturePointer = ev.pointerId;
     this._capturePointer(ev);
   }
 
+  /**
+   * Abort any in-progress gesture. A moved drag is rolled back to the exact
+   * pre-drag config (restoring wall-snap angle changes too) and its own
+   * history snapshot — matched by identity, in case something else pushed in
+   * between — is dropped, so a canceled drag leaves no trace in undo.
+   */
+  private _cancelGesture(): void {
+    this._gesturePointer = null;
+    this._draft = null;
+    this._draftTracker = null;
+    this._marquee = null;
+    const drag = this._drag;
+    this._drag = null;
+    if (drag?.moved && drag.snapshot) {
+      this._history = this._history.filter((c) => c !== drag.snapshot);
+      this._emit(drag.snapshot);
+      // The push at first movement cleared the redo stack; a canceled drag
+      // must be a complete no-op, so put it back.
+      this._future = drag.priorFuture ?? [];
+    }
+  }
+
+  private _onPointerCancel(ev: PointerEvent): void {
+    if (this._gesturePointer !== null && ev.pointerId !== this._gesturePointer) return;
+    this._cancelGesture();
+  }
+
+  /** True when this event belongs to a pointer other than the gesture's. */
+  private _foreignPointer(ev: PointerEvent): boolean {
+    return this._gesturePointer !== null && ev.pointerId !== this._gesturePointer;
+  }
+
   private _onCanvasMove(ev: PointerEvent): void {
+    if (this._foreignPointer(ev)) return;
+    // A gesture with no buttons held means pointerup never reached us
+    // (alt-tab, dialog retarget) — treat it as canceled instead of letting
+    // the element chase the hovering mouse.
+    if (ev.buttons === 0 && (this._drag || this._draft || this._draftTracker || this._marquee)) {
+      this._cancelGesture();
+      return;
+    }
     if (this._tool === "wall" && this._draft) {
       const raw = this._toVirtual(ev, false);
       const s = this._snapWallEnd(this._draft.x1, this._draft.y1, raw.x, raw.y);
@@ -672,6 +858,8 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   private _onCanvasUp(ev: PointerEvent): void {
+    if (this._foreignPointer(ev)) return;
+    this._gesturePointer = null;
     if (this._tool === "wall" && this._draft) {
       const d = this._draft;
       this._draft = null;
@@ -709,6 +897,7 @@ export class FloorplanCardEditor extends LitElement {
       }
       const hits = this._elementsInRect(m);
       this._selection = this._marqueeAdd ? this._mergeSel(this._selection, hits) : hits;
+      this._liveEditKey = null;
       return;
     }
     if (this._drag) {
@@ -719,22 +908,7 @@ export class FloorplanCardEditor extends LitElement {
 
   /** All active-floor elements whose center lies inside the marquee rect. */
   private _elementsInRect(m: Marquee): Sel[] {
-    const minX = Math.min(m.x0, m.x1);
-    const maxX = Math.max(m.x0, m.x1);
-    const minY = Math.min(m.y0, m.y1);
-    const maxY = Math.max(m.y0, m.y1);
-    const inside = (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY;
-    const f = this._floor();
-    const out: Sel[] = [];
-    for (const w of f.walls)
-      if (inside((w.x1 + w.x2) / 2, (w.y1 + w.y2) / 2)) out.push({ kind: "wall", id: w.id });
-    for (const o of f.openings) if (inside(o.x, o.y)) out.push({ kind: "opening", id: o.id });
-    for (const it of f.items) if (inside(it.x, it.y)) out.push({ kind: "item", id: it.id });
-    for (const t of f.texts) if (inside(t.x, t.y)) out.push({ kind: "text", id: t.id });
-    for (const fu of f.furniture) if (inside(fu.x, fu.y)) out.push({ kind: "furniture", id: fu.id });
-    for (const tr of f.trackers ?? [])
-      if (inside(tr.x + tr.w / 2, tr.y + tr.h / 2)) out.push({ kind: "tracker", id: tr.id });
-    return out;
+    return elementsInRect(this._floor(), m);
   }
 
   // ---- dragging existing elements ----------------------------------------
@@ -742,6 +916,8 @@ export class FloorplanCardEditor extends LitElement {
   private _startDrag(ev: PointerEvent, sel: Sel, endpoint?: 1 | 2): void {
     if (this._tool !== "select") return;
     ev.stopPropagation();
+    if (this._gesturePointer !== null) return;
+    this._canvasWrap?.focus();
     // Endpoint handles always operate on that single wall.
     if (endpoint) this._selectOne(sel);
     else this._selectForPointer(ev, sel);
@@ -751,7 +927,7 @@ export class FloorplanCardEditor extends LitElement {
       orig: this._snapshotSelection(),
       endpoint,
     };
-    this._pushHistory();
+    this._gesturePointer = ev.pointerId;
     this._capturePointer(ev);
   }
 
@@ -787,6 +963,17 @@ export class FloorplanCardEditor extends LitElement {
   private _applyDrag(ev: PointerEvent): void {
     const drag = this._drag!;
     const p = this._toVirtual(ev, false);
+    // First *effective* movement: snapshot for undo now, not at pointerdown,
+    // so a plain selection click — including the ~1px jitter real clicks and
+    // taps produce — doesn't spam history or wipe the redo stack. Threshold
+    // matches the marquee's click-vs-drag test.
+    if (!drag.moved) {
+      if (Math.hypot(p.x - drag.start.x, p.y - drag.start.y) <= 4) return;
+      drag.moved = true;
+      drag.priorFuture = this._future;
+      this._pushHistory();
+      drag.snapshot = this._history[this._history.length - 1];
+    }
     const f = this._floor();
 
     // Single wall endpoint handle: snaps to nearby wall corners.
@@ -834,35 +1021,7 @@ export class FloorplanCardEditor extends LitElement {
 
   /** Translate every snapshotted element by (dx, dy). */
   private _applyDelta(dx: number, dy: number, orig: Map<string, OrigPos>): Partial<Floor> {
-    const f = this._floor();
-    return {
-      walls: f.walls.map((w) => {
-        const o = orig.get(`wall:${w.id}`);
-        return o && o.kind === "wall"
-          ? { ...w, x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy }
-          : w;
-      }),
-      openings: f.openings.map((el) => {
-        const o = orig.get(`opening:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-      items: f.items.map((el) => {
-        const o = orig.get(`item:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-      texts: f.texts.map((el) => {
-        const o = orig.get(`text:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-      furniture: f.furniture.map((el) => {
-        const o = orig.get(`furniture:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-      trackers: (f.trackers ?? []).map((el) => {
-        const o = orig.get(`tracker:${el.id}`);
-        return o && o.kind === "pt" ? { ...el, x: o.x + dx, y: o.y + dy } : el;
-      }),
-    };
+    return applyDelta(this._floor(), dx, dy, orig);
   }
 
   // ---- overlay drag for items & texts (HTML, not SVG) --------------------
@@ -870,22 +1029,33 @@ export class FloorplanCardEditor extends LitElement {
   private _onOverlayDown(ev: PointerEvent, sel: OverlaySel): void {
     if (this._tool !== "select") return;
     ev.stopPropagation();
+    // preventDefault suppresses native mousedown focusing, so focus explicitly.
     ev.preventDefault();
+    if (this._gesturePointer !== null) return;
+    this._canvasWrap?.focus();
     this._selectForPointer(ev, sel);
     this._drag = {
       primary: sel,
       start: this._toVirtual(ev, false),
       orig: this._snapshotSelection(),
     };
-    this._pushHistory();
+    this._gesturePointer = ev.pointerId;
     this._capturePointer(ev, ev.currentTarget as Element);
   }
 
   private _onOverlayMove(ev: PointerEvent): void {
+    if (this._foreignPointer(ev)) return;
+    if (ev.buttons === 0 && this._drag) {
+      // Missed pointerup (see _onCanvasMove) — cancel rather than chase.
+      this._cancelGesture();
+      return;
+    }
     if (this._drag) this._applyDrag(ev);
   }
 
   private _onOverlayUp(ev: PointerEvent): void {
+    if (this._foreignPointer(ev)) return;
+    this._gesturePointer = null;
     if (this._drag) {
       this._drag = null;
       this._releasePointer(ev, ev.currentTarget as Element);
@@ -1226,6 +1396,114 @@ export class FloorplanCardEditor extends LitElement {
     this._commit({ ...this._config, ...partial });
   }
 
+  /**
+   * Every new pointer interaction ends the current live-edit burst, so two
+   * separate drags of the same slider (or two picker sessions on the same
+   * color field) become two undo steps instead of silently merging into one.
+   * Canvas gestures stop propagation before reaching this, but they snapshot
+   * history themselves. `_liveEditKey` is non-reactive — no render triggered.
+   */
+  private _onEditorPointerDown = (): void => {
+    this._liveEditKey = null;
+  };
+
+  /**
+   * Live variants for continuous controls (sliders, color pickers, typing):
+   * one undo snapshot per edit burst — keyed by element and fields — then
+   * plain emits, instead of a full-config clone per input event.
+   */
+  private _beginLive(kind: string, id: string, partial: object): void {
+    const key = `${kind}:${id}:${Object.keys(partial).sort().join(",")}`;
+    if (this._liveEditKey !== key) this._pushHistory(key);
+  }
+
+  private _updateOpeningLive(id: string, partial: Partial<Opening>): void {
+    this._beginLive("opening", id, partial);
+    this._emitFloor({
+      openings: this._floor().openings.map((o) => (o.id === id ? { ...o, ...partial } : o)),
+    });
+  }
+
+  private _updateItemLive(id: string, partial: Partial<FloorItem>): void {
+    this._beginLive("item", id, partial);
+    this._emitFloor({
+      items: this._floor().items.map((it) => (it.id === id ? { ...it, ...partial } : it)),
+    });
+  }
+
+  private _updateTextLive(id: string, partial: Partial<FloorText>): void {
+    this._beginLive("text", id, partial);
+    this._emitFloor({
+      texts: this._floor().texts.map((t) => (t.id === id ? { ...t, ...partial } : t)),
+    });
+  }
+
+  private _updateFurnitureLive(id: string, partial: Partial<Furniture>): void {
+    this._beginLive("furniture", id, partial);
+    this._emitFloor({
+      furniture: this._floor().furniture.map((f) => (f.id === id ? { ...f, ...partial } : f)),
+    });
+  }
+
+  private _updateTrackerLive(id: string, partial: Partial<Tracker>): void {
+    this._beginLive("tracker", id, partial);
+    this._emitFloor({
+      trackers: (this._floor().trackers ?? []).map((t) => (t.id === id ? { ...t, ...partial } : t)),
+    });
+  }
+
+  private _patchConfigLive(partial: Partial<FloorplanCardConfig>): void {
+    this._beginLive("config", "", partial);
+    this._emit({ ...this._config, ...partial });
+  }
+
+  private _updateWallLive(id: string, partial: Partial<Wall>): void {
+    this._beginLive("wall", id, partial);
+    this._emitFloor({
+      walls: this._floor().walls.map((w) => (w.id === id ? { ...w, ...partial } : w)),
+    });
+  }
+
+  private _patchFloorLive(partial: Partial<Floor>): void {
+    this._beginLive("floor", this._activeFloorId, partial);
+    this._emitFloor(partial);
+  }
+
+  /** Route a form patch to the right per-kind update helper (commit or burst). */
+  private _applyElementPatch(
+    kind: "opening" | "item" | "text" | "furniture" | "tracker" | "wall",
+    id: string,
+    patch: Record<string, unknown>,
+    live: boolean
+  ): void {
+    switch (kind) {
+      case "opening":
+        if (live) this._updateOpeningLive(id, patch);
+        else this._updateOpening(id, patch);
+        break;
+      case "item":
+        if (live) this._updateItemLive(id, patch);
+        else this._updateItem(id, patch);
+        break;
+      case "text":
+        if (live) this._updateTextLive(id, patch);
+        else this._updateText(id, patch);
+        break;
+      case "furniture":
+        if (live) this._updateFurnitureLive(id, patch);
+        else this._updateFurniture(id, patch);
+        break;
+      case "tracker":
+        if (live) this._updateTrackerLive(id, patch);
+        else this._updateTracker(id, patch);
+        break;
+      case "wall":
+        if (live) this._updateWallLive(id, patch);
+        else this._updateWall(id, patch);
+        break;
+    }
+  }
+
   // ---- rendering ----------------------------------------------------------
 
   // ---- zoom ----------------------------------------------------------------
@@ -1465,7 +1743,11 @@ export class FloorplanCardEditor extends LitElement {
       !floor.furniture.length &&
       !(floor.trackers ?? []).length;
     return html`
-      <div class="editor">
+      <div
+        class="editor ${this._fullscreen ? "fullscreen" : ""}"
+        popover=${this._fullscreen ? "manual" : nothing}
+        @pointerdown=${this._onEditorPointerDown}
+      >
         ${this._floorMenuOpen || this._addMenuOpen
           ? html`<div
               class="pop-backdrop"
@@ -1494,6 +1776,21 @@ export class FloorplanCardEditor extends LitElement {
                 </button>`
             )}
           </div>
+
+          <span class="divider"></span>
+
+          <!-- Expand: break out of HA's narrow config dialog into a full-screen
+               workspace. Kept next to the tools so it's reachable even when the
+               toolbar wraps at dialog width. -->
+          <button
+            class=${this._fullscreen ? "active expand-toggle" : "expand-toggle"}
+            aria-pressed=${this._fullscreen}
+            title=${this._fullscreen ? "Exit full screen (Esc)" : "Edit full screen — more room for the canvas"}
+            @click=${() => this._toggleFullscreen()}
+          >
+            <ha-icon icon=${this._fullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}></ha-icon>
+            ${this._fullscreen ? "Exit" : "Expand"}
+          </button>
 
           <span class="divider"></span>
 
@@ -1535,7 +1832,13 @@ export class FloorplanCardEditor extends LitElement {
                   html`<option value=${f.id} ?selected=${f.id === this._activeFloorId}>${f.name}</option>`
               )}
             </select>
-            <button title="Add a floor (copies the current walls)" @click=${this._addFloor}>+</button>
+            <button
+              aria-label="Add floor"
+              title="Add a floor (copies the current walls)"
+              @click=${this._addFloor}
+            >
+              +
+            </button>
             <button
               aria-label="Floor settings"
               title="Rename or delete this floor"
@@ -1578,8 +1881,9 @@ export class FloorplanCardEditor extends LitElement {
 
         ${this._renderContextBar()}
 
+        <div class="workspace">
         <div class="canvas-outer">
-        <div class="canvas-wrap" @wheel=${this._onCanvasWheel}>
+        <div class="canvas-wrap" tabindex="0" @wheel=${this._onCanvasWheel}>
           <div class="stage" style="aspect-ratio: ${c.width} / ${c.height}; width:${this._zoom * 100}%;">
             <svg
               viewBox="0 0 ${c.width} ${c.height}"
@@ -1588,6 +1892,7 @@ export class FloorplanCardEditor extends LitElement {
               @pointerdown=${this._onCanvasDown}
               @pointermove=${this._onCanvasMove}
               @pointerup=${this._onCanvasUp}
+              @pointercancel=${this._onPointerCancel}
             >
               <rect
                 x="0"
@@ -1664,10 +1969,208 @@ export class FloorplanCardEditor extends LitElement {
         </div>
         </div>
 
-        ${this._renderElementEdit()}
-        ${this._renderPanel()}
+        <div class="side">
+          ${this._renderElementEdit()}
+          ${this._renderPanel()}
+        </div>
+        </div>
       </div>
     `;
+  }
+
+  /**
+   * `ha-entity-picker` when defined, else a plain entity-id input — mirrors
+   * the icon-picker fallback so entity binding never silently dead-ends when
+   * the helper load fails or the editor runs outside HA.
+   */
+  /**
+   * Render a FormSpec: real `<ha-form>` (native HA selectors) when the
+   * element is defined, otherwise the same schema through plain inputs.
+   * Patches route through `apply(patch, live)` — `live` marks continuous
+   * fields (typing, sliders) for the burst-history path.
+   */
+  private _renderForm(
+    spec: FormSpec,
+    apply: (patch: Record<string, unknown>, live: boolean) => void
+  ): TemplateResult {
+    if (customElements.get("ha-form")) {
+      return html`<ha-form
+        .hass=${this.hass}
+        .data=${spec.data}
+        .schema=${spec.fields}
+        .computeLabel=${formLabel}
+        .computeHelper=${formHelper}
+        @value-changed=${(ev: CustomEvent) => {
+          // ha-form re-fires a consolidated event (detail.value = full data
+          // object); keep it from bubbling out into HA's dialog.
+          ev.stopPropagation();
+          const raw = diffFormValue(spec.data, ev.detail.value as Record<string, unknown>, spec.fields);
+          const patch = normalizeFormPatch(raw, spec.fields);
+          const names = Object.keys(patch);
+          if (!names.length) return;
+          const live =
+            names.length === 1 && isLiveField(spec.fields.find((f) => f.name === names[0])!);
+          apply(spec.toPatch(patch), live);
+        }}
+      ></ha-form>`;
+    }
+    return html`${spec.fields.map((f) => this._renderFallbackField(spec, f, apply))}`;
+  }
+
+  private _applyFallback(
+    spec: FormSpec,
+    field: FormField,
+    value: unknown,
+    live: boolean,
+    apply: (patch: Record<string, unknown>, live: boolean) => void
+  ): void {
+    const patch = normalizeFormPatch({ [field.name]: value }, spec.fields);
+    if (field.name in patch) apply(spec.toPatch(patch), live && isLiveField(field));
+  }
+
+  /** One plain-input row per schema field — the outside-HA / load-failure path. */
+  private _renderFallbackField(
+    spec: FormSpec,
+    f: FormField,
+    apply: (patch: Record<string, unknown>, live: boolean) => void
+  ): TemplateResult {
+    const value = spec.data[f.name];
+    const sel = f.selector;
+    if ("select" in sel) {
+      const options = (sel.select as { options: { value: string; label: string }[] }).options;
+      return html`<div class="row">
+        <label>${f.label}</label>
+        <select
+          .value=${String(value ?? "")}
+          @change=${(e: Event) =>
+            this._applyFallback(spec, f, (e.target as HTMLSelectElement).value, false, apply)}
+        >
+          ${options.map(
+            (o) => html`<option value=${o.value} ?selected=${o.value === value}>${o.label}</option>`
+          )}
+        </select>
+      </div>`;
+    }
+    if ("boolean" in sel) {
+      return html`<div class="row">
+        <label>${f.label}</label>
+        <input
+          type="checkbox"
+          .checked=${!!value}
+          @change=${(e: Event) =>
+            this._applyFallback(spec, f, (e.target as HTMLInputElement).checked, false, apply)}
+        />
+      </div>`;
+    }
+    if ("number" in sel) {
+      const n = sel.number as { min?: number; max?: number; step?: number; mode?: string };
+      const slider = n.mode === "slider";
+      return html`<div class="row">
+        <label>${f.label}</label>
+        ${slider
+          ? html`<input
+              type="range"
+              min=${n.min ?? 0}
+              max=${n.max ?? 100}
+              step=${n.step ?? 1}
+              .value=${String(value ?? n.min ?? 0)}
+              @input=${(e: Event) =>
+                this._applyFallback(spec, f, Number((e.target as HTMLInputElement).value), true, apply)}
+            />`
+          : nothing}
+        <input
+          class="num"
+          type="number"
+          min=${n.min ?? nothing}
+          max=${n.max ?? nothing}
+          step=${n.step ?? nothing}
+          .value=${String(value ?? "")}
+          @change=${(e: Event) => {
+            const input = e.target as HTMLInputElement;
+            this._applyFallback(
+              spec,
+              f,
+              input.value === "" ? undefined : Number(input.value),
+              false,
+              apply
+            );
+            // An invalid required value is dropped by normalizeFormPatch —
+            // re-sync the box so it never shows a value that wasn't stored.
+            input.value = String(spec.data[f.name] ?? "");
+          }}
+        />
+      </div>`;
+    }
+    if ("entity" in sel) {
+      const filter = (sel.entity as { filter?: { domain?: string[] }[] }).filter;
+      return html`<div class="row wide">
+        <label>${f.label}</label>
+        ${this._renderEntityPicker(
+          String(value ?? ""),
+          (v) => this._applyFallback(spec, f, v, false, apply),
+          filter?.[0]?.domain
+        )}
+      </div>`;
+    }
+    if ("icon" in sel) {
+      return html`<div class="row wide">
+        <label>${f.label}</label>
+        <input
+          type="text"
+          placeholder=${(sel.icon as { placeholder?: string }).placeholder ?? "mdi:…"}
+          .value=${String(value ?? "")}
+          @change=${(e: Event) =>
+            this._applyFallback(spec, f, (e.target as HTMLInputElement).value, false, apply)}
+        />
+      </div>`;
+    }
+    // Actions need HA's action editor — configurable via YAML outside HA.
+    if ("ui_action" in sel) return html`${nothing}`;
+    return html`<div class="row">
+      <label>${f.label}</label>
+      <input
+        type="text"
+        .value=${String(value ?? "")}
+        @input=${(e: Event) =>
+          this._applyFallback(spec, f, (e.target as HTMLInputElement).value, true, apply)}
+      />
+    </div>`;
+  }
+
+  private _renderEntityPicker(
+    value: string,
+    onChange: (entity: string) => void,
+    includeDomains?: string[]
+  ): TemplateResult {
+    if (customElements.get("ha-entity-picker")) {
+      return html`<ha-entity-picker
+        .hass=${this.hass}
+        .value=${value}
+        .includeDomains=${includeDomains}
+        allow-custom-entity
+        @value-changed=${(e: CustomEvent) => onChange((e.detail.value as string) ?? "")}
+      ></ha-entity-picker>`;
+    }
+    return html`<input
+      type="text"
+      placeholder="sensor.example"
+      .value=${value}
+      @change=${(e: Event) => onChange((e.target as HTMLInputElement).value)}
+    />`;
+  }
+
+  /** Toggle the full-screen workspace. */
+  private _toggleFullscreen(): void {
+    this._fullscreen = !this._fullscreen;
+    if (this._fullscreen && this._canvasWrap) {
+      // A drag-resized canvas carries inline width/height that would defeat
+      // the fullscreen flex fill.
+      this._canvasWrap.style.width = "";
+      this._canvasWrap.style.height = "";
+    }
+    // Any open toolbar popover would be orphaned by the layout change.
+    this._floorMenuOpen = false;
+    this._addMenuOpen = false;
   }
 
   /** The "+ Add" popover: device, text, then every furniture type as its real glyph. */
@@ -1861,16 +2364,9 @@ export class FloorplanCardEditor extends LitElement {
 
   private _renderItemOverlay(it: FloorItem, c: FloorplanCardConfig): TemplateResult {
     const selected = this._isSel("item", it.id);
-    // Same icon precedence as the live card: config override → entity's
-    // explicit icon → device_class-implied icon ("show as") → kind default.
     const st = it.entity ? this.hass?.states[it.entity] : undefined;
-    const stateOn =
-      st?.state === "on" || st?.state === "open" || st?.state === "home" || st?.state === "playing";
-    const icon =
-      it.icon ??
-      (st?.attributes?.icon as string | undefined) ??
-      entityDefaultIcon(it.entity, st?.attributes?.device_class as string | undefined, stateOn) ??
-      defaultIcon(it.kind);
+    // Pass the registry icon here too, so the editor preview matches the card.
+    const icon = resolveItemIcon(it, st, it.entity ? this.hass?.entities?.[it.entity]?.icon : undefined);
     const label = it.name || it.entity || it.kind;
     const size = it.size ?? DEFAULT_ITEM_SIZE;
     const showIcon = it.showIcon ?? true;
@@ -1905,6 +2401,7 @@ export class FloorplanCardEditor extends LitElement {
         @pointerdown=${(e: PointerEvent) => this._onOverlayDown(e, { kind: "item", id: it.id })}
         @pointermove=${this._onOverlayMove}
         @pointerup=${this._onOverlayUp}
+        @pointercancel=${this._onPointerCancel}
       >
         ${visual}
         <span class="ilabel">${label}</span>
@@ -1924,6 +2421,7 @@ export class FloorplanCardEditor extends LitElement {
         @pointerdown=${(e: PointerEvent) => this._onOverlayDown(e, { kind: "text", id: t.id })}
         @pointermove=${this._onOverlayMove}
         @pointerup=${this._onOverlayUp}
+        @pointercancel=${this._onPointerCancel}
       >
         ${t.text || "…"}
       </div>
@@ -1958,56 +2456,23 @@ export class FloorplanCardEditor extends LitElement {
   private _renderPanelBody(): TemplateResult {
     return html`
       <div class="rows panel-body">
-        <div class="row">
-          <label>Title</label>
-          <input
-            type="text"
-            .value=${this._config.title ?? ""}
-            @change=${(e: Event) =>
-              this._patchConfig({ title: (e.target as HTMLInputElement).value || undefined })}
-          />
-        </div>
-        <div class="row">
-          <label>Canvas W / H</label>
-          <input
-            type="number"
-            min="1"
-            .value=${String(this._config.width)}
-            @change=${(e: Event) =>
-              this._patchConfig({
-                width: Math.max(1, Number((e.target as HTMLInputElement).value) || DEFAULT_WIDTH),
-              })}
-          />
-          <input
-            type="number"
-            min="1"
-            .value=${String(this._config.height)}
-            @change=${(e: Event) =>
-              this._patchConfig({
-                height: Math.max(1, Number((e.target as HTMLInputElement).value) || DEFAULT_HEIGHT),
-              })}
-          />
-        </div>
-        <div class="row wide">
-          <label>Grid size</label>
-          <input
-            type="number"
-            min="1"
-            .value=${String(this.grid)}
-            @change=${(e: Event) =>
-              this._setGrid(Math.max(1, Number((e.target as HTMLInputElement).value) || DEFAULT_GRID))}
-          />
-          <span class="hint">
-            Gap between grid lines, in canvas units (canvas is ${this._config.width}×${this._config
-              .height}). Smaller = finer grid, more lines.
-          </span>
-        </div>
+        ${this._renderForm(projectForm(this._config), (patch, live) => {
+          if ("grid" in patch && typeof patch.grid === "number") {
+            // The grid change rescales a custom snap step. ha-form's number
+            // box fires per keystroke — respect the burst path so typing
+            // "24" isn't two history commits (grid=2, then grid=24).
+            patch = { ...patch, ...this._gridPatch(patch.grid) };
+          }
+          if (live) this._patchConfigLive(patch as Partial<FloorplanCardConfig>);
+          else this._patchConfig(patch as Partial<FloorplanCardConfig>);
+        })}
         <div class="row">
           <label>Background</label>
           <input
             type="color"
             .value=${this._config.background ?? "#ffffff"}
-            @input=${(e: Event) => this._patchConfig({ background: (e.target as HTMLInputElement).value })}
+            @input=${(e: Event) =>
+              this._patchConfigLive({ background: (e.target as HTMLInputElement).value })}
           />
           <input
             type="text"
@@ -2017,77 +2482,19 @@ export class FloorplanCardEditor extends LitElement {
               this._patchConfig({ background: (e.target as HTMLInputElement).value || undefined })}
           />
         </div>
-        <div class="row wide">
-          <label>Bg image</label>
-          <input
-            type="text"
-            placeholder="/local/floorplan.png or URL"
-            .value=${this._floor()?.image ?? ""}
-            @change=${(e: Event) =>
-              this._commitFloor({ image: (e.target as HTMLInputElement).value || undefined })}
-          />
-        </div>
-        ${this._floor()?.image
-          ? html`<div class="row">
-              <label>Image opacity</label>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                .value=${String(this._floor()?.imageOpacity ?? 1)}
-                @input=${(e: Event) =>
-                  this._commitFloor({
-                    imageOpacity: Number((e.target as HTMLInputElement).value),
-                  })}
-              />
-            </div>`
-          : nothing}
+        ${this._renderForm(floorImageForm(this._floor()), (patch, live) => {
+          if (live) this._patchFloorLive(patch as Partial<Floor>);
+          else this._commitFloor(patch as Partial<Floor>);
+        })}
       </div>
     `;
   }
 
   /**
-   * Shared "Angle" row (slider + number box) used by every rotatable element.
-   * Centralizes the wrap-to-0..360 math and guards the number box against a
-   * cleared field — `Number("")` is 0 but `Number("abc")`/partial input is
-   * NaN, which previously got stored and broke the element's transform.
-   */
-  private _renderAngleRow(value: number, apply: (angle: number) => void): TemplateResult {
-    const current = Math.round(value);
-    return html`
-      <div class="row">
-        <label>Angle</label>
-        <input
-          type="range"
-          min="0"
-          max="360"
-          .value=${String(value)}
-          @input=${(e: Event) => apply(Number((e.target as HTMLInputElement).value))}
-        />
-        <input
-          class="num"
-          type="number"
-          min="0"
-          max="360"
-          .value=${String(current)}
-          @change=${(e: Event) => {
-            const input = e.target as HTMLInputElement;
-            const n = Number(input.value);
-            if (input.value !== "" && Number.isFinite(n)) apply(((n % 360) + 360) % 360);
-            else input.value = String(current);
-          }}
-        />
-      </div>
-    `;
-  }
-
-  /**
-   * Editor fields for the currently-selected element, rendered inline inside the
-   * context bar so the user can configure the selection without scrolling away
-   * from the canvas. Returns nothing when the selection isn't exactly one
-   * element — multi-select and empty-select states are handled by the context
-   * bar itself.
+   * Editor fields for the currently-selected element, rendered in the Element
+   * section below the canvas (docked beside it in fullscreen). Returns nothing
+   * when the selection isn't exactly one element — multi-select and
+   * empty-select states are handled by the Element header itself.
    */
   private _renderSelectionEditor(): TemplateResult {
     const sel = this._primary();
@@ -2097,172 +2504,42 @@ export class FloorplanCardEditor extends LitElement {
       const o = this._floor().openings.find((x) => x.id === sel.id);
       if (!o) return html`${nothing}`;
       return html`
-        <div class="row">
-          <label>Type</label>
-          <select
-            .value=${o.type}
-            @change=${(e: Event) =>
-              this._updateOpening(o.id, {
-                type: (e.target as HTMLSelectElement).value as OpeningType,
-              })}
-          >
-            <option value="door">door</option>
-            <option value="window">window</option>
-          </select>
-        </div>
-        <div class="row">
-          <label>Motion</label>
-          <select
-            .value=${openingMotion(o)}
-            @change=${(e: Event) => {
-              const motion = (e.target as HTMLSelectElement).value as "swing" | "slide";
-              // sliderStyle only applies while sliding — drop it when switching
-              // back to swing so the config stays clean.
-              this._updateOpening(o.id, {
-                motion: motion === "slide" ? "slide" : undefined,
-                ...(motion === "swing" ? { sliderStyle: undefined } : {}),
-              });
-            }}
-          >
-            <option value="swing">swing</option>
-            <option value="slide">slide</option>
-          </select>
-        </div>
-        <div class="row">
-          <label>Length</label>
-          <input
-            type="number"
-            min="1"
-            .value=${String(o.length)}
-            @change=${(e: Event) => {
-              const input = e.target as HTMLInputElement;
-              const n = Number(input.value);
-              // A cleared / invalid field would store 0 or NaN — an invisible
-              // opening that's impossible to click again. Keep the old length.
-              if (input.value !== "" && n >= 1) this._updateOpening(o.id, { length: n });
-              else input.value = String(o.length);
-            }}
-          />
-        </div>
-        ${o.type === "door" && openingMotion(o) === "swing"
-          ? html`
-              <div class="row">
-                <label>Hinge</label>
-                <select
-                  .value=${o.flipH ? "right" : "left"}
-                  @change=${(e: Event) =>
-                    this._updateOpening(o.id, {
-                      flipH: (e.target as HTMLSelectElement).value === "right" || undefined,
-                    })}
-                >
-                  <option value="left">left</option>
-                  <option value="right">right</option>
-                </select>
-              </div>`
-          : nothing}
-        ${openingMotion(o) === "swing"
-          ? html`
-              <div class="row">
-                <label>Opens</label>
-                <select
-                  .value=${o.flipV ? "other" : "this"}
-                  @change=${(e: Event) =>
-                    this._updateOpening(o.id, {
-                      flipV: (e.target as HTMLSelectElement).value === "other" || undefined,
-                    })}
-                >
-                  <option value="this">this side</option>
-                  <option value="other">other side</option>
-                </select>
-              </div>`
-          : nothing}
-        ${openingMotion(o) === "slide"
-          ? html`
-              ${sliderStyleOf(o) !== "biparting"
-                ? html`
-                    <div class="row">
-                      <label>Slide</label>
-                      <select
-                        .value=${o.flipH ? "right" : "left"}
-                        @change=${(e: Event) =>
-                          this._updateOpening(o.id, {
-                            flipH: (e.target as HTMLSelectElement).value === "right" || undefined,
-                          })}
-                      >
-                        <option value="left">to left</option>
-                        <option value="right">to right</option>
-                      </select>
-                    </div>`
-                : nothing}
-              <div class="row">
-                <label>Style</label>
-                <select
-                  .value=${sliderStyleOf(o)}
-                  @change=${(e: Event) => {
-                    const v = (e.target as HTMLSelectElement).value;
-                    this._updateOpening(o.id, {
-                      sliderStyle: v === "single" ? undefined : (v as "bypass" | "biparting"),
-                    });
-                  }}
-                >
-                  <option value="single">single</option>
-                  <option value="bypass">bypass (stack)</option>
-                  <option value="biparting">biparting (split)</option>
-                </select>
-              </div>`
-          : nothing}
-        <div class="row wide">
-          <label>Entity</label>
-          <ha-entity-picker
-            .hass=${this.hass}
-            .value=${o.entity ?? ""}
-            .includeDomains=${["binary_sensor", "cover"]}
-            allow-custom-entity
-            @value-changed=${(e: CustomEvent) => {
-              const entity = (e.detail.value as string) || undefined;
-              // Infer type/motion from the entity's HA device_class (e.g. a
-              // `cover` with device_class `window` → a window; a `garage`
-              // roller → a sliding door). Only when the class is known, so we
-              // never clobber a hand-set type with a guess.
-              const dc = entity
-                ? (this.hass?.states[entity]?.attributes?.device_class as string | undefined)
-                : undefined;
-              this._updateOpening(o.id, { entity, ...(dc ? openingFromDeviceClass(dc) : {}) });
-            }}
-          ></ha-entity-picker>
-        </div>
+        ${this._renderForm(openingForm(o), (patch, live) => {
+          if ("entity" in patch) {
+            // Infer type/motion from the entity's HA device_class (e.g. a
+            // `cover` with device_class `window` → a window; a `garage`
+            // roller → a sliding door). Only when the class is known, so we
+            // never clobber a hand-set type with a guess.
+            const entity = patch.entity as string | undefined;
+            const dc = entity
+              ? (this.hass?.states[entity]?.attributes?.device_class as string | undefined)
+              : undefined;
+            patch = { ...patch, ...(dc ? openingFromDeviceClass(dc) : {}) };
+          }
+          this._applyElementPatch("opening", o.id, patch, live);
+        })}
         ${o.entity
           ? html`<div class="row">
-                <label>Invert</label>
-                <input
-                  type="checkbox"
-                  .checked=${o.invert ?? false}
-                  @change=${(e: Event) =>
-                    this._updateOpening(o.id, {
-                      invert: (e.target as HTMLInputElement).checked || undefined,
-                    })}
-                />
-              </div>
-              <div class="row">
-                <label>Active color</label>
-                <input
-                  type="color"
-                  .value=${o.activeColor ?? "#03a9f4"}
-                  @input=${(e: Event) =>
-                    this._updateOpening(o.id, { activeColor: (e.target as HTMLInputElement).value })}
-                />
-                <input
-                  type="text"
-                  placeholder="(primary)"
-                  .value=${o.activeColor ?? ""}
-                  @change=${(e: Event) =>
-                    this._updateOpening(o.id, {
-                      activeColor: (e.target as HTMLInputElement).value || undefined,
-                    })}
-                />
-              </div>`
+              <label>Active color</label>
+              <input
+                type="color"
+                .value=${o.activeColor ?? "#03a9f4"}
+                @input=${(e: Event) =>
+                  this._updateOpeningLive(o.id, {
+                    activeColor: (e.target as HTMLInputElement).value,
+                  })}
+              />
+              <input
+                type="text"
+                placeholder="(primary)"
+                .value=${o.activeColor ?? ""}
+                @change=${(e: Event) =>
+                  this._updateOpening(o.id, {
+                    activeColor: (e.target as HTMLInputElement).value || undefined,
+                  })}
+              />
+            </div>`
           : nothing}
-        ${this._renderAngleRow(o.angle, (angle) => this._updateOpening(o.id, { angle }))}
       `;
     }
 
@@ -2270,164 +2547,36 @@ export class FloorplanCardEditor extends LitElement {
       const it = this._floor().items.find((x) => x.id === sel.id);
       if (!it) return html`${nothing}`;
       return html`
-        <div class="row wide">
-          <label>Entity</label>
-          <ha-entity-picker
-            .hass=${this.hass}
-            .value=${it.entity}
-            allow-custom-entity
-            @value-changed=${(e: CustomEvent) => {
-              const entity = e.detail.value as string;
-              this._updateItem(it.id, { entity, kind: kindFromEntity(entity) });
-            }}
-          ></ha-entity-picker>
-        </div>
-        <div class="row wide">
-          <label>2nd entity</label>
-          <ha-entity-picker
-            .hass=${this.hass}
-            .value=${it.secondaryEntity ?? ""}
-            allow-custom-entity
-            @value-changed=${(e: CustomEvent) =>
-              this._updateItem(it.id, {
-                secondaryEntity: (e.detail.value as string) || undefined,
-              })}
-          ></ha-entity-picker>
-        </div>
-        <div class="row wide">
-          <label>Icon</label>
-          ${customElements.get("ha-icon-picker")
-            ? html`<ha-icon-picker
-                .hass=${this.hass}
-                .value=${it.icon ?? ""}
-                placeholder=${defaultIcon(it.kind)}
-                @value-changed=${(e: CustomEvent) =>
-                  this._updateItem(it.id, { icon: (e.detail.value as string) || undefined })}
-              ></ha-icon-picker>`
-            : html`<input
+        ${this._renderForm(itemForm(it), (patch, live) => {
+          // Any entity change re-derives the item kind (icon defaults etc.) —
+          // including clearing it, which resets kind to "generic".
+          if ("entity" in patch && typeof patch.entity === "string") {
+            patch = { ...patch, kind: kindFromEntity(patch.entity) };
+          }
+          this._applyElementPatch("item", it.id, patch, live);
+        })}
+        ${(it.display ?? "badge") !== "badge"
+          ? html`<div class="row">
+              <label>Ripple color</label>
+              <input
+                type="color"
+                .value=${it.rippleColor ?? "#03a9f4"}
+                @input=${(e: Event) =>
+                  this._updateItemLive(it.id, {
+                    rippleColor: (e.target as HTMLInputElement).value,
+                  })}
+              />
+              <input
                 type="text"
-                placeholder="mdi:lightbulb (optional)"
-                .value=${it.icon ?? ""}
+                placeholder="(primary)"
+                .value=${it.rippleColor ?? ""}
                 @change=${(e: Event) =>
                   this._updateItem(it.id, {
-                    icon: (e.target as HTMLInputElement).value || undefined,
+                    rippleColor: (e.target as HTMLInputElement).value || undefined,
                   })}
-              />`}
-        </div>
-        <div class="row">
-          <label>Name</label>
-          <input
-            type="text"
-            placeholder="(optional)"
-            .value=${it.name ?? ""}
-            @change=${(e: Event) =>
-              this._updateItem(it.id, { name: (e.target as HTMLInputElement).value || undefined })}
-          />
-        </div>
-        <div class="row">
-          <label>Size</label>
-          <input
-            type="range"
-            min="16"
-            max="96"
-            step="2"
-            .value=${String(it.size ?? DEFAULT_ITEM_SIZE)}
-            @input=${(e: Event) =>
-              this._updateItem(it.id, { size: Number((e.target as HTMLInputElement).value) })}
-          />
-          <input
-            class="num"
-            type="number"
-            min="16"
-            max="160"
-            .value=${String(it.size ?? DEFAULT_ITEM_SIZE)}
-            @change=${(e: Event) =>
-              this._updateItem(it.id, {
-                size: Number((e.target as HTMLInputElement).value) || DEFAULT_ITEM_SIZE,
-              })}
-          />
-        </div>
-        ${this._renderAngleRow(it.angle ?? 0, (angle) => this._updateItem(it.id, { angle }))}
-        <div class="row">
-          <label>Display</label>
-          <select
-            .value=${it.display ?? "badge"}
-            @change=${(e: Event) =>
-              this._updateItem(it.id, {
-                display: (e.target as HTMLSelectElement).value as ItemDisplay,
-              })}
-          >
-            <option value="badge">Icon badge</option>
-            <option value="ripple">Ripple</option>
-            <option value="iconRipple">Icon + ripple</option>
-          </select>
-        </div>
-        ${(it.display ?? "badge") !== "badge"
-          ? html`
-              <div class="row">
-                <label>Ripple color</label>
-                <input
-                  type="color"
-                  .value=${it.rippleColor ?? "#03a9f4"}
-                  @input=${(e: Event) =>
-                    this._updateItem(it.id, { rippleColor: (e.target as HTMLInputElement).value })}
-                />
-                <input
-                  type="text"
-                  placeholder="(primary)"
-                  .value=${it.rippleColor ?? ""}
-                  @change=${(e: Event) =>
-                    this._updateItem(it.id, {
-                      rippleColor: (e.target as HTMLInputElement).value || undefined,
-                    })}
-                />
-              </div>
-              <div class="row">
-                <label>Ripple size</label>
-                <input
-                  type="range"
-                  min="40"
-                  max="240"
-                  step="4"
-                  .value=${String(it.rippleSize ?? DEFAULT_RIPPLE_SIZE)}
-                  @input=${(e: Event) =>
-                    this._updateItem(it.id, {
-                      rippleSize: Number((e.target as HTMLInputElement).value),
-                    })}
-                />
-                <input
-                  class="num"
-                  type="number"
-                  min="40"
-                  max="400"
-                  .value=${String(it.rippleSize ?? DEFAULT_RIPPLE_SIZE)}
-                  @change=${(e: Event) =>
-                    this._updateItem(it.id, {
-                      rippleSize:
-                        Number((e.target as HTMLInputElement).value) || DEFAULT_RIPPLE_SIZE,
-                    })}
-                />
-              </div>
-            `
+              />
+            </div>`
           : nothing}
-        <div class="row">
-          <label>Show icon</label>
-          <input
-            type="checkbox"
-            .checked=${it.showIcon ?? true}
-            @change=${(e: Event) =>
-              this._updateItem(it.id, { showIcon: (e.target as HTMLInputElement).checked })}
-          />
-        </div>
-        <div class="row">
-          <label>Show state</label>
-          <input
-            type="checkbox"
-            .checked=${it.showState ?? false}
-            @change=${(e: Event) =>
-              this._updateItem(it.id, { showState: (e.target as HTMLInputElement).checked })}
-          />
-        </div>
       `;
     }
 
@@ -2435,44 +2584,16 @@ export class FloorplanCardEditor extends LitElement {
       const t = this._floor().texts.find((x) => x.id === sel.id);
       if (!t) return html`${nothing}`;
       return html`
-        <div class="row">
-          <label>Text</label>
-          <input
-            type="text"
-            .value=${t.text}
-            @input=${(e: Event) =>
-              this._updateText(t.id, { text: (e.target as HTMLInputElement).value })}
-          />
-        </div>
-        <div class="row">
-          <label>Size</label>
-          <input
-            type="range"
-            min="8"
-            max="80"
-            .value=${String(t.size ?? DEFAULT_TEXT_SIZE)}
-            @input=${(e: Event) =>
-              this._updateText(t.id, { size: Number((e.target as HTMLInputElement).value) })}
-          />
-          <input
-            class="num"
-            type="number"
-            min="8"
-            max="200"
-            .value=${String(t.size ?? DEFAULT_TEXT_SIZE)}
-            @change=${(e: Event) =>
-              this._updateText(t.id, {
-                size: Number((e.target as HTMLInputElement).value) || DEFAULT_TEXT_SIZE,
-              })}
-          />
-        </div>
+        ${this._renderForm(textForm(t), (patch, live) =>
+          this._applyElementPatch("text", t.id, patch, live)
+        )}
         <div class="row">
           <label>Color</label>
           <input
             type="color"
             .value=${t.color ?? "#000000"}
             @input=${(e: Event) =>
-              this._updateText(t.id, { color: (e.target as HTMLInputElement).value })}
+              this._updateTextLive(t.id, { color: (e.target as HTMLInputElement).value })}
           />
           <input
             type="text"
@@ -2482,7 +2603,6 @@ export class FloorplanCardEditor extends LitElement {
               this._updateText(t.id, { color: (e.target as HTMLInputElement).value || undefined })}
           />
         </div>
-        ${this._renderAngleRow(t.angle ?? 0, (angle) => this._updateText(t.id, { angle }))}
       `;
     }
 
@@ -2490,45 +2610,16 @@ export class FloorplanCardEditor extends LitElement {
       const f = this._floor().furniture.find((x) => x.id === sel.id);
       if (!f) return html`${nothing}`;
       return html`
-        <div class="row">
-          <label>Type</label>
-          <select
-            .value=${f.type}
-            @change=${(e: Event) =>
-              this._updateFurniture(f.id, {
-                type: (e.target as HTMLSelectElement).value as FurnitureType,
-              })}
-          >
-            ${FURNITURE_TYPES.map((t) => html`<option value=${t}>${FURNITURE_LABELS[t]}</option>`)}
-          </select>
-        </div>
-        <div class="row">
-          <label>Width / Height</label>
-          <input
-            class="num"
-            type="number"
-            min="10"
-            .value=${String(f.w)}
-            @change=${(e: Event) =>
-              this._updateFurniture(f.id, { w: Number((e.target as HTMLInputElement).value) || f.w })}
-          />
-          <input
-            class="num"
-            type="number"
-            min="10"
-            .value=${String(f.h)}
-            @change=${(e: Event) =>
-              this._updateFurniture(f.id, { h: Number((e.target as HTMLInputElement).value) || f.h })}
-          />
-        </div>
-        ${this._renderAngleRow(f.angle ?? 0, (angle) => this._updateFurniture(f.id, { angle }))}
+        ${this._renderForm(furnitureForm(f), (patch, live) =>
+          this._applyElementPatch("furniture", f.id, patch, live)
+        )}
         <div class="row">
           <label>Color</label>
           <input
             type="color"
             .value=${f.color ?? "#9e9e9e"}
             @input=${(e: Event) =>
-              this._updateFurniture(f.id, { color: (e.target as HTMLInputElement).value })}
+              this._updateFurnitureLive(f.id, { color: (e.target as HTMLInputElement).value })}
           />
           <input
             type="text"
@@ -2549,54 +2640,16 @@ export class FloorplanCardEditor extends LitElement {
       return html`
         ${this._renderTrackerSensorRows(tr, "xSensor", "X sensor")}
         ${this._renderTrackerSensorRows(tr, "ySensor", "Y sensor")}
-        <div class="row">
-          <label>Width / Height</label>
-          <input
-            class="num"
-            type="number"
-            min="10"
-            .value=${String(tr.w)}
-            @change=${(e: Event) =>
-              this._updateTracker(tr.id, {
-                w: Math.max(10, Number((e.target as HTMLInputElement).value) || tr.w),
-              })}
-          />
-          <input
-            class="num"
-            type="number"
-            min="10"
-            .value=${String(tr.h)}
-            @change=${(e: Event) =>
-              this._updateTracker(tr.id, {
-                h: Math.max(10, Number((e.target as HTMLInputElement).value) || tr.h),
-              })}
-          />
-        </div>
-        <div class="row">
-          <label>Position</label>
-          <input
-            class="num"
-            type="number"
-            .value=${String(Math.round(tr.x))}
-            @change=${(e: Event) =>
-              this._updateTracker(tr.id, { x: Number((e.target as HTMLInputElement).value) })}
-          />
-          <input
-            class="num"
-            type="number"
-            .value=${String(Math.round(tr.y))}
-            @change=${(e: Event) =>
-              this._updateTracker(tr.id, { y: Number((e.target as HTMLInputElement).value) })}
-          />
-        </div>
-        ${this._renderAngleRow(tr.angle ?? 0, (angle) => this._updateTracker(tr.id, { angle }))}
+        ${this._renderForm(trackerForm(tr), (patch, live) =>
+          this._applyElementPatch("tracker", tr.id, patch, live)
+        )}
         <div class="row">
           <label>Color</label>
           <input
             type="color"
             .value=${tr.color ?? "#03a9f4"}
             @input=${(e: Event) =>
-              this._updateTracker(tr.id, { color: (e.target as HTMLInputElement).value })}
+              this._updateTrackerLive(tr.id, { color: (e.target as HTMLInputElement).value })}
           />
           <input
             type="text"
@@ -2608,32 +2661,6 @@ export class FloorplanCardEditor extends LitElement {
               })}
           />
         </div>
-        <div class="row">
-          <label>Dot size</label>
-          <input
-            type="range"
-            min="6"
-            max="40"
-            step="1"
-            .value=${String(tr.dotSize ?? DEFAULT_TRACKER_DOT_SIZE)}
-            @input=${(e: Event) =>
-              this._updateTracker(tr.id, {
-                dotSize: Number((e.target as HTMLInputElement).value),
-              })}
-          />
-          <input
-            class="num"
-            type="number"
-            min="6"
-            max="80"
-            .value=${String(tr.dotSize ?? DEFAULT_TRACKER_DOT_SIZE)}
-            @change=${(e: Event) =>
-              this._updateTracker(tr.id, {
-                dotSize:
-                  Number((e.target as HTMLInputElement).value) || DEFAULT_TRACKER_DOT_SIZE,
-              })}
-          />
-        </div>
       `;
     }
 
@@ -2641,31 +2668,10 @@ export class FloorplanCardEditor extends LitElement {
       const w = this._floor().walls.find((x) => x.id === sel.id);
       if (!w) return html`${nothing}`;
       const length = Math.round(Math.hypot(w.x2 - w.x1, w.y2 - w.y1));
-      // One coordinate input; a cleared / invalid field restores the old value.
-      const coord = (value: number, apply: (n: number) => void) => html`
-        <input
-          class="num"
-          type="number"
-          .value=${String(Math.round(value))}
-          @change=${(e: Event) => {
-            const input = e.target as HTMLInputElement;
-            const n = Number(input.value);
-            if (input.value !== "" && Number.isFinite(n)) apply(n);
-            else input.value = String(Math.round(value));
-          }}
-        />
-      `;
       return html`
-        <div class="row">
-          <label>Start X / Y</label>
-          ${coord(w.x1, (x1) => this._updateWall(w.id, { x1 }))}
-          ${coord(w.y1, (y1) => this._updateWall(w.id, { y1 }))}
-        </div>
-        <div class="row">
-          <label>End X / Y</label>
-          ${coord(w.x2, (x2) => this._updateWall(w.id, { x2 }))}
-          ${coord(w.y2, (y2) => this._updateWall(w.id, { y2 }))}
-        </div>
+        ${this._renderForm(wallForm(w), (patch, live) =>
+          this._applyElementPatch("wall", w.id, patch, live)
+        )}
         <div class="row">
           <label>Length</label>
           <input
@@ -2718,17 +2724,14 @@ export class FloorplanCardEditor extends LitElement {
     return html`
       <div class="row wide">
         <label>${label}</label>
-        <ha-entity-picker
-          .hass=${this.hass}
-          .value=${s?.entity ?? ""}
-          .includeDomains=${["sensor", "input_number", "number"]}
-          allow-custom-entity
-          @value-changed=${(e: CustomEvent) => {
-            const v = (e.detail.value as string) || "";
+        ${this._renderEntityPicker(
+          s?.entity ?? "",
+          (v) => {
             if (!v) this._updateTrackerSensor(tr.id, axis, null);
             else this._updateTrackerSensor(tr.id, axis, { entity: v });
-          }}
-        ></ha-entity-picker>
+          },
+          ["sensor", "input_number", "number"]
+        )}
       </div>
       ${s
         ? html`<div class="row">
@@ -2739,10 +2742,14 @@ export class FloorplanCardEditor extends LitElement {
               step="0.01"
               title="Reading at the near edge"
               .value=${String(s.min)}
-              @change=${(e: Event) =>
-                this._updateTrackerSensor(tr.id, axis, {
-                  min: Number((e.target as HTMLInputElement).value),
-                })}
+              @change=${(e: Event) => {
+                const input = e.target as HTMLInputElement;
+                const n = Number(input.value);
+                // A cleared field must not silently collapse the range to 0.
+                if (input.value !== "" && Number.isFinite(n))
+                  this._updateTrackerSensor(tr.id, axis, { min: n });
+                else input.value = String(s.min);
+              }}
             />
             <input
               class="num"
@@ -2750,10 +2757,13 @@ export class FloorplanCardEditor extends LitElement {
               step="0.01"
               title="Reading at the far edge"
               .value=${String(s.max)}
-              @change=${(e: Event) =>
-                this._updateTrackerSensor(tr.id, axis, {
-                  max: Number((e.target as HTMLInputElement).value),
-                })}
+              @change=${(e: Event) => {
+                const input = e.target as HTMLInputElement;
+                const n = Number(input.value);
+                if (input.value !== "" && Number.isFinite(n))
+                  this._updateTrackerSensor(tr.id, axis, { max: n });
+                else input.value = String(s.max);
+              }}
             />
             <label class="inline-check">
               <input
@@ -2769,18 +2779,14 @@ export class FloorplanCardEditor extends LitElement {
           </div>
           <div class="row wide">
             <label>${label} presence</label>
-            <ha-entity-picker
-              .hass=${this.hass}
-              .value=${s.presence?.entity ?? ""}
-              .includeDomains=${["binary_sensor", "input_boolean", "device_tracker"]}
-              allow-custom-entity
-              @value-changed=${(e: CustomEvent) => {
-                const v = (e.detail.value as string) || "";
+            ${this._renderEntityPicker(
+              s.presence?.entity ?? "",
+              (v) =>
                 this._updateTrackerSensor(tr.id, axis, {
                   presence: v ? { entity: v, invert: s.presence?.invert } : undefined,
-                });
-              }}
-            ></ha-entity-picker>
+                }),
+              ["binary_sensor", "input_boolean", "device_tracker"]
+            )}
             ${s.presence
               ? html`<label class="inline-check" title="Treat 'off' as detected">
                   <input
@@ -2807,6 +2813,90 @@ export class FloorplanCardEditor extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 8px;
+    }
+    /* Full-screen workspace, shown as a popover so the top layer lifts it clear
+       of HA's edit dialog (whose surface is transformed — see updated()). The
+       resets undo the UA popover defaults: fit-content size, auto margins, a
+       solid border and padding. The fixed position only matters to the
+       non-popover fallback, where the transformed dialog surface is the
+       containing block — there "fullscreen" fills the dialog, not the page. */
+    .editor.fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      width: auto;
+      height: auto;
+      max-width: none;
+      max-height: none;
+      margin: 0;
+      border: none;
+      padding: 12px;
+      box-sizing: border-box;
+      color: inherit;
+      background: var(--card-background-color, #fff);
+      overflow: hidden;
+    }
+    /* Toolbar-icon button (Expand/Exit) — match the gear button's icon+label
+       alignment so it reads as part of the toolbar. */
+    .expand-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    /* Below the two toolbars: the canvas and the element/project sections.
+       Stacked at dialog width; split into canvas + docked side panel when
+       expanded so the extra width isn't wasted. */
+    .workspace {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+    .side {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+    .editor.fullscreen .workspace {
+      flex-direction: row;
+      align-items: stretch;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .editor.fullscreen .canvas-outer {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .editor.fullscreen .canvas-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+      height: auto;
+      resize: none;
+    }
+    /* Docked inspector — fixed, scrollable column beside the canvas. */
+    .editor.fullscreen .side {
+      flex: 0 0 340px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 2px;
+    }
+    /* At real dialog width the side panel can drop below instead of squeezing
+       the canvas to nothing. */
+    @media (max-width: 900px) {
+      .editor.fullscreen .workspace {
+        flex-direction: column;
+        /* Stacked panels can exceed a short viewport (phone landscape) — the
+           root clips, so the workspace itself must scroll. */
+        overflow-y: auto;
+      }
+      .editor.fullscreen .side {
+        flex: 0 0 auto;
+        max-height: 40vh;
+      }
     }
     .toolbar {
       display: flex;
@@ -2926,7 +3016,7 @@ export class FloorplanCardEditor extends LitElement {
     }
     button.active {
       background: var(--primary-color, #03a9f4);
-      color: #fff;
+      color: var(--text-primary-color, #fff);
       border-color: var(--primary-color, #03a9f4);
     }
     button.danger {
@@ -2935,6 +3025,15 @@ export class FloorplanCardEditor extends LitElement {
     button[disabled] {
       opacity: 0.4;
       cursor: not-allowed;
+    }
+    /* The canvas is focusable so keyboard shortcuts only fire while working in
+       the editor; only show the ring for keyboard focus, not pointer clicks. */
+    .canvas-wrap:focus {
+      outline: none;
+    }
+    .canvas-wrap:focus-visible {
+      outline: 2px solid var(--primary-color, #03a9f4);
+      outline-offset: -2px;
     }
     .canvas-wrap {
       border: 1px solid var(--divider-color, #ccc);
@@ -3227,7 +3326,7 @@ export class FloorplanCardEditor extends LitElement {
     }
     .handle {
       fill: var(--primary-color, #03a9f4);
-      stroke: #fff;
+      stroke: var(--card-background-color, #fff);
       stroke-width: 1.5;
       cursor: grab;
     }
@@ -3583,11 +3682,6 @@ export class FloorplanCardEditor extends LitElement {
       font-size: 13px;
       color: var(--secondary-text-color);
       line-height: 1.5;
-    }
-    hr {
-      border: none;
-      border-top: 1px solid var(--divider-color, #eee);
-      margin: 10px 0;
     }
   `;
 }

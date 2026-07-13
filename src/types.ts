@@ -21,6 +21,13 @@ export interface HomeAssistant extends BaseHomeAssistant {
    * the registry load, then replaces the function whenever an input changes.
    */
   formatEntityState(stateObj: HassEntity, state?: string): string;
+  /**
+   * The entity registry as the frontend exposes it. `custom-card-helpers` does
+   * not declare it, though HA has handed it to cards since 2023.4. It carries
+   * the user's per-entity icon override, which never appears in the state's
+   * `attributes`.
+   */
+  entities?: Record<string, { icon?: string } | undefined>;
 }
 
 /** The slice of `hass` the card draws from. */
@@ -93,7 +100,20 @@ export interface Opening {
   sliderStyle?: "single" | "bypass" | "biparting";
 }
 
-export type ItemKind = "light" | "switch" | "sensor" | "binary_sensor" | "climate" | "cover" | "generic";
+export type ItemKind =
+  | "light"
+  | "switch"
+  | "sensor"
+  | "binary_sensor"
+  | "climate"
+  | "cover"
+  | "media_player"
+  | "fan"
+  | "camera"
+  | "lock"
+  | "humidifier"
+  | "vacuum"
+  | "generic";
 
 /** An entity icon placed on the plan. */
 export interface FloorItem {
@@ -126,9 +146,32 @@ export interface FloorItem {
   rippleColor?: string;
   /** Max ripple ring diameter in pixels. Default 80. */
   rippleSize?: number;
+  /** Lovelace actions. Defaults: tap = toggle (controllable domains) or more-info; hold/double = none. */
+  tap_action?: ActionConfig;
+  hold_action?: ActionConfig;
+  double_tap_action?: ActionConfig;
 }
 
 export type ItemDisplay = "badge" | "ripple" | "iconRipple";
+
+/**
+ * A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has
+ * renamed fields over time (call-service→perform-action, service_data→data)
+ * and unknown fields must pass through the card untouched.
+ */
+export interface ActionConfig {
+  action: string;
+  entity?: string;
+  navigation_path?: string;
+  url_path?: string;
+  perform_action?: string;
+  service?: string;
+  data?: Record<string, unknown>;
+  service_data?: Record<string, unknown>;
+  target?: Record<string, unknown>;
+  confirmation?: { text?: string } | boolean;
+  [key: string]: unknown;
+}
 
 /** A free text label placed on the plan. */
 export interface FloorText {
@@ -159,12 +202,28 @@ export type FurnitureType =
   | "sink"
   | "toilet"
   | "stairs"
-  | "tv";
+  | "tv"
+  | "washer"
+  | "dryer"
+  | "dishwasher"
+  | "waterHeater"
+  | "airHandler"
+  | "bathtub"
+  | "vanity"
+  | "sectional";
+
+/**
+ * Which end of an L-shaped sectional the chaise sits on, facing the sofa from
+ * the front. Only meaningful for `type: "sectional"`; defaults to `"right"`.
+ */
+export type SectionalHand = "left" | "right";
 
 /** A gray furniture/fixture diagram placed on the plan. */
 export interface Furniture {
   id: string;
   type: FurnitureType;
+  /** L-shaped sectional only: which side the chaise extends on. Default `right`. */
+  hand?: SectionalHand;
   x: number;
   y: number;
   /** Width / height in virtual units. */
@@ -277,6 +336,14 @@ export const FURNITURE_DEFAULT_SIZE: Record<FurnitureType, { w: number; h: numbe
   toilet: { w: 48, h: 68 },
   stairs: { w: 90, h: 170 },
   tv: { w: 110, h: 18 },
+  washer: { w: 60, h: 62 },
+  dryer: { w: 60, h: 62 },
+  dishwasher: { w: 60, h: 60 },
+  waterHeater: { w: 52, h: 52 },
+  airHandler: { w: 60, h: 56 },
+  bathtub: { w: 150, h: 76 },
+  vanity: { w: 110, h: 55 },
+  sectional: { w: 230, h: 180 },
 };
 
 /**
@@ -339,9 +406,9 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   floors?: Floor[];
   /** Id of the floor shown first. Falls back to the first floor. */
   defaultFloor?: string;
-  walls: Wall[];
-  openings: Opening[];
-  items: FloorItem[];
+  walls?: Wall[];
+  openings?: Opening[];
+  items?: FloorItem[];
   texts?: FloorText[];
   furniture?: Furniture[];
   trackers?: Tracker[];
@@ -426,6 +493,26 @@ export function emptyConfig(type: string): FloorplanCardConfig {
 
 export function uid(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * Structural equality for JSON-shaped config data. A missing key and an
+ * `undefined` value compare equal, because a YAML round-trip through HA's
+ * dialog drops undefined-valued keys.
+ */
+export function configsEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => configsEqual(v, b[i]));
+  }
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  for (const k of new Set([...Object.keys(ra), ...Object.keys(rb)])) {
+    if (!configsEqual(ra[k], rb[k])) return false;
+  }
+  return true;
 }
 
 /** A fresh, empty floor (optionally seeded with walls). */

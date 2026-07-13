@@ -21,14 +21,15 @@ import {
   renderFurniture,
   renderTracker,
   trackerSensorReading,
-  defaultIcon,
-  entityDefaultIcon,
+  entityIsActive,
   itemStateText,
   hassRenderInputsChanged,
+  collectWatchedEntities,
+  resolveItemIcon,
 } from "./render";
 import type { Opening } from "./types";
-
-const ACTIVE_DOMAINS = new Set(["light", "switch", "cover", "fan", "input_boolean"]);
+import { actionForGesture, executeAction, hasAction } from "./actions";
+import { actionHandler } from "./action-handler";
 
 @customElement("easy-floorplan-card")
 export class FloorplanCard extends LitElement {
@@ -43,7 +44,20 @@ export class FloorplanCard extends LitElement {
   private _watchedEntities: Set<string> = new Set();
 
   public setConfig(config: FloorplanCardConfig): void {
-    if (!config) throw new Error("Invalid configuration");
+    // Cheap shape assertions so malformed YAML surfaces as HA's error card
+    // instead of a render crash deep inside the SVG.
+    if (!config || typeof config !== "object") throw new Error("Invalid configuration");
+    const raw = config as Record<string, unknown>;
+    // A key with an empty YAML value ("trackers:") parses to null — treat it
+    // as unset like the ?? defaults always have, not as malformed.
+    for (const key of ["walls", "openings", "items", "texts", "furniture", "trackers", "floors"]) {
+      if (raw[key] != null && !Array.isArray(raw[key]))
+        throw new Error(`Invalid configuration: "${key}" must be a list`);
+    }
+    for (const key of ["width", "height", "grid"]) {
+      if (raw[key] != null && typeof raw[key] !== "number")
+        throw new Error(`Invalid configuration: "${key}" must be a number`);
+    }
     this._config = {
       ...config,
       width: config.width ?? DEFAULT_WIDTH,
@@ -54,26 +68,7 @@ export class FloorplanCard extends LitElement {
       texts: config.texts ?? [],
       furniture: config.furniture ?? [],
     };
-    this._watchedEntities = this._collectWatchedEntities(this._config);
-  }
-
-  /** Every entity id whose state can change what this card draws (all floors). */
-  private _collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
-    const ids = new Set<string>();
-    for (const f of getFloors(c)) {
-      for (const o of f.openings) if (o.entity) ids.add(o.entity);
-      for (const it of f.items) {
-        if (it.entity) ids.add(it.entity);
-        if (it.secondaryEntity) ids.add(it.secondaryEntity);
-      }
-      for (const tr of f.trackers) {
-        for (const s of [tr.xSensor, tr.ySensor]) {
-          if (s?.entity) ids.add(s.entity);
-          if (s?.presence?.entity) ids.add(s.presence.entity);
-        }
-      }
-    }
-    return ids;
+    this._watchedEntities = collectWatchedEntities(this._config);
   }
 
   /**
@@ -98,12 +93,23 @@ export class FloorplanCard extends LitElement {
   }
 
   public static getStubConfig(): Partial<FloorplanCardConfig> {
-    return { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, walls: [], openings: [], items: [] };
+    // Minimal on purpose: the editor migrates to the floors model on first
+    // edit, and defaults (width/height/grid) backfill in setConfig.
+    return {};
+  }
+
+  /**
+   * Sections-view sizing (grid rows ≈ 56px): room for the 5:3 default canvas.
+   * An instance method — HA calls it on the card element (getConfigElement /
+   * getStubConfig are the static ones, called before any instance exists).
+   */
+  public getGridOptions() {
+    return { columns: 12, rows: 8, min_columns: 6, min_rows: 4 };
   }
 
   private _isOn(item: FloorItem): boolean {
-    const st = this.hass?.states[item.entity]?.state;
-    return st === "on" || st === "open" || st === "home" || st === "playing";
+    // Domain-aware: locks say "unlocked", vacuums "cleaning" — never "on".
+    return entityIsActive(item.entity, this.hass?.states[item.entity]?.state);
   }
 
   /** How far open an opening should be drawn (0..1), from its entity (or default). */
@@ -119,17 +125,10 @@ export class FloorplanCard extends LitElement {
   }
 
   private _itemIcon(item: FloorItem): string {
-    // Precedence: config override → entity's explicit icon → the icon implied
-    // by its device_class ("show as", issue #29) → the generic kind default.
-    if (item.icon) return item.icon;
-    const st = this.hass?.states[item.entity];
-    if (st?.attributes?.icon) return st.attributes.icon;
-    return (
-      entityDefaultIcon(
-        item.entity,
-        st?.attributes?.device_class as string | undefined,
-        this._isOn(item)
-      ) ?? defaultIcon(item.kind)
+    return resolveItemIcon(
+      item,
+      this.hass?.states[item.entity],
+      this.hass?.entities?.[item.entity]?.icon,
     );
   }
 
@@ -139,20 +138,12 @@ export class FloorplanCard extends LitElement {
     );
   }
 
-  private _onItemClick(item: FloorItem): void {
-    if (!this.hass || !item.entity) return;
-    const domain = item.entity.split(".")[0];
-    if (ACTIVE_DOMAINS.has(domain)) {
-      this.hass.callService("homeassistant", "toggle", { entity_id: item.entity });
-    } else {
-      this.dispatchEvent(
-        new CustomEvent("hass-more-info", {
-          detail: { entityId: item.entity },
-          bubbles: true,
-          composed: true,
-        })
-      );
-    }
+  private _handleItemAction(
+    ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>,
+    item: FloorItem
+  ): void {
+    if (!this.hass) return;
+    executeAction(this, this.hass, item, actionForGesture(item, ev.detail.action));
   }
 
   /**
@@ -216,7 +207,14 @@ export class FloorplanCard extends LitElement {
         class="item ${on ? "on" : "off"}"
         style="left:${(item.x / c.width) * 100}%; top:${(item.y / c.height) * 100}%;"
         title=${this._label(item)}
-        @click=${() => this._onItemClick(item)}
+        role="button"
+        tabindex="0"
+        @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
+          this._handleItemAction(ev, item)}
+        .actionHandler=${actionHandler({
+          hasHold: hasAction(item.hold_action),
+          hasDoubleClick: hasAction(item.double_tap_action),
+        })}
       >
         ${visual}
         ${showState
@@ -257,6 +255,20 @@ export class FloorplanCard extends LitElement {
           style="aspect-ratio: ${c.width} / ${c.height}; background:${c.background ??
           "var(--card-background-color, #fff)"};"
         >
+<!-- preserveAspectRatio="none" is correct here, and it took a wrong fix to
+               see why. .stage pins aspect-ratio: width / height inline, so the
+               SVG's box already matches its viewBox and "none" never distorts.
+
+               "meet" letterboxes the SVG inside its box. The .items overlay is
+               HTML, positioned with raw left/top percentages of .stage, and it
+               does not letterbox. So the moment anything overrides the stage's
+               ratio (card-mod, a grid row count) the drawing shrinks away from
+               the badges and every icon drifts off the wall it was placed on.
+               "none" stretches both layers identically: distorted, but aligned.
+
+               The real fix letterboxes both layers together -- wrap the svg and
+               the overlay in one aspect-ratio box and centre it. Until then, do
+               not "fix" this line. -->
           <svg viewBox="0 0 ${c.width} ${c.height}" preserveAspectRatio="none">
             ${active.image
               ? svg`<image href=${active.image} x="0" y="0" width=${c.width} height=${c.height}
@@ -371,7 +383,7 @@ export class FloorplanCard extends LitElement {
     }
     .floor-switcher button.active {
       background: var(--primary-color, #03a9f4);
-      color: #fff;
+      color: var(--text-primary-color, #fff);
       border-color: var(--primary-color, #03a9f4);
     }
     svg {
@@ -464,8 +476,8 @@ export class FloorplanCard extends LitElement {
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     }
     .item.on .badge {
-      background: var(--state-light-active-color, #fdd835);
-      border-color: var(--state-light-active-color, #fdd835);
+      background: var(--state-light-active-color, var(--state-active-color, #fdd835));
+      border-color: var(--state-light-active-color, var(--state-active-color, #fdd835));
       color: var(--text-primary-color, #212121);
     }
     ha-icon {
