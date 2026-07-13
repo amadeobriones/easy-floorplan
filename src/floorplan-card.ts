@@ -67,6 +67,7 @@ import { radialHasHold, shouldOpenRadial } from "./radial-controls";
 import { openRadialPopover } from "./radial-popover";
 import { resolveRoomAction } from "./areas";
 import { normalizeRotation, stageAspect, plateClass, plateVars, counterRotate } from "./rotation";
+import { cssColorOr } from "./css-safe";
 
 @customElement("easy-floorplan-card")
 export class FloorplanCard extends LitElement {
@@ -90,12 +91,28 @@ export class FloorplanCard extends LitElement {
     // A key with an empty YAML value ("trackers:") parses to null — treat it
     // as unset like the ?? defaults always have, not as malformed.
     for (const key of ["rooms", "walls", "openings", "items", "texts", "furniture", "trackers", "floors"]) {
-      if (raw[key] != null && !Array.isArray(raw[key]))
+      const list = raw[key];
+      if (list == null) continue;
+      if (!Array.isArray(list))
         throw new Error(`Invalid configuration: "${key}" must be a list`);
+      // A stray "-" in the YAML list parses to a null entry. Left in, it becomes
+      // a null-dereference deep inside render (a broken card with a stack trace);
+      // caught here it is HA's clean error card instead.
+      const bad = list.findIndex((el) => el === null || typeof el !== "object");
+      if (bad !== -1)
+        throw new Error(`Invalid configuration: "${key}[${bad}]" must be an object`);
     }
     for (const key of ["width", "height", "grid"]) {
       if (raw[key] != null && typeof raw[key] !== "number")
         throw new Error(`Invalid configuration: "${key}" must be a number`);
+    }
+    // width/height divide the coordinate space (`x / width * 100%`). Zero, negative
+    // or non-finite silently produces `Infinity%`/`NaN%` positions and a collapsed
+    // viewBox — a blank card with no error. Refuse it so HA shows why.
+    for (const key of ["width", "height"]) {
+      const n = raw[key];
+      if (n != null && (typeof n !== "number" || !Number.isFinite(n) || n <= 0))
+        throw new Error(`Invalid configuration: "${key}" must be a positive number`);
     }
     this._config = {
       ...config,
@@ -306,7 +323,7 @@ export class FloorplanCard extends LitElement {
     const showState = !!item.entity && (item.showState ?? item.kind === "sensor");
     const showIcon = item.showIcon ?? true;
     const display = item.display ?? "badge";
-    const rippleColor = item.rippleColor ?? "var(--primary-color, #03a9f4)";
+    const rippleColor = cssColorOr(item.rippleColor, "var(--primary-color, #03a9f4)");
     const rippleSize = item.rippleSize ?? DEFAULT_RIPPLE_SIZE;
 
     let visual: TemplateResult | typeof nothing = nothing;
@@ -402,7 +419,7 @@ export class FloorplanCard extends LitElement {
         class="text"
         style="left:${(t.x / c.width) * 100}%; top:${(t.y / c.height) * 100}%;
                font-size:${t.size ?? DEFAULT_TEXT_SIZE}px;
-               color:${t.color ?? "var(--primary-text-color)"};
+               color:${cssColorOr(t.color, "var(--primary-text-color)")};
                transform:translate(-50%,-50%) rotate(${counterRotate(t.angle ?? 0, rot)}deg);"
       >
         ${t.text}
@@ -429,8 +446,10 @@ export class FloorplanCard extends LitElement {
       <ha-card .header=${c.title ?? nothing}>
         <div
           class="stage"
-          style="aspect-ratio: ${stageAspect(c.width, c.height, rot)}; background:${c.background ??
-          "var(--card-background-color, #fff)"};"
+          style="aspect-ratio: ${stageAspect(c.width, c.height, rot)}; background:${cssColorOr(
+            c.background,
+            "var(--card-background-color, #fff)"
+          )};"
         >
           <div class="plate ${plateClass(rot)}" style="${plateVars(c.width, c.height, rot)}">
 <!-- preserveAspectRatio="none" is correct, and now provably so. The .plate box
@@ -525,7 +544,7 @@ export class FloorplanCard extends LitElement {
                 open: amount > 0,
                 amount,
                 active: this._openingActive(o),
-                accent: o.activeColor ?? "var(--primary-color, #03a9f4)",
+                accent: cssColorOr(o.activeColor, "var(--primary-color, #03a9f4)"),
               });
               if (!o.entity) return symbol;
               // Entity-bound openings are tappable — a transparent rect over the

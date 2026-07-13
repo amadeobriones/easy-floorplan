@@ -6,6 +6,7 @@ import type {
 import {
   FURNITURE_COLOR, DEFAULT_TRACKER_DOT_SIZE, getFloors, trackerAxisFraction,
 } from "./types";
+import { cssColor } from "./css-safe";
 import { featureEnabled } from "./features";
 import { DEFAULT_SUN_ENTITY } from "./theme";
 import { hasAnyAction } from "./actions";
@@ -350,7 +351,9 @@ export function resolveStateStyle(
     const id = rule.entity ?? ownEntity;
     const st = id ? hass?.states[id] : undefined;
     if (!stateStyleMatches(rule, st)) continue;
-    const color = rule.color === "rgb" ? rgbColorOf(st) : rule.color;
+    // `rgbColorOf` already emits a safe `rgb(n, n, n)`; a literal rule colour is
+    // user-supplied and must be sanitised before it can reach a style attribute.
+    const color = rule.color === "rgb" ? rgbColorOf(st) : cssColor(rule.color);
     return { icon: rule.icon, color, animation: rule.animation };
   }
   return undefined;

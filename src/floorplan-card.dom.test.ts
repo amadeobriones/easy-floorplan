@@ -140,3 +140,94 @@ describe("showIcon: false", () => {
     expect(item!.querySelector(".stack-icon"), "no icon badge when showIcon is false").toBeNull();
   });
 });
+
+describe("setConfig refuses configs that would crash or silently break the card", () => {
+  async function setConfigOf(cfg: unknown) {
+    const { FloorplanCard } = await import("./floorplan-card");
+    const el = document.createElement("easy-floorplan-card") as InstanceType<typeof FloorplanCard>;
+    return () => (el as unknown as { setConfig: (c: unknown) => void }).setConfig(cfg);
+  }
+  const base = () => config([{ id: "i1", entity: "light.k", kind: "light", x: 10, y: 10 }]);
+
+  it("rejects a null array entry (a stray '-' in the YAML list) instead of crashing in render", async () => {
+    // Before: `items:[null]` threw "Cannot read properties of null" deep in render.
+    for (const key of ["items", "walls", "openings", "texts", "furniture", "trackers"]) {
+      const run = await setConfigOf({ ...base(), [key]: [null] });
+      expect(run, key).toThrow(/must be an object/);
+    }
+  });
+
+  it("names the offending index", async () => {
+    const run = await setConfigOf({ ...base(), items: [{ id: "ok", kind: "light", x: 0, y: 0 }, null] });
+    expect(run).toThrow(/items\[1\]/);
+  });
+
+  it.each([0, -1000, NaN, Infinity])("rejects width %s (would render Infinity%%/NaN%% positions)", async (w) => {
+    const run = await setConfigOf({ ...base(), width: w });
+    expect(run).toThrow(/must be a positive number/);
+  });
+
+  it.each([0, -600, NaN])("rejects height %s", async (h) => {
+    const run = await setConfigOf({ ...base(), height: h });
+    expect(run).toThrow(/must be a positive number/);
+  });
+
+  it("still accepts a valid config and an unset (null) list", async () => {
+    const ok = await setConfigOf({ ...base(), trackers: null });
+    expect(ok).not.toThrow();
+  });
+});
+
+describe("a hostile colour cannot break out of the style attribute (CSS injection)", () => {
+  const OVERLAY = "red;position:fixed;inset:0;z-index:99999";
+  const BEACON = "red;background-image:url(https://evil.example/x.png)";
+
+  it("a stateStyles colour is dropped, not injected into the badge", async () => {
+    const el = await mountCard(
+      [{ id: "i1", entity: "light.k", kind: "light", x: 10, y: 10, stateStyles: [{ state: "on", color: OVERLAY }] }],
+      { "light.k": "on" }
+    );
+    const badge = el.shadowRoot!.querySelector(".badge") as HTMLElement;
+    // The declaration never lands: no position/z-index leaked onto the element.
+    expect(badge.style.position).toBe("");
+    expect(badge.getAttribute("style") ?? "").not.toContain("position:fixed");
+  });
+
+  it("a text colour beacon never becomes a background-image fetch", async () => {
+    const { FloorplanCard } = await import("./floorplan-card");
+    const el = document.createElement("easy-floorplan-card") as InstanceType<typeof FloorplanCard>;
+    const priv = el as unknown as { hass: unknown; updateComplete: Promise<unknown> };
+    priv.hass = hassWith({});
+    el.setConfig({
+      ...config([]),
+      texts: [{ id: "t1", text: "hi", x: 10, y: 10, color: BEACON }],
+    } as unknown as FloorplanCardConfig);
+    document.body.appendChild(el);
+    await priv.updateComplete;
+    const html = el.shadowRoot!.innerHTML;
+    expect(html).not.toContain("background-image");
+    expect(html).not.toContain("evil.example");
+  });
+
+  it("the card background cannot become a full-viewport overlay", async () => {
+    const { FloorplanCard } = await import("./floorplan-card");
+    const el = document.createElement("easy-floorplan-card") as InstanceType<typeof FloorplanCard>;
+    const priv = el as unknown as { hass: unknown; updateComplete: Promise<unknown> };
+    priv.hass = hassWith({});
+    el.setConfig({ ...config([]), background: OVERLAY } as unknown as FloorplanCardConfig);
+    document.body.appendChild(el);
+    await priv.updateComplete;
+    const stage = el.shadowRoot!.querySelector(".stage") as HTMLElement;
+    expect(stage.style.position).toBe("");
+    expect(stage.getAttribute("style") ?? "").not.toContain("z-index");
+  });
+
+  it("still lets a legitimate colour through", async () => {
+    const el = await mountCard(
+      [{ id: "i1", entity: "light.k", kind: "light", x: 10, y: 10, stateStyles: [{ state: "on", color: "#ff0000" }] }],
+      { "light.k": "on" }
+    );
+    const badge = el.shadowRoot!.querySelector(".badge") as HTMLElement;
+    expect(badge.getAttribute("style") ?? "").toContain("#ff0000");
+  });
+});
