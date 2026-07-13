@@ -105,3 +105,62 @@ describe("#30 Alt-detach must actually detach", () => {
     expect({ x: e.x1, y: e.y1 }).toEqual({ x: 160, y: 40 });
   });
 });
+
+describe("#30 group drag stretches, does not tear", () => {
+  const THREE_WALL = {
+    type: "custom:easy-floorplan-card",
+    width: 1000,
+    height: 600,
+    snap: 1,
+    floors: [
+      {
+        id: "f1",
+        walls: [
+          { id: "n", x1: 0, y1: 0, x2: 100, y2: 0 },
+          { id: "e", x1: 100, y1: 0, x2: 100, y2: 80 }, // e:2 == (100,80)
+          { id: "s", x1: 100, y1: 80, x2: 0, y2: 80 }, // s:1 == (100,80), coincident with e:2
+        ],
+      },
+    ],
+  } as unknown as FloorplanCardConfig;
+
+  it("dragging a two-wall selection carries the corner shared with an unselected wall", async () => {
+    const { FloorplanCardEditor } = await import("./editor");
+    const el = document.createElement("easy-floorplan-card-editor") as InstanceType<
+      typeof FloorplanCardEditor
+    >;
+    const p = el as unknown as Record<string, unknown> & { updateComplete: Promise<unknown> };
+    p.hass = { states: {}, entities: {}, formatEntityState: () => "" };
+    el.setConfig(structuredClone(THREE_WALL));
+    document.body.appendChild(el);
+    await p.updateComplete;
+    // Stub the two DOM touchpoints of a drag that jsdom lacks.
+    p._toVirtual = (ev: PointerEvent) => ({ x: ev.clientX, y: ev.clientY });
+    el.setPointerCapture = () => {};
+
+    // Select walls n and e; then grab n (already selected → selection preserved).
+    p._selection = [
+      { kind: "wall", id: "n" },
+      { kind: "wall", id: "e" },
+    ];
+    (p._startDrag as (ev: unknown, sel: unknown) => void)(
+      { clientX: 0, clientY: 0, pointerId: 1, stopPropagation() {} },
+      { kind: "wall", id: "n" }
+    );
+
+    let emitted: FloorplanCardConfig | undefined;
+    el.addEventListener("config-changed", (e) => (emitted = (e as CustomEvent).detail.config));
+    // Translate the group by (0, -10).
+    (p._applyDrag as (ev: unknown) => void)({ clientX: 0, clientY: -10, altKey: false, pointerId: 1 });
+
+    type W = { id: string; x1: number; y1: number; x2: number; y2: number };
+    const walls = (emitted as { floors: { walls: W[] }[] }).floors[0].walls;
+    const e = walls.find((w) => w.id === "e")!;
+    const s = walls.find((w) => w.id === "s")!;
+    // e is selected → its endpoint 2 translated to (100,70).
+    expect({ x: e.x2, y: e.y2 }).toEqual({ x: 100, y: 70 });
+    // s is NOT selected, but its endpoint 1 shared e's corner → must follow, or the
+    // room tears at (100,80). The bug (attached from primary n only) left it behind.
+    expect({ x: s.x1, y: s.y1 }).toEqual({ x: 100, y: 70 });
+  });
+});

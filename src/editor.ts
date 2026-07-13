@@ -1032,7 +1032,23 @@ export class FloorplanCardEditor extends LitElement {
       orig: this._snapshotSelection(),
       endpoint,
     };
-    if (sel.kind === "wall") this._drag.attached = this._attachedCorners(sel.id, endpoint);
+    // Every selected wall's coincident neighbour corners follow the drag, not
+    // just the primary's. Grabbing one wall of a multi-wall selection used to
+    // collect corners from that wall alone, so a neighbour attached to another
+    // selected wall stayed put and the room tore open there (#30). An endpoint
+    // handle is always a single-wall drag, so `endpoint` only applies then.
+    const selectedWalls = this._selection.filter((s) => s.kind === "wall");
+    if (selectedWalls.length) {
+      const seen = new Set<string>();
+      const attached: NonNullable<Drag["attached"]> = [];
+      for (const s of selectedWalls) {
+        for (const a of this._attachedCorners(s.id, selectedWalls.length === 1 ? endpoint : undefined) ?? []) {
+          const key = `${a.id}:${a.end}`;
+          if (!seen.has(key)) (seen.add(key), attached.push(a));
+        }
+      }
+      this._drag.attached = attached.length ? attached : undefined;
+    }
     this._gesturePointer = ev.pointerId;
     this._capturePointer(ev);
   }
