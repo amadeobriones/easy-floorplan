@@ -256,11 +256,27 @@ const AUTO_ICON_ANIMATION: Record<string, "spin" | "pulse"> = {
 };
 
 /**
+ * Whether an entity should currently *animate* its icon — a stricter, motion-
+ * flavoured test than {@link entityIsActive}.
+ *
+ * For most domains "moving" and "active" coincide (a fan that is on is spinning).
+ * Covers and valves are the exception: their active state is `open`, but an icon
+ * animation reads as motion, and an open door is *parked*, not moving. So they
+ * animate only while `opening`/`closing` — otherwise a forced spin ran forever on
+ * a still-open cover and went silent exactly while it travelled.
+ */
+function entityIconAnimates(entityId: string | undefined, state: string | undefined): boolean {
+  const domain = entityId?.split(".")[0] ?? "";
+  if (domain === "cover" || domain === "valve") return state === "opening" || state === "closing";
+  return entityIsActive(entityId, state);
+}
+
+/**
  * Which animation an item's icon should play right now, or undefined for
- * none. Shared by card and editor. Never animates an inactive (or
- * unavailable) entity — including when the config forces "spin"/"pulse": a
+ * none. Shared by card and editor. Never animates an entity that is not moving
+ * (or is unavailable) — including when the config forces "spin"/"pulse": a
  * spinning fan icon is a claim that the fan is running, so it obeys the same
- * fail-closed rule as the active highlight ({@link entityIsActive}).
+ * fail-closed rule ({@link entityIconAnimates}).
  */
 export function resolveIconAnimation(
   item: { entity?: string; iconAnimation?: IconAnimation },
@@ -268,7 +284,7 @@ export function resolveIconAnimation(
 ): "spin" | "pulse" | undefined {
   const mode = item.iconAnimation ?? "auto";
   if (mode === "none") return undefined;
-  if (!entityIsActive(item.entity, state)) return undefined;
+  if (!entityIconAnimates(item.entity, state)) return undefined;
   if (mode === "spin" || mode === "pulse") return mode;
   return AUTO_ICON_ANIMATION[item.entity?.split(".")[0] ?? ""];
 }

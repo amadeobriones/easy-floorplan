@@ -36,3 +36,21 @@ describe("forced icon animation reaches the domains an allowlist missed", () => 
     expect(resolveIconAnimation(item("light.k", "spin"), "off")).toBeUndefined();
   });
 });
+
+describe("a cover animates while moving, not while parked", () => {
+  // A cover's active state is `open`, but an icon animation reads as motion — a
+  // parked-open door is not moving. So animation tracks transit, not open/closed.
+  it.each(["opening", "closing"])("%s (in transit) honours a forced spin", (state) => {
+    expect(resolveIconAnimation(item("cover.garage", "spin"), state)).toBe("spin");
+  });
+
+  it.each(["open", "closed"])("%s (parked) does not animate", (state) => {
+    // Pre-fix, forced spin ran forever on an `open` cover and nothing while moving.
+    expect(resolveIconAnimation(item("cover.garage", "spin"), state)).toBeUndefined();
+  });
+
+  it("valves behave the same", () => {
+    expect(resolveIconAnimation(item("valve.water", "pulse"), "opening")).toBe("pulse");
+    expect(resolveIconAnimation(item("valve.water", "pulse"), "open")).toBeUndefined();
+  });
+});
