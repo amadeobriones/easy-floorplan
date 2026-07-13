@@ -217,7 +217,11 @@ export class FloorplanCard extends LitElement {
         })}
       >
         ${visual}
-        ${showState ? html`<span class="label">${itemStateText(this.hass, item)}</span>` : nothing}
+        ${showState
+          ? html`<span class="label ${visual === nothing ? "inflow" : ""}"
+              >${itemStateText(this.hass, item)}</span
+            >`
+          : nothing}
       </div>
     `;
   }
@@ -437,7 +441,27 @@ export class FloorplanCard extends LitElement {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 2px;
+    }
+    /*
+     * The item's x/y anchors its icon, not its icon-plus-label. Were the label
+     * in flow, it would make the column taller and the translate would
+     * push the icon up by half the label's height -- so an item showing state
+     * would sit higher than a bare one beside it, at the same y. The label hangs
+     * below instead, out of flow, and every icon lands on its own y.
+     */
+    .item > .label {
+      position: absolute;
+      top: calc(100% + 2px);
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    /* Label-only items (showIcon: false) have no badge to hang under, so the
+       absolute label would drop to y + 2px on a zero-height item. Put it back
+       in flow so it becomes the item's box and centers on (x, y) as before. */
+    .label.inflow {
+      position: static;
+      transform: none;
     }
     .badge {
       width: 34px;
