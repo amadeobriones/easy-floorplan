@@ -89,7 +89,9 @@ export class FloorplanCard extends LitElement {
   }
 
   public getCardSize(): number {
-    return 6;
+    // 90°/270° turn the 5:3 canvas portrait, so it occupies more vertical space.
+    const rot = normalizePlanRotation(this._config?.rotation);
+    return rot === 90 || rot === 270 ? 10 : 6;
   }
 
   public static async getConfigElement() {
@@ -107,9 +109,16 @@ export class FloorplanCard extends LitElement {
    * Sections-view sizing (grid rows ≈ 56px): room for the 5:3 default canvas.
    * An instance method — HA calls it on the card element (getConfigElement /
    * getStubConfig are the static ones, called before any instance exists).
+   *
+   * At 90°/270° the plan is displayed portrait, so the card must ask for portrait
+   * grid space (rows/columns swapped) — otherwise it claims a landscape cell and
+   * the rotated plan overflows or is squashed until the user resizes by hand.
    */
   public getGridOptions() {
-    return { columns: 12, rows: 8, min_columns: 6, min_rows: 4 };
+    const rot = normalizePlanRotation(this._config?.rotation);
+    return rot === 90 || rot === 270
+      ? { columns: 8, rows: 12, min_columns: 4, min_rows: 6 }
+      : { columns: 12, rows: 8, min_columns: 6, min_rows: 4 };
   }
 
   private _isOn(item: FloorItem): boolean {
