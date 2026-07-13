@@ -367,13 +367,19 @@ export class FloorplanCardEditor extends LitElement {
 
   // ---- pinch-zoom on the canvas (issue #38) -------------------------------
 
-  private _onWrapPointerDown = (ev: PointerEvent): void => {
-    if (ev.pointerType !== "touch") return;
-    this._pinchPts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-    if (this._pinchPts.size !== 2) return;
-    // A second finger turns the gesture into a pinch: abort any draw/drag so
-    // the canvas doesn't draw a wall while the user is only trying to zoom.
-    this._cancelGesture();
+  /**
+   * (Re)anchor the pinch baseline to the current first two fingers and the
+   * current zoom. Called whenever the active-finger set changes while at least
+   * two remain — a third finger landing, or one of three lifting — so the
+   * distance ratio is always measured against the pair the move handler actually
+   * reads. Without this, a resting third finger (or lifting one of three) left
+   * `d0`/`z0` describing a different pair and the zoom jumped discontinuously.
+   */
+  private _rebasePinch(): void {
+    if (this._pinchPts.size < 2) {
+      this._pinch = null;
+      return;
+    }
     const wrap = this._canvasWrap;
     const rect = wrap?.getBoundingClientRect();
     const [a, b] = [...this._pinchPts.values()];
@@ -383,6 +389,18 @@ export class FloorplanCardEditor extends LitElement {
       cx: (a.x + b.x) / 2 - (rect?.left ?? 0) + (wrap?.scrollLeft ?? 0),
       cy: (a.y + b.y) / 2 - (rect?.top ?? 0) + (wrap?.scrollTop ?? 0),
     };
+  }
+
+  private _onWrapPointerDown = (ev: PointerEvent): void => {
+    if (ev.pointerType !== "touch") return;
+    this._pinchPts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (this._pinchPts.size < 2) return;
+    // A second finger turns the gesture into a pinch: abort any draw/drag so
+    // the canvas doesn't draw a wall while the user is only trying to zoom.
+    this._cancelGesture();
+    // Rebase on every finger-down at ≥2 (not just exactly 2), so a third finger
+    // re-anchors instead of leaving a stale two-finger baseline.
+    this._rebasePinch();
     ev.stopPropagation();
   };
 
@@ -410,7 +428,10 @@ export class FloorplanCardEditor extends LitElement {
   private _onWrapPointerEnd = (ev: PointerEvent): void => {
     if (ev.pointerType !== "touch") return;
     this._pinchPts.delete(ev.pointerId);
-    if (this._pinchPts.size < 2) this._pinch = null;
+    // Lifting one of three-plus fingers keeps a pinch alive, but on a different
+    // pair — rebase so it continues smoothly from the current zoom instead of
+    // snapping to the leftover pair's distance ratio.
+    this._rebasePinch();
   };
 
   /**
@@ -1107,8 +1128,7 @@ export class FloorplanCardEditor extends LitElement {
     // corners of other walls travel along (Alt detaches), so dragging a room
     // corner stretches the room (issue #30).
     if (drag.endpoint) {
-      const attach = ev.altKey ? [] : (drag.attached ?? []);
-      // What travels is Alt-gated (above); what is excluded from snapping is not.
+      // What travels is Alt-gated (below); what is excluded from snapping is not.
       // The coincident neighbour corners must never be snap candidates even when
       // Alt detaches — otherwise the dragged endpoint sticks to the very corner it
       // is detaching from, for the whole ENDPOINT_SNAP radius (the #30 dead zone).
@@ -1124,11 +1144,15 @@ export class FloorplanCardEditor extends LitElement {
           out = drag.endpoint === 1
             ? { ...out, x1: target.x, y1: target.y }
             : { ...out, x2: target.x, y2: target.y };
-        for (const a of attach) {
+        // Write every cluster corner every move: to `target` while it travels,
+        // back to its origin the moment Alt detaches. Iterating only `attach`
+        // (empty under Alt) left neighbours stranded wherever the pre-Alt drag
+        // had already dragged them.
+        for (const a of cluster) {
           if (a.id !== w.id) continue;
-          out = a.end === 1
-            ? { ...out, x1: target.x, y1: target.y }
-            : { ...out, x2: target.x, y2: target.y };
+          const nx = ev.altKey ? a.x0 : target.x;
+          const ny = ev.altKey ? a.y0 : target.y;
+          out = a.end === 1 ? { ...out, x1: nx, y1: ny } : { ...out, x2: nx, y2: ny };
         }
         return out;
       });
@@ -1164,17 +1188,20 @@ export class FloorplanCardEditor extends LitElement {
     const dx = this._snap(refX + (p.x - drag.start.x)) - refX;
     const dy = this._snap(refY + (p.y - drag.start.y)) - refY;
     let patch = this._applyDelta(dx, dy, drag.orig);
-    // Whole-wall drag: shared corners of neighboring walls follow (issue #30),
-    // unless Alt detaches or the neighbor is itself part of the selection
-    // (then it already translated with the group).
-    if (drag.attached?.length && !ev.altKey) {
+    // Whole-wall drag: shared corners of neighboring walls follow (issue #30).
+    // A neighbour that is itself selected already translated with the group, so
+    // skip it. Under Alt the cluster detaches — write it back to its origin every
+    // move, not just decline to move it, or a neighbour dragged before Alt was
+    // pressed stays stranded at that intermediate position.
+    if (drag.attached?.length) {
+      const alt = ev.altKey;
       const walls = (patch.walls ?? f.walls).map((w) => {
         let out = w;
         for (const a of drag.attached!) {
           if (a.id !== w.id || drag.orig.has(`wall:${a.id}`)) continue;
-          out = a.end === 1
-            ? { ...out, x1: a.x0 + dx, y1: a.y0 + dy }
-            : { ...out, x2: a.x0 + dx, y2: a.y0 + dy };
+          const nx = alt ? a.x0 : a.x0 + dx;
+          const ny = alt ? a.y0 : a.y0 + dy;
+          out = a.end === 1 ? { ...out, x1: nx, y1: ny } : { ...out, x2: nx, y2: ny };
         }
         return out;
       });

@@ -104,6 +104,19 @@ describe("#30 Alt-detach must actually detach", () => {
     expect({ x: n.x2, y: n.y2 }).toEqual({ x: 160, y: 40 });
     expect({ x: e.x1, y: e.y1 }).toEqual({ x: 160, y: 40 });
   });
+
+  it("pressing Alt mid-drag returns the neighbour to its origin, not strands it", async () => {
+    const { apply, wall } = await mountAtCorner();
+    // Move without Alt: neighbour e:1 follows to (160,40).
+    apply(160, 40, false);
+    expect({ x: wall("e").x1, y: wall("e").y1 }).toEqual({ x: 160, y: 40 });
+    // Now press Alt and keep dragging: the neighbour must snap back to (100,0),
+    // not stay stranded at (160,40) where the pre-Alt move left it.
+    apply(170, 50, true);
+    expect({ x: wall("e").x1, y: wall("e").y1 }).toEqual({ x: 100, y: 0 });
+    // The dragged endpoint itself keeps moving.
+    expect(wall("n").x2).toBeGreaterThan(160);
+  });
 });
 
 describe("#30 group drag stretches, does not tear", () => {
