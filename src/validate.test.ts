@@ -39,14 +39,14 @@ describe("validateConfig", () => {
   it("accepts a room's tempEntity", () => {
     const cfg = {
       type: "x", width: 10, height: 10,
-      rooms: [{ id: "r1", points: [[0, 0], [1, 1]], tempEntity: "sensor.living_room_temp" }],
+      rooms: [{ id: "r1", points: [[0, 0], [1, 0], [1, 1]], tempEntity: "sensor.living_room_temp" }],
     };
     expect(validateConfig(cfg).ok).toBe(true);
   });
   it("rejects a non-string tempEntity", () => {
     const cfg = {
       type: "x", width: 10, height: 10,
-      rooms: [{ id: "r1", points: [[0, 0], [1, 1]], tempEntity: 42 }],
+      rooms: [{ id: "r1", points: [[0, 0], [1, 0], [1, 1]], tempEntity: 42 }],
     };
     expect(validateConfig(cfg).ok).toBe(false);
   });
@@ -93,16 +93,41 @@ describe("validateConfig", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors.some((e) => e.startsWith("config.floors[0].items[0].x"))).toBe(true);
   });
-  it("rejects a bad kind enum and a bad rotation enum", () => {
+  it("rejects a bad kind enum", () => {
     const bad = JSON.parse(JSON.stringify(valid));
     bad.floors[0].items[0].kind = "toaster";
-    bad.floors[0].rotation = 45;
     const r = validateConfig(bad);
     expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.errors.some((e) => e.includes("items[0].kind"))).toBe(true);
-      expect(r.errors.some((e) => e.includes("rotation"))).toBe(true);
-    }
+    if (!r.ok) expect(r.errors.some((e) => e.includes("items[0].kind"))).toBe(true);
+  });
+
+  it("accepts a non-quarter rotation (the card coerces it, so the validator must not reject it)", () => {
+    const cfg = JSON.parse(JSON.stringify(valid));
+    cfg.floors[0].rotation = 45;
+    expect(validateConfig(cfg).ok).toBe(true);
+    // A non-number is still rejected.
+    cfg.floors[0].rotation = "spin";
+    expect(validateConfig(cfg).ok).toBe(false);
+  });
+
+  it("rejects a degenerate room with fewer than 3 points", () => {
+    const cfg = { type: "x", width: 10, height: 10, rooms: [{ id: "r", points: [[0, 0], [1, 1]] }] };
+    const r = validateConfig(cfg);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some((e) => e.includes("at least 3 points"))).toBe(true);
+  });
+
+  it("validates stateStyles shape (a string is not a rule list)", () => {
+    const cfg = {
+      type: "x", width: 10, height: 10,
+      items: [{ id: "i", x: 0, y: 0, kind: "light", stateStyles: "nope" }],
+    };
+    expect(validateConfig(cfg).ok).toBe(false);
+    const good = {
+      type: "x", width: 10, height: 10,
+      items: [{ id: "i", x: 0, y: 0, kind: "light", stateStyles: [{ state: "on", color: "#fff" }] }],
+    };
+    expect(validateConfig(good).ok).toBe(true);
   });
   it("collects multiple errors in one pass", () => {
     const r = validateConfig({ width: "x", height: "y" });

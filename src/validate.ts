@@ -49,22 +49,41 @@ const opening = shape(
   { id: str, type: oneOf("door", "window"), x: num, y: num, length: num, angle: num },
   { motion: oneOf("swing", "slide", "roll", "fold"), entity: str, activeColor: str }
 );
+// A conditional-style rule. Every field is optional; a bad shape here otherwise
+// reaches the render/lights path unchecked (where a non-array `stateStyles` threw).
+const stateStyle = shape(
+  {},
+  {
+    entity: str, state: str, state_not: str, above: num, below: num,
+    icon: str, color: str, animation: oneOf("none", "pulse", "blink"),
+  }
+);
+const stateStyles = arrayOf(stateStyle);
+// A polygon that actually encloses area: fewer than 3 points is a degenerate
+// "room" that scatters no devices and draws nothing.
+const polyPoints: Check = (v, p) => {
+  if (!Array.isArray(v)) return e(p, "expected a list of [x, y] points");
+  const errs = v.flatMap((pt, i) => point(pt, `${p}[${i}]`));
+  if (v.length < 3) errs.push(...e(p, "a room needs at least 3 points"));
+  return errs;
+};
+
 const item = shape(
   { id: str, x: num, y: num, kind: oneOf(...ITEM_KINDS) },
   {
     entity: str, secondaryEntity: str, name: str, icon: str, size: num, angle: num,
-    showState: bool, showIcon: bool, powerEntity: str,
+    showState: bool, showIcon: bool, powerEntity: str, stateStyles,
   }
 );
 const text = shape({ id: str, x: num, y: num, text: str }, { size: num, color: str, angle: num });
 const furniture = shape(
   { id: str, type: oneOf(...FURNITURE_TYPES), x: num, y: num, w: num, h: num },
-  { angle: num, entity: str, secondaryEntity: str, showState: bool }
+  { angle: num, entity: str, secondaryEntity: str, showState: bool, stateStyles }
 );
 const tracker = shape({ id: str, x: num, y: num, w: num, h: num }, { angle: num });
 const room = shape(
-  { id: str, points: arrayOf(point) },
-  { name: str, areaId: str, fill: str, fillOpacity: num, tempEntity: str },
+  { id: str, points: polyPoints },
+  { name: str, areaId: str, fill: str, fillOpacity: num, tempEntity: str, stateStyles },
 );
 const AWARENESS_KINDS = ["motion", "safety"];
 const awarenessMarker = shape({ id: str, x: num, y: num, entity: str, kind: oneOf(...AWARENESS_KINDS) });
@@ -82,7 +101,9 @@ const elementLists = {
 
 const floor = shape(
   { id: str },
-  { name: str, haFloor: str, image: str, imageOpacity: num, imageLocked: bool, rotation: oneOf(0, 90, 180, 270), ...elementLists }
+  // The card coerces any number to the nearest quarter turn (normalizeRotation),
+  // so accept any number here rather than rejecting e.g. 45 that the card renders.
+  { name: str, haFloor: str, image: str, imageOpacity: num, imageLocked: bool, rotation: num, ...elementLists }
 );
 
 const features = shape(

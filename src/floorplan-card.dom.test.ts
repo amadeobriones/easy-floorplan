@@ -191,6 +191,15 @@ describe("setConfig refuses configs that would crash or silently break the card"
     expect(run).toThrow(/duplicate floor id "dup"/);
   });
 
+  it("rejects top-level geometry alongside a populated floors[] (it would be silently dropped)", async () => {
+    const run = await setConfigOf({
+      type: "custom:easy-floorplan-card",
+      walls: [{ id: "w", x1: 0, y1: 0, x2: 10, y2: 0 }],
+      floors: [{ id: "f1" }],
+    });
+    expect(run).toThrow(/ignored when "floors" is set/);
+  });
+
   it("names the offending index", async () => {
     const run = await setConfigOf({ ...base(), items: [{ id: "ok", kind: "light", x: 0, y: 0 }, null] });
     expect(run).toThrow(/items\[1\]/);

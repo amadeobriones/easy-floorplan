@@ -123,6 +123,16 @@ export class FloorplanCard extends LitElement {
         seenIds.add(id);
         checkLists(floor as Record<string, unknown>, `floors[${i}].`);
       });
+      // getFloors() ignores top-level element lists once floors[] is populated, so
+      // a config carrying both would silently drop the top-level geometry. Refuse
+      // the ambiguity rather than lose data without a word.
+      if (raw.floors.length) {
+        const stray = ELEMENT_LISTS.find((k) => Array.isArray(raw[k]) && (raw[k] as unknown[]).length);
+        if (stray)
+          throw new Error(
+            `Invalid configuration: "${stray}" at the top level is ignored when "floors" is set — move it into a floor`
+          );
+      }
     }
     for (const key of ["width", "height", "grid"]) {
       if (raw[key] != null && typeof raw[key] !== "number")
