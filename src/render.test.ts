@@ -761,14 +761,22 @@ describe("resolveIconAnimation (issue #48)", () => {
     expect(resolveIconAnimation({ entity: "switch.a" }, "on")).toBeUndefined();
   });
 
-  it("never animates an inactive entity — including forced spin/pulse", () => {
+  it("never animates a genuinely inactive entity — including forced spin/pulse", () => {
     expect(resolveIconAnimation({ entity: "fan.ceiling" }, "off")).toBeUndefined();
     expect(
       resolveIconAnimation({ entity: "light.a", iconAnimation: "spin" }, "off"),
     ).toBeUndefined();
+    // A media player that is off/standby is inactive; paused is not (below).
+    expect(
+      resolveIconAnimation({ entity: "media_player.tv", iconAnimation: "pulse" }, "off"),
+    ).toBeUndefined();
+  });
+
+  it("animates a paused media player — HA treats paused as on", () => {
+    // Was asserted as a no-op; that was the allowlist bug. Paused is active.
     expect(
       resolveIconAnimation({ entity: "media_player.tv", iconAnimation: "pulse" }, "paused"),
-    ).toBeUndefined();
+    ).toBe("pulse");
   });
 
   it("fail-closed: unavailable/unknown/missing state never animates", () => {

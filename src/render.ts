@@ -207,24 +207,41 @@ export function isEntityOn(state: string | undefined): boolean {
  * calls every one of them off, forever — and their state-dependent icons
  * (`DOMAIN_STATE_ICONS`, above) can never show their active half.
  */
-const ACTIVE_STATES: Record<string, ReadonlySet<string>> = {
-  lock: new Set(["unlocked", "unlocking", "open", "opening"]),
-  vacuum: new Set(["cleaning", "returning"]),
-  camera: new Set(["recording", "streaming"]),
+// Some domains never report the string "on", so an active-state *allowlist* both
+// misses states as they are added and, worse, cannot express domains whose active
+// set is everything-but-a-few. We list the INACTIVE states instead: a domain's
+// active state is "not one of these", falling back to the generic on/off test for
+// domains not listed.
+const INACTIVE_STATES: Record<string, ReadonlySet<string>> = {
+  // A climate entity's state is its hvac mode — heat, cool, auto, dry, fan_only,
+  // off. None of them is "on", so a running thermostat read as off, permanently.
+  climate: new Set(["off"]),
+  water_heater: new Set(["off"]),
+  // "Not locked" includes jammed: a lock that failed to close must never draw the
+  // closed padlock.
+  lock: new Set(["locked", "locking"]),
+  vacuum: new Set(["docked", "idle", "paused", "error"]),
+  camera: new Set(["idle"]),
+  // Paused is not off. Home Assistant's own UI treats a paused player as on.
+  media_player: new Set(["off", "standby"]),
 };
 
 /**
  * Whether an entity is in its active state, by the rules of its own domain.
- * Every domain not in {@link ACTIVE_STATES} falls back to the generic on/off
- * test, unchanged. An unavailable or unknown state is never active, whatever
- * the domain — a stale "unlocked" during a sensor dropout is worse than
- * showing locked.
+ * Every domain not in {@link INACTIVE_STATES} falls back to the generic on/off
+ * test. An unavailable or unknown state is never active, whatever the domain —
+ * a stale "unlocked" during a sensor dropout is worse than showing locked.
+ *
+ * Listing the inactive states (rather than the active ones) is deliberate: HA
+ * gains new states as it grows, and an active-state list would silently call each
+ * new one "off". A climate in `fan_only`, a paused `media_player`, and a jammed
+ * `lock` all read active here — the cases an allowlist of three domains missed.
  */
 export function entityIsActive(entityId: string | undefined, state: string | undefined): boolean {
   if (!state || state === "unavailable" || state === "unknown") return false;
   const domain = entityId?.split(".")[0] ?? "";
-  const active = ACTIVE_STATES[domain];
-  return active ? active.has(state) : isEntityOn(state);
+  const inactive = INACTIVE_STATES[domain];
+  return inactive ? !inactive.has(state) : isEntityOn(state);
 }
 
 /**
