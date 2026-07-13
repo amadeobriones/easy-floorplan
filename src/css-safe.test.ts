@@ -86,3 +86,37 @@ describe("cssColorOr falls back to the trusted default", () => {
     expect(cssColorOr(undefined, "#000")).toBe("#000");
   });
 });
+
+describe("cssColor — HA theme idioms across versions + structural safety", () => {
+  const LEGIT = [
+    // named / hex / literal rgb/hsl (all HA versions)
+    "pink", "red", "transparent", "currentColor", "#ffffff", "#03a9f480",
+    "rgb(255, 255, 255)", "rgba(0,0,0,0.5)", "hsl(200,90%,48%)",
+    // traditional var() + Polymer/MDC era vars
+    "var(--primary-color)", "var(--card-background-color)",
+    "var(--paper-item-icon-color)", "var(--mdc-theme-primary)",
+    // 2022.12+ RGB-triplet idiom (colours stored as bare "r,g,b")
+    "rgb(var(--rgb-primary-color))", "rgba(var(--rgb-primary-color), 0.5)",
+    "rgba(var(--rgb-accent-color), var(--opacity, 0.3))",
+    // nested fallback chains + modern functions
+    "var(--ha-card-border-color, var(--divider-color))",
+    "var(--x, var(--y, #fff))",
+    "color-mix(in srgb, var(--primary-color), transparent 40%)",
+    "light-dark(#fff, #000)", "oklch(0.7 0.1 200)",
+  ];
+  for (const v of LEGIT) it(`accepts ${v}`, () => expect(cssColor(v)).toBe(v));
+
+  const ATTACKS = [
+    "red;position:fixed;inset:0", "red}body{x:1", "url(//evil)", "URL(//evil)",
+    "var(--x, url(//evil))", "var(--a, var(--b, url(//evil)))",
+    "rgb(var(--x));position:fixed", "image-set(//e)", "expression(1)",
+    "attr(data-x)", "element(#y)", "paint(w)", "red !important",
+    "red/**/;x:1", "#fff\\3b evil", 'red"x', "red<x", "10px;color:red",
+  ];
+  for (const a of ATTACKS) it(`rejects ${JSON.stringify(a)}`, () => expect(cssColor(a)).toBeUndefined());
+
+  it("cssColorOr falls back on unsafe, keeps safe", () => {
+    expect(cssColorOr("rgb(var(--rgb-primary-color))", "red")).toBe("rgb(var(--rgb-primary-color))");
+    expect(cssColorOr("red;evil", "var(--primary-color)")).toBe("var(--primary-color)");
+  });
+});
