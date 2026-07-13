@@ -157,6 +157,32 @@ describe("setConfig refuses configs that would crash or silently break the card"
     }
   });
 
+  it("rejects a null entry inside the floors model (the canonical model)", async () => {
+    // The crash class the guard exists for, previously left live for `floors[]`.
+    for (const key of ["walls", "rooms", "openings", "furniture", "items"]) {
+      const run = await setConfigOf({
+        type: "custom:easy-floorplan-card",
+        floors: [{ id: "f1", [key]: [null] }],
+      });
+      expect(run, key).toThrow(new RegExp(`floors\\[0\\]\\.${key}\\[0\\]`));
+    }
+  });
+
+  it("rejects a non-array floor list and a null floor", async () => {
+    expect(await setConfigOf({ type: "x", floors: [{ id: "f1", walls: "nope" }] })).toThrow(
+      /floors\[0\]\.walls" must be a list/
+    );
+    expect(await setConfigOf({ type: "x", floors: [null] })).toThrow(/floors\[0\]" must be an object/);
+  });
+
+  it("still accepts a valid floors config", async () => {
+    const ok = await setConfigOf({
+      type: "custom:easy-floorplan-card",
+      floors: [{ id: "f1", walls: [{ id: "w", x1: 0, y1: 0, x2: 10, y2: 0 }] }],
+    });
+    expect(ok).not.toThrow();
+  });
+
   it("names the offending index", async () => {
     const run = await setConfigOf({ ...base(), items: [{ id: "ok", kind: "light", x: 0, y: 0 }, null] });
     expect(run).toThrow(/items\[1\]/);

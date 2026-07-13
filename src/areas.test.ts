@@ -172,6 +172,13 @@ describe("devicesToAdd", () => {
     const out = devicesToAdd(dHass, "kitchen", room, new Set(["light.lamp"]));
     expect(out.map((d) => d.entity)).not.toContain("light.lamp");
   });
+  it("returns nothing (does not crash) when the room has no polygon", () => {
+    // validate.ts accepts `points: []`, so a pasted config reaches here; the
+    // empty polygon yields no scatter points and used to throw on `pts[i].x`.
+    const empty: Room = { id: "r", points: [] };
+    expect(() => devicesToAdd(dHass, "kitchen", empty, new Set())).not.toThrow();
+    expect(devicesToAdd(dHass, "kitchen", empty, new Set())).toEqual([]);
+  });
   it("positions inside the room bbox and is deterministic", () => {
     const a = devicesToAdd(dHass, "kitchen", room, new Set());
     const b = devicesToAdd(dHass, "kitchen", room, new Set());

@@ -88,19 +88,34 @@ export class FloorplanCard extends LitElement {
     // instead of a render crash deep inside the SVG.
     if (!config || typeof config !== "object") throw new Error("Invalid configuration");
     const raw = config as Record<string, unknown>;
-    // A key with an empty YAML value ("trackers:") parses to null — treat it
-    // as unset like the ?? defaults always have, not as malformed.
-    for (const key of ["rooms", "walls", "openings", "items", "texts", "furniture", "trackers", "floors"]) {
-      const list = raw[key];
-      if (list == null) continue;
-      if (!Array.isArray(list))
-        throw new Error(`Invalid configuration: "${key}" must be a list`);
-      // A stray "-" in the YAML list parses to a null entry. Left in, it becomes
-      // a null-dereference deep inside render (a broken card with a stack trace);
-      // caught here it is HA's clean error card instead.
-      const bad = list.findIndex((el) => el === null || typeof el !== "object");
-      if (bad !== -1)
-        throw new Error(`Invalid configuration: "${key}[${bad}]" must be an object`);
+    // A list key that is a list of objects. A key with an empty YAML value
+    // ("trackers:") parses to null — treat it as unset. A stray "-" parses to a
+    // null entry; left in, it becomes a null-dereference deep inside render (a
+    // broken card with a stack trace) — caught here it is HA's clean error card.
+    const ELEMENT_LISTS = ["rooms", "walls", "openings", "items", "texts", "furniture", "trackers"];
+    const checkLists = (obj: Record<string, unknown>, prefix: string) => {
+      for (const key of ELEMENT_LISTS) {
+        const list = obj[key];
+        if (list == null) continue;
+        if (!Array.isArray(list))
+          throw new Error(`Invalid configuration: "${prefix}${key}" must be a list`);
+        const bad = list.findIndex((el) => el === null || typeof el !== "object");
+        if (bad !== -1)
+          throw new Error(`Invalid configuration: "${prefix}${key}[${bad}]" must be an object`);
+      }
+    };
+    checkLists(raw, "");
+    // The floors model is the canonical one (getFloors normalises everything to
+    // it), so its per-floor lists need the same guard, or a null entry there
+    // crashes render exactly as a top-level one would.
+    if (raw.floors != null) {
+      if (!Array.isArray(raw.floors))
+        throw new Error(`Invalid configuration: "floors" must be a list`);
+      raw.floors.forEach((floor, i) => {
+        if (floor === null || typeof floor !== "object")
+          throw new Error(`Invalid configuration: "floors[${i}]" must be an object`);
+        checkLists(floor as Record<string, unknown>, `floors[${i}].`);
+      });
     }
     for (const key of ["width", "height", "grid"]) {
       if (raw[key] != null && typeof raw[key] !== "number")

@@ -152,5 +152,9 @@ export function devicesToAdd(
     return true;
   });
   const pts = scatterInPolygon(room.points, ids.length);
-  return ids.map((entity, i) => ({ entity, x: pts[i].x, y: pts[i].y, kind: kindFromEntity(entity) }));
+  // A room with no polygon (empty `points`) yields no scatter points; place only
+  // as many devices as we have positions for rather than dereferencing past the end.
+  return ids
+    .slice(0, pts.length)
+    .map((entity, i) => ({ entity, x: pts[i].x, y: pts[i].y, kind: kindFromEntity(entity) }));
 }

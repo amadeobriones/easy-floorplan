@@ -109,6 +109,7 @@ import { addRule, removeRule, setRule } from "./statestyles";
 import { renderStateStyleRows } from "./statestyles-form";
 import type { StateStyle } from "./types";
 import { FEATURE_META, featureEnabled } from "./features";
+import { cssColorOr } from "./css-safe";
 
 const formLabel = (s: FormField): string => s.label;
 const formHelper = (s: FormField): string | undefined => s.helper;
@@ -2866,7 +2867,7 @@ export class FloorplanCardEditor extends LitElement {
     const size = it.size ?? DEFAULT_ITEM_SIZE;
     const showIcon = it.showIcon ?? true;
     const display = it.display ?? "badge";
-    const rippleColor = it.rippleColor ?? "var(--primary-color, #03a9f4)";
+    const rippleColor = cssColorOr(it.rippleColor, "var(--primary-color, #03a9f4)");
     const rippleSize = it.rippleSize ?? DEFAULT_RIPPLE_SIZE;
 
     const badge = html`<div
@@ -2911,7 +2912,7 @@ export class FloorplanCardEditor extends LitElement {
         class="edit-text ${selected ? "selected" : ""}"
         style="left:${(t.x / c.width) * 100}%; top:${(t.y / c.height) * 100}%;
                font-size:${t.size ?? DEFAULT_TEXT_SIZE}px;
-               color:${t.color ?? "var(--primary-text-color)"};
+               color:${cssColorOr(t.color, "var(--primary-text-color)")};
                transform:translate(-50%,-50%) rotate(${t.angle ?? 0}deg);"
         @pointerdown=${(e: PointerEvent) => this._onOverlayDown(e, { kind: "text", id: t.id })}
         @pointermove=${this._onOverlayMove}

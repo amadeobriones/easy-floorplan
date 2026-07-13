@@ -21,11 +21,16 @@
 const HEX = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 // named keywords and CSS-wide keywords: red, transparent, currentColor, inherit…
 const KEYWORD = /^[a-z]+$/i;
-// rgb()/rgba()/hsl()/hsla() — only numbers, separators, %, /, and whitespace inside
-const FUNC = /^(?:rgba?|hsla?)\([0-9.,%/\s]+\)$/i;
-// var(--token) with an optional simple fallback that itself contains none of the
-// characters an injection needs (`;` `{` `}` `(` `)`), e.g. var(--primary, #03a9f4)
-const VAR = /^var\(\s*--[a-z0-9-]+\s*(?:,\s*[^;(){}]*)?\)$/i;
+// The colour functions CSS actually has — rgb/hsl plus the modern spaces
+// (oklch is now the default output of many pickers). Only numbers, the angle/
+// space keywords those functions take, separators, %, / and whitespace inside;
+// no nested `(`, so url()/expression()/calc() can never form.
+const FUNC =
+  /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([a-z0-9.,%/\s-]+\)$/i;
+// var(--token) with an optional simple fallback restricted to the characters a
+// colour value uses — no `;` `{` `}` `(` `)` and no injection-adjacent punctuation,
+// e.g. var(--primary, #03a9f4). Tighter than "anything but delimiters".
+const VAR = /^var\(\s*--[a-z0-9-]+\s*(?:,\s*[a-z0-9\s.,%/#-]*)?\)$/i;
 
 /**
  * The colour if it is safe to place in a `style` attribute, else `undefined`.

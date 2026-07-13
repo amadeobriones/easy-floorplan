@@ -1438,11 +1438,12 @@ describe("domains whose states are an open set", () => {
     expect(entityIsActive("lock.front", "locked")).toBe(false);
   });
 
-  it("a paused media player is on; a standby one is not", () => {
-    for (const s of ["playing", "paused", "buffering", "idle", "on"]) {
+  it("a paused media player is on; off/standby/idle are not", () => {
+    for (const s of ["playing", "paused", "buffering", "on"]) {
       expect(entityIsActive("media_player.tv", s), s).toBe(true);
     }
-    for (const s of ["off", "standby"]) {
+    // idle = on but nothing playing: must not draw the glow or the "playing" icon.
+    for (const s of ["off", "standby", "idle"]) {
       expect(entityIsActive("media_player.tv", s), s).toBe(false);
     }
   });

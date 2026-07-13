@@ -20,7 +20,8 @@ export const ROOM_LIGHT_WASH_OPACITY = 0.25;
  * undefined for a room.
  */
 function roomLightRule(rules: StateStyle[] | undefined): StateStyle | undefined {
-  return rules?.find((r) => r.color === "rgb" && r.entity);
+  // A hand-written config can set stateStyles to a non-array; find would throw.
+  return Array.isArray(rules) ? rules.find((r) => r.color === "rgb" && r.entity) : undefined;
 }
 
 /**

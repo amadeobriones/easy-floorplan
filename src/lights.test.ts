@@ -19,6 +19,14 @@ describe("renderRoomLightWash", () => {
     expect(renderRoomLightWash(room(), hass({}))).toBe("");
   });
 
+  it("does not crash when stateStyles is not an array (malformed config)", () => {
+    // validate.ts doesn't check stateStyles' shape, so a pasted `stateStyles: "x"`
+    // reaches here; `rules?.find` used to throw on the string.
+    const r = { ...room(), stateStyles: "nope" as unknown as Room["stateStyles"] };
+    expect(() => renderRoomLightWash(r, hass({}))).not.toThrow();
+    expect(renderRoomLightWash(r, hass({}))).toBe("");
+  });
+
   it("draws nothing when the light is off", () => {
     const r = room([{ entity: "light.lamp", color: "rgb" }]);
     const h = hass({ "light.lamp": { state: "off", attributes: {} } });

@@ -267,8 +267,11 @@ const INACTIVE_STATES: Record<string, ReadonlySet<string>> = {
   lock: new Set(["locked", "locking"]),
   vacuum: new Set(["docked", "idle", "paused", "error"]),
   camera: new Set(["idle"]),
-  // Paused is not off. Home Assistant's own UI treats a paused player as on.
-  media_player: new Set(["off", "standby"]),
+  // Paused is not off — HA's own UI treats a paused player as on. Idle is: the
+  // player is on but nothing is playing, so it must not draw the "playing" icon
+  // or the active glow. (This predicate drives the badge, the state icon, and
+  // icon animation alike, so idle has to read inactive in all three.)
+  media_player: new Set(["off", "standby", "idle"]),
 };
 
 /** The colour a light is actually shining, as a CSS colour, or undefined. */

@@ -13,8 +13,18 @@ describe("cssColor accepts every legitimate colour form", () => {
     "cornflowerblue",
     "rgb(255, 128, 0)",
     "rgba(255,128,0,0.5)",
+    "rgb(255 128 0)",
+    "rgb(255 128 0 / 50%)",
     "hsl(200, 50%, 40%)",
+    "hsl(200deg 50% 40%)",
     "hsla(200, 50%, 40%, 0.5)",
+    // Modern colour spaces — oklch is the default output of many pickers now.
+    "oklch(0.7 0.15 200)",
+    "oklab(0.7 0.1 -0.1)",
+    "lab(52% 40 60)",
+    "lch(52% 60 40)",
+    "hwb(200 30% 20%)",
+    "color(display-p3 1 0 0)",
     "var(--primary-color)",
     "var(--primary-color, #03a9f4)",
     "  #fff  ",
@@ -40,6 +50,11 @@ describe("cssColor rejects the demonstrated injection payloads", () => {
     "rgb(0,0,0);x:y",
     "var(--x); background: url(https://evil/y)",
     "var(--x, url(https://evil))",
+    // Broadened FUNC allowlist must not let injection ride a modern function.
+    "color(url(https://evil/x))",
+    "oklch(0.7 0.15 200);position:fixed",
+    "hwb(200 30% 20%);background:url(evil)",
+    "oklch(0.7);}html{display:none",
   ])("rejects %s", (v) => {
     expect(cssColor(v)).toBeUndefined();
   });
