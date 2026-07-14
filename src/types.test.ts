@@ -3,6 +3,7 @@ import {
   emptyConfig,
   makeFloor,
   getFloors,
+  moveFloor,
   resolveSnap,
   snapToGridPercent,
   gridPercentToSnap,
@@ -228,6 +229,43 @@ describe("getFloors", () => {
     expect(f.image).toBe("/local/plan.png");
     expect(f.imageOpacity).toBe(0.5);
     expect(f.trackers).toEqual([]);
+  });
+});
+
+describe("moveFloor (order is array order)", () => {
+  const f = (id: string) => ({ id, name: id, walls: [], openings: [], items: [], texts: [], furniture: [], trackers: [] });
+  const floors = [f("a"), f("b"), f("c")];
+
+  it("moves a floor down (swaps with the next)", () => {
+    expect(moveFloor(floors, "a", 1).map((x) => x.id)).toEqual(["b", "a", "c"]);
+    expect(moveFloor(floors, "b", 1).map((x) => x.id)).toEqual(["a", "c", "b"]);
+  });
+
+  it("moves a floor up (swaps with the previous)", () => {
+    expect(moveFloor(floors, "b", -1).map((x) => x.id)).toEqual(["b", "a", "c"]);
+    expect(moveFloor(floors, "c", -1).map((x) => x.id)).toEqual(["a", "c", "b"]);
+  });
+
+  it("is a no-op at the edges and returns the SAME array reference", () => {
+    expect(moveFloor(floors, "a", -1)).toBe(floors); // already first
+    expect(moveFloor(floors, "c", 1)).toBe(floors); // already last
+  });
+
+  it("is a no-op for an unknown id (same reference)", () => {
+    expect(moveFloor(floors, "nope", 1)).toBe(floors);
+    expect(moveFloor(floors, "nope", -1)).toBe(floors);
+  });
+
+  it("does not mutate the input array", () => {
+    const before = floors.map((x) => x.id);
+    moveFloor(floors, "a", 1);
+    expect(floors.map((x) => x.id)).toEqual(before);
+  });
+
+  it("handles a single-floor list (nothing can move)", () => {
+    const one = [f("only")];
+    expect(moveFloor(one, "only", 1)).toBe(one);
+    expect(moveFloor(one, "only", -1)).toBe(one);
   });
 });
 

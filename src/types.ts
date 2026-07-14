@@ -797,6 +797,21 @@ export function getFloors(c: FloorplanCardConfig): Floor[] {
 }
 
 /**
+ * Reorder floors: move the floor with `id` one slot in `dir` (-1 up / +1 down).
+ * Floor order is purely the array order (see {@link getFloors}), so this is the
+ * whole reordering operation. Returns the SAME array reference when the move is
+ * a no-op (id not found, or already at the edge), so callers can skip a commit.
+ */
+export function moveFloor(floors: Floor[], id: string, dir: -1 | 1): Floor[] {
+  const i = floors.findIndex((f) => f.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= floors.length) return floors;
+  const next = floors.slice();
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
+}
+
+/**
  * Resolve a tracker presence gate into a tri-state:
  * - `null` — no presence gate configured for this sensor (caller treats as
  *   "not gated", i.e. always allow the marker).

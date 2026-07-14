@@ -49,6 +49,7 @@ import {
   getFloors,
   gridPercentToSnap,
   makeFloor,
+  moveFloor,
   haFloorsOf,
   resolveSnap,
   snapToGridPercent,
@@ -537,6 +538,12 @@ export class FloorplanCardEditor extends LitElement {
     const out = { ...config };
     for (const key of ["walls", "openings", "items", "texts", "furniture", "trackers"] as const) {
       if (!out[key]?.length) delete out[key];
+    }
+    // Drop keys explicitly set to undefined (e.g. a cleared `defaultFloor`) so
+    // they don't ride into the user's YAML as empty keys — same intent as the
+    // array pruning above.
+    for (const k of Object.keys(out)) {
+      if ((out as Record<string, unknown>)[k] === undefined) delete (out as Record<string, unknown>)[k];
     }
     this._lastEmitted = out;
     this.dispatchEvent(
@@ -1669,12 +1676,33 @@ export class FloorplanCardEditor extends LitElement {
   private _deleteFloor(): void {
     const floors = this._config.floors ?? [];
     if (floors.length <= 1) return;
-    const idx = floors.findIndex((f) => f.id === this._activeFloorId);
-    const remaining = floors.filter((f) => f.id !== this._activeFloorId);
-    this._commit({ ...this._config, floors: remaining });
+    const deletedId = this._activeFloorId;
+    const idx = floors.findIndex((f) => f.id === deletedId);
+    const remaining = floors.filter((f) => f.id !== deletedId);
+    // Deleting the floor that `defaultFloor` points at would leave a dangling id
+    // (setConfig then silently falls back to the first floor). Clear it instead.
+    const clearDefault = this._config.defaultFloor === deletedId;
+    this._commit({
+      ...this._config,
+      floors: remaining,
+      ...(clearDefault ? { defaultFloor: undefined } : {}),
+    });
     this._activeFloorId = remaining[Math.max(0, idx - 1)].id;
     this._clearSel();
     this._roomDraft = [];
+  }
+
+  /** Move a floor up/down in the list. Order is purely array order. */
+  private _moveFloor(id: string, dir: -1 | 1): void {
+    const floors = this._config.floors ?? [];
+    const next = moveFloor(floors, id, dir);
+    if (next === floors) return; // no-op at an edge / unknown id
+    this._commit({ ...this._config, floors: next });
+  }
+
+  /** Set (or clear) which floor is shown first on load. */
+  private _setDefaultFloor(id: string, on: boolean): void {
+    this._commit({ ...this._config, defaultFloor: on ? id : undefined });
   }
 
   private _updateWall(id: string, partial: Partial<Wall>): void {
@@ -2101,6 +2129,7 @@ export class FloorplanCardEditor extends LitElement {
     const c = this._config;
     const floor = this._floor();
     const floors = c.floors ?? [];
+    const activeIdx = floors.findIndex((f) => f.id === this._activeFloorId);
     const floorEmpty =
       !floor.walls.length &&
       !floor.openings.length &&
@@ -2245,6 +2274,41 @@ export class FloorplanCardEditor extends LitElement {
                         this._renameFloor(this._activeFloorId, (e.target as HTMLInputElement).value)}
                     />
                   </div>
+                  ${floors.length > 1
+                    ? html`<div class="pop-row">
+                          <label>Order</label>
+                          <span class="floor-move">
+                            <button
+                              aria-label="Move floor up"
+                              title="Move up"
+                              ?disabled=${activeIdx <= 0}
+                              @click=${() => this._moveFloor(this._activeFloorId, -1)}
+                            >
+                              <ha-icon icon="mdi:arrow-up"></ha-icon>
+                            </button>
+                            <button
+                              aria-label="Move floor down"
+                              title="Move down"
+                              ?disabled=${activeIdx >= floors.length - 1}
+                              @click=${() => this._moveFloor(this._activeFloorId, 1)}
+                            >
+                              <ha-icon icon="mdi:arrow-down"></ha-icon>
+                            </button>
+                          </span>
+                        </div>
+                        <label class="pop-row floor-default">
+                          <span>Show first on load</span>
+                          <input
+                            type="checkbox"
+                            .checked=${c.defaultFloor === this._activeFloorId}
+                            @change=${(e: Event) =>
+                              this._setDefaultFloor(
+                                this._activeFloorId,
+                                (e.target as HTMLInputElement).checked
+                              )}
+                          />
+                        </label>`
+                    : nothing}
                   <button
                     class="danger pop-action"
                     ?disabled=${floors.length <= 1}
@@ -3882,6 +3946,40 @@ export class FloorplanCardEditor extends LitElement {
       border: 1px solid var(--divider-color, #ccc);
       background: var(--card-background-color, #fff);
       color: var(--primary-text-color);
+    }
+    .floor-move {
+      display: flex;
+      gap: 6px;
+    }
+    .floor-move button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      cursor: pointer;
+    }
+    .floor-move button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    .floor-default {
+      cursor: pointer;
+    }
+    .floor-default span {
+      flex: 1;
+      font-size: 12px;
+      color: var(--secondary-text-color);
+    }
+    .floor-default input {
+      flex: 0 0 auto;
+      width: auto;
+      padding: 0;
+      border: none;
+      background: none;
     }
     .pop-action {
       display: inline-flex;
