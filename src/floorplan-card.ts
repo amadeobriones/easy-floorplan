@@ -23,7 +23,8 @@ import {
   renderTracker,
   trackerSensorReading,
   entityIsActive,
-  itemStateText,
+  itemBadgeLabel,
+  itemLabelSize,
   hassRenderInputsChanged,
   collectWatchedEntities,
   resolveItemIcon,
@@ -191,8 +192,9 @@ export class FloorplanCard extends LitElement {
 
   private _renderItem(item: FloorItem, c: FloorplanCardConfig, rot: PlanRotation): TemplateResult {
     const on = this._isOn(item);
-    // No entity, no state line — the badge alone marks the device (issue #39).
-    const showState = !!item.entity && (item.showState ?? item.kind === "sensor");
+    // Name/state composition lives in itemBadgeLabel, including #39's
+    // no-entity guard (an unbound device gets no state line).
+    const labelText = itemBadgeLabel(this.hass, item);
     const showIcon = item.showIcon ?? true;
     const display = item.display ?? "badge";
     const rippleColor = item.rippleColor ?? "var(--primary-color, #03a9f4)";
@@ -229,9 +231,11 @@ export class FloorplanCard extends LitElement {
         })}
       >
         ${visual}
-        ${showState
-          ? html`<span class="label ${visual === nothing ? "inflow" : ""}"
-              >${itemStateText(this.hass, item)}</span
+        ${labelText
+          ? html`<span
+              class="label ${visual === nothing ? "inflow" : ""}"
+              style="font-size:${itemLabelSize(item.labelSize)}px;"
+              >${labelText}</span
             >`
           : nothing}
       </div>

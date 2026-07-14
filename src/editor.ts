@@ -49,6 +49,7 @@ import {
   kindFromEntity,
   resolveItemIcon,
   itemIconSize,
+  itemLabelSize,
   snapToWall,
   collectWatchedEntities,
   hassRenderInputsChanged,
@@ -2587,7 +2588,9 @@ export class FloorplanCardEditor extends LitElement {
         @pointercancel=${this._onPointerCancel}
       >
         ${visual}
-        <span class="ilabel">${label}</span>
+        <!-- The editor label always shows (identification while editing);
+             only its size previews the card's labelSize (issue #59). -->
+        <span class="ilabel" style="font-size:${it.labelSize != null ? itemLabelSize(it.labelSize) : 11}px;">${label}</span>
       </div>
     `;
   }

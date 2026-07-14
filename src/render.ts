@@ -82,6 +82,51 @@ export function itemStateText(
   return `${primary} · ${entityStateText(hass, item.secondaryEntity)}`;
 }
 
+/** Default label font size (px) for an item's name/state line. */
+export const DEFAULT_LABEL_SIZE = 12;
+
+/**
+ * The label line under an item's badge, or "" for none: the name (issue #61)
+ * and/or the state, per the item's toggles. `showState` keeps its historic
+ * default (sensors only); `showName` defaults off. Both together read
+ * "Name · state". No entity, no state line (issue #39) — an unbound device's
+ * label can only be its configured name.
+ */
+export function itemBadgeLabel(
+  hass: RenderHass | undefined,
+  item: {
+    entity: string;
+    secondaryEntity?: string;
+    name?: string;
+    kind: ItemKind;
+    showName?: boolean;
+    showState?: boolean;
+  },
+): string {
+  const parts: string[] = [];
+  if (item.showName) {
+    const friendly = hass?.states[item.entity]?.attributes?.friendly_name as string | undefined;
+    const name = item.name || friendly || item.entity;
+    if (name) parts.push(name);
+  }
+  if (!!item.entity && (item.showState ?? item.kind === "sensor"))
+    parts.push(itemStateText(hass, item));
+  return parts.join(" · ");
+}
+
+/**
+ * Clamp a config `labelSize` to the editor's 8–40 px range at the render
+ * sink. The editor already clamps, but a hand-edited / imported config
+ * bypasses it — and this value lands in an inline `style` attribute, so a
+ * string like `"20px;color:red"` must coerce to a plain number, never pass
+ * through (review feedback on #62; same surface #65 hardens).
+ */
+export function itemLabelSize(v: unknown): number {
+  const n = typeof v === "string" && v !== "" ? Number(v) : (v as number | undefined);
+  if (typeof n !== "number" || !Number.isFinite(n)) return DEFAULT_LABEL_SIZE;
+  return Math.min(40, Math.max(8, n));
+}
+
 /** Default mdi icon per item kind, used when neither config nor entity supplies one. */
 export function defaultIcon(kind: ItemKind): string {
   switch (kind) {
