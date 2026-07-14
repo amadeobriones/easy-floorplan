@@ -20,6 +20,8 @@ import {
   DEFAULT_GRID,
   DEFAULT_ITEM_SIZE,
   DEFAULT_TEXT_SIZE,
+  DEFAULT_WIDTH,
+  DEFAULT_HEIGHT,
   DEFAULT_RIPPLE_SIZE,
   DEFAULT_TRACKER_DOT_SIZE,
   FURNITURE_DEFAULT_SIZE,
@@ -1886,7 +1888,8 @@ export class FloorplanCardEditor extends LitElement {
         <div class="workspace">
         <div class="canvas-outer">
         <div class="canvas-wrap" tabindex="0" @wheel=${this._onCanvasWheel}>
-          <div class="stage" style="aspect-ratio: ${c.width} / ${c.height}; width:${this._zoom * 100}%;">
+          <div class="stage" style="aspect-ratio: ${cssNumber(c.width, DEFAULT_WIDTH)} / ${cssNumber(
+            c.height, DEFAULT_HEIGHT)}; width:${this._zoom * 100}%;">
             <svg
               viewBox="0 0 ${c.width} ${c.height}"
               preserveAspectRatio="none"

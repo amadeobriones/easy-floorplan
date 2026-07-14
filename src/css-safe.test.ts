@@ -160,3 +160,15 @@ describe("cssNumber — coerces size/angle fields, blocks breakouts", () => {
     expect(cssNumber(Infinity, 16)).toBe(16);
   });
 });
+
+describe("cssNumber — style-attribute injection at the aspect-ratio sink", () => {
+  const evil = "1 / 600; position: fixed; inset: 0; background: url(//evil)";
+  it("coerces a declaration-breakout width to the fallback", () => {
+    expect(cssNumber(evil, 1000)).toBe(1000);
+    expect(String(cssNumber(evil, 1000))).not.toMatch(/[;:]/);
+  });
+  it("treats a blank string as unset, not 0", () => {
+    expect(cssNumber("", 1000)).toBe(1000);
+    expect(cssNumber("   ", 1000)).toBe(1000);
+  });
+});

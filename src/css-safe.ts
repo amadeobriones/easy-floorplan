@@ -95,6 +95,9 @@ export function cssColorOr(value: unknown, fallback: string): string {
  */
 export function cssNumber(value: unknown, fallback: number): number {
   if (value == null) return fallback;
+  // Number("") and Number("   ") are 0 (finite), which would silently become
+  // 0px / a 0 ratio; treat a blank string as unset.
+  if (typeof value === "string" && value.trim() === "") return fallback;
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : fallback;
 }

@@ -264,7 +264,7 @@ export class FloorplanCard extends LitElement {
     // transform below; the HTML overlay remaps per point in _renderItem /
     // _renderText. Both must use the same mapping (rotatePlanPoint).
     const rot = normalizePlanRotation(c.rotation);
-    const dims = rotatedCanvasSize(c.width, c.height, rot);
+    const dims = rotatedCanvasSize(cssNumber(c.width, DEFAULT_WIDTH), cssNumber(c.height, DEFAULT_HEIGHT), rot);
     const rotTransform = planRotationTransform(c.width, c.height, rot);
     return html`
       <ha-card .header=${c.title ?? nothing}>
