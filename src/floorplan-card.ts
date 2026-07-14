@@ -380,7 +380,7 @@ export class FloorplanCard extends LitElement {
 
     return html`
       <div
-        class="item ${on ? "on" : "off"} ${labelOnly ? "label-only" : ""} ${
+        class="item ${on ? "on" : "off"} ${
           style?.animation && style.animation !== "none" ? `anim-${style.animation}` : ""
         }"
         style="left:${(item.x / c.width) * 100}%; top:${(item.y / c.height) * 100}%;${
@@ -397,7 +397,11 @@ export class FloorplanCard extends LitElement {
         })}
       >
         ${visual}
-        ${showState ? html`<span class="label">${itemStateText(this.hass, item)}</span>` : nothing}
+        ${showState
+          ? html`<span class="label ${labelOnly ? "inflow" : ""}"
+              >${itemStateText(this.hass, item)}</span
+            >`
+          : nothing}
       </div>
     `;
   }
@@ -901,11 +905,13 @@ export class FloorplanCard extends LitElement {
       transform: translateX(-50%);
       white-space: nowrap;
     }
-    /*
-     * ...unless the label is all there is. An item with showIcon: false renders
-     * no badge, so the column has zero height and an absolute label would hang
-     * 2px below the point instead of centring on it.
-     */
+    /* Label-only items (showIcon: false) have no badge to hang under, so the
+       absolute label would drop to y + 2px on a zero-height item. Put it back
+       in flow so it becomes the item's box and centers on (x, y) as before. */
+    .label.inflow {
+      position: static;
+      transform: none;
+    }
     /*
      * Conditional animations (stateStyles). Only two: pulse and blink. "Blinking"
      * is one keyframe; a general animation grammar is a project, not a feature.
@@ -966,11 +972,6 @@ export class FloorplanCard extends LitElement {
       50%      { opacity: calc(0.35 * var(--fp-glow-intensity, 1)); }
     }
     ${ELEMENT_ANIMATION_CSS_EQ}
-    .item.label-only > .label {
-      position: static;
-      transform: none;
-      white-space: nowrap;
-    }
     .badge {
       width: 34px;
       height: 34px;

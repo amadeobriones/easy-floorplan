@@ -136,7 +136,10 @@ describe("showIcon: false", () => {
       { "light.k": "on" }
     );
     const item = itemEl(el, "i1");
-    expect(item!.classList.contains("label-only")).toBe(true);
+    // The label is the whole item, so it must sit in flow and centre on (x, y)
+    // rather than hang below a zero-height column.
+    const label = item!.querySelector(".label");
+    expect(label!.classList.contains("inflow")).toBe(true);
     expect(item!.querySelector(".stack-icon"), "no icon badge when showIcon is false").toBeNull();
   });
 });
