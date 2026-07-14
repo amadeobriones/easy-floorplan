@@ -110,10 +110,11 @@ background):
 - **+ Add** — one popover for everything droppable: device, text, and all furniture
   types shown as their actual glyphs (pick a sofa by seeing a sofa). The new element is
   selected immediately so the **Element** section is ready for configuring it.
-- **floor** — switch floors with the dropdown, add one with **+**; rename and delete
-  live behind the gear button. The gear also offers an **HA floor** dropdown listing
-  your Home Assistant floors — linking one names the plan floor after it (rename
-  afterwards if you like; the link sticks either way).
+- **floor** — switch floors with the dropdown, add one with **+**; rename, reorder
+  (**Order** ↑/↓), pick which floor **shows first on load**, and delete live behind the
+  gear button. The gear also offers an **HA floor** dropdown listing your Home Assistant
+  floors — linking one names the plan floor after it (rename afterwards if you like; the
+  link sticks either way).
 
 Undo/redo buttons sit at the right of the tools row. Zoom controls live on the canvas
 itself (bottom-right): **−** / **+** step, click the percentage to reset, the fit button
@@ -350,8 +351,9 @@ for backward compatibility.
 
 `{ id, name, haFloor?, image?, imageOpacity?, walls, openings, items, texts, furniture }`
 — a named floor with its own elements. Use the **floor** controls in the editor toolbar
-to add, rename, switch and delete floors; the live card shows a floor switcher in the
-top-right when there is more than one.
+to add, rename, switch, reorder and delete floors, and to set which floor shows first
+(`defaultFloor`); the live card shows a floor switcher in the top-right when there is
+more than one. Floor order is simply the order of the `floors` array.
 
 **`haFloor`** optionally stores the id of a linked Home Assistant floor (set from the
 editor's floor gear popover). Today the link auto-names the floor; it is kept in the

@@ -271,3 +271,129 @@ describe("editor icon preview matches the card (registry-icon override)", () => 
     expect(icons).toContain("mdi:registry-override");
   });
 });
+
+describe("floor reorder + default floor", () => {
+  const F = (id: string, name: string) => ({
+    id, name, walls: [], openings: [], items: [], texts: [], furniture: [], trackers: [],
+  });
+
+  /** Mount the editor on a multi-floor config; capture the last emitted config. */
+  async function mountFloors(floors: unknown[], defaultFloor?: string) {
+    const { FloorplanCardEditor } = await import("./editor");
+    const el = document.createElement("easy-floorplan-card-editor") as InstanceType<
+      typeof FloorplanCardEditor
+    >;
+    const priv = el as unknown as {
+      hass: unknown;
+      _activeFloorId: string;
+      _undo(): void;
+      updateComplete: Promise<unknown>;
+    };
+    priv.hass = HASS;
+    let last: FloorplanCardConfig | null = null;
+    el.addEventListener("config-changed", (e) => {
+      last = (e as CustomEvent).detail.config as FloorplanCardConfig;
+    });
+    el.setConfig({ ...CONFIG, floors, ...(defaultFloor ? { defaultFloor } : {}) } as unknown as FloorplanCardConfig);
+    document.body.appendChild(el);
+    await priv.updateComplete;
+    return { el, priv, get last() { return last; } };
+  }
+
+  const openMenu = async (el: HTMLElement, priv: { updateComplete: Promise<unknown> }) => {
+    el.shadowRoot!.querySelector<HTMLButtonElement>('button[aria-label="Floor settings"]')!.click();
+    await priv.updateComplete;
+  };
+
+  /** The floor picker's option order — scoped to the toolbar select (not the HA-floor select). */
+  const floorOrder = (el: HTMLElement) =>
+    [...el.shadowRoot!.querySelector(".floors > select")!.querySelectorAll("option")].map((o) => o.value);
+
+  /** Make `id` the active floor via the real toolbar select, as a user would. */
+  const selectFloor = async (el: HTMLElement, priv: { updateComplete: Promise<unknown> }, id: string) => {
+    const sel = el.shadowRoot!.querySelector<HTMLSelectElement>(".floors > select")!;
+    sel.value = id;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await priv.updateComplete;
+  };
+
+  it("move-down reorders the floors array and keeps the same floor active", async () => {
+    const { el, priv } = await mountFloors([F("a", "Ground"), F("b", "First"), F("c", "Roof")]);
+    expect(priv._activeFloorId).toBe("a");
+    await openMenu(el, priv);
+    el.shadowRoot!.querySelector<HTMLButtonElement>('button[aria-label="Move floor down"]')!.click();
+    await priv.updateComplete;
+    expect(floorOrder(el)).toEqual(["b", "a", "c"]);
+    expect(priv._activeFloorId).toBe("a"); // id-based selection survives reorder
+  });
+
+  it("move-up reorders through the button (symmetric to move-down)", async () => {
+    const { el, priv } = await mountFloors([F("a", "Ground"), F("b", "First"), F("c", "Roof")]);
+    await selectFloor(el, priv, "b"); // make the middle floor active so up is enabled
+    await openMenu(el, priv);
+    el.shadowRoot!.querySelector<HTMLButtonElement>('button[aria-label="Move floor up"]')!.click();
+    await priv.updateComplete;
+    expect(floorOrder(el)).toEqual(["b", "a", "c"]);
+    expect(priv._activeFloorId).toBe("b");
+  });
+
+  it("disables move-up on the first floor and move-down on the last", async () => {
+    const { el, priv } = await mountFloors([F("a", "Ground"), F("b", "First")]);
+    await openMenu(el, priv); // active = first floor "a"
+    expect(el.shadowRoot!.querySelector<HTMLButtonElement>('button[aria-label="Move floor up"]')!.disabled).toBe(true);
+    expect(el.shadowRoot!.querySelector<HTMLButtonElement>('button[aria-label="Move floor down"]')!.disabled).toBe(false);
+  });
+
+  it("a reorder is undoable and restores the original order + active floor", async () => {
+    const { el, priv } = await mountFloors([F("a", "Ground"), F("b", "First"), F("c", "Roof")]);
+    await openMenu(el, priv);
+    el.shadowRoot!.querySelector<HTMLButtonElement>('button[aria-label="Move floor down"]')!.click();
+    await priv.updateComplete;
+    expect(floorOrder(el)).toEqual(["b", "a", "c"]);
+    priv._undo();
+    await priv.updateComplete;
+    expect(floorOrder(el)).toEqual(["a", "b", "c"]);
+    expect(priv._activeFloorId).toBe("a");
+  });
+
+  it("renders the default floor's toggle as checked (the .checked binding)", async () => {
+    const h = await mountFloors([F("a", "Ground"), F("b", "First")], "b");
+    expect(h.priv._activeFloorId).toBe("b"); // defaultFloor drives the initial active floor
+    await openMenu(h.el, h.priv);
+    expect(h.el.shadowRoot!.querySelector<HTMLInputElement>(".floor-default input")!.checked).toBe(true);
+  });
+
+  it("the default toggle sets, and unchecking clears, defaultFloor", async () => {
+    const h = await mountFloors([F("a", "Ground"), F("b", "First")]);
+    await openMenu(h.el, h.priv);
+    const chk = () => h.el.shadowRoot!.querySelector<HTMLInputElement>(".floor-default input")!;
+    chk().checked = true;
+    chk().dispatchEvent(new Event("change", { bubbles: true }));
+    await h.priv.updateComplete;
+    expect(h.last?.defaultFloor).toBe("a");
+    // unchecking must clear it back to undefined (the clear path)
+    chk().checked = false;
+    chk().dispatchEvent(new Event("change", { bubbles: true }));
+    await h.priv.updateComplete;
+    expect(h.last?.defaultFloor).toBeUndefined();
+  });
+
+  it("deleting the default floor clears defaultFloor (no dangling id)", async () => {
+    const h = await mountFloors([F("a", "Ground"), F("b", "First")], "a");
+    expect(h.priv._activeFloorId).toBe("a"); // defaultFloor drives the initial active floor
+    await openMenu(h.el, h.priv);
+    h.el.shadowRoot!.querySelector<HTMLButtonElement>(".danger.pop-action")!.click();
+    await h.priv.updateComplete;
+    expect(h.last?.floors?.map((f) => f.id)).toEqual(["b"]);
+    expect(h.last?.defaultFloor).toBeUndefined();
+  });
+
+  it("a single floor hides the reorder + default controls and disables delete", async () => {
+    const { el, priv } = await mountFloors([F("only", "Only")]);
+    await openMenu(el, priv);
+    expect(el.shadowRoot!.querySelector('button[aria-label="Move floor up"]')).toBeNull();
+    expect(el.shadowRoot!.querySelector('button[aria-label="Move floor down"]')).toBeNull();
+    expect(el.shadowRoot!.querySelector(".floor-default")).toBeNull();
+    expect(el.shadowRoot!.querySelector<HTMLButtonElement>(".danger.pop-action")!.disabled).toBe(true);
+  });
+});
