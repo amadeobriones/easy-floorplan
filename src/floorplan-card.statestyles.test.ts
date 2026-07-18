@@ -179,3 +179,31 @@ describe('color: "rgb" takes the light\'s own colour', () => {
     expect(badge(el).getAttribute("style") ?? "").toContain("rgb(255, 128, 0)");
   });
 });
+
+describe("hidden: renders nothing while the rule matches", () => {
+  const itemDiv = (el: Element) => el.shadowRoot!.querySelector(".items .item");
+
+  it("draws no element at all when the matched rule is hidden", async () => {
+    // The only-when-active idiom: hide unless the entity is on.
+    const el = await mountWith(
+      [
+        { state: "on" },
+        { hidden: true },
+      ],
+      { "light.k": { state: "off" } }
+    );
+    expect(itemDiv(el)).toBeNull();
+  });
+
+  it("draws the item normally when a non-hidden rule matches first", async () => {
+    const el = await mountWith(
+      [
+        { state: "on", icon: "mdi:awake" },
+        { hidden: true },
+      ],
+      { "light.k": { state: "on" } }
+    );
+    expect(itemDiv(el)).not.toBeNull();
+    expect(iconOf(el)).toBe("mdi:awake");
+  });
+});

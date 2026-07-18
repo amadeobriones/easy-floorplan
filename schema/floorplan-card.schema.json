@@ -702,6 +702,10 @@
                     "description": "Defaults to the element's own entity.",
                     "type": "string"
                 },
+                "hidden": {
+                    "description": "Render nothing at all while this rule matches — no badge, no label, no\nripple. The only-when-active idiom: a rule with no other keys hides the\nelement in every state but the one a matching sibling rule paints. Absent\n(the default) leaves visibility untouched, so this is purely additive.",
+                    "type": "boolean"
+                },
                 "icon": {
                     "description": "mdi:... — beats the element's own `icon`, because it is the more specific rule.",
                     "type": "string"

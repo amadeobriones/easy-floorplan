@@ -194,6 +194,13 @@ export interface StateStyle {
   /** A CSS colour, or `"rgb"` to take the light's own `rgb_color`. */
   color?: string;
   animation?: StateAnimation;
+  /**
+   * Render nothing at all while this rule matches — no badge, no label, no
+   * ripple. The only-when-active idiom: a rule with no other keys hides the
+   * element in every state but the one a matching sibling rule paints. Absent
+   * (the default) leaves visibility untouched, so this is purely additive.
+   */
+  hidden?: boolean;
 }
 
 export interface FloorItem {
