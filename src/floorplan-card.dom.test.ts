@@ -144,6 +144,49 @@ describe("showIcon: false", () => {
   });
 });
 
+describe("empty state text draws no label", () => {
+  it("omits the .label span when the state string is empty", async () => {
+    // A sensor set to "" is the deliberate way to say "nothing here". Rendering
+    // the `.label` span anyway shows a tiny blank pill (it has padding + a
+    // background), so an empty state must produce no label element at all.
+    const el = await mountCard(
+      [{ id: "i1", entity: "sensor.blank", kind: "sensor", x: 10, y: 10, showState: true }],
+      { "sensor.blank": "" }
+    );
+    const item = itemEl(el, "i1");
+    expect(item, "the icon badge still draws").not.toBeNull();
+    expect(item!.querySelector(".label"), "no blank label pill").toBeNull();
+  });
+
+  it("still draws the label when the state has text", async () => {
+    const el = await mountCard(
+      [{ id: "i1", entity: "sensor.temp", kind: "sensor", x: 10, y: 10, showState: true }],
+      { "sensor.temp": "21" }
+    );
+    expect(itemEl(el, "i1")!.querySelector(".label")!.textContent).toBe("21");
+  });
+
+  it("omits both label and clickable div for a label-only item with empty text", async () => {
+    // showIcon:false + empty state = nothing to draw and nothing to read; an
+    // empty div with role=button is an invisible thing to click.
+    const el = await mountCard(
+      [
+        {
+          id: "i1",
+          entity: "sensor.blank",
+          kind: "sensor",
+          x: 10,
+          y: 10,
+          showIcon: false,
+          showState: true,
+        },
+      ],
+      { "sensor.blank": "   " }
+    );
+    expect(itemEl(el, "i1"), "whitespace-only is also empty").toBeNull();
+  });
+});
+
 describe("setConfig refuses configs that would crash or silently break the card", () => {
   async function setConfigOf(cfg: unknown) {
     const { FloorplanCard } = await import("./floorplan-card");

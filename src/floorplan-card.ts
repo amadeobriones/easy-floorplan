@@ -357,6 +357,11 @@ export class FloorplanCard extends LitElement {
     const on = this._isOn(item);
     // No entity, no reading to show -- an explicit showState cannot conjure one.
     const showState = !!item.entity && (item.showState ?? item.kind === "sensor");
+    // An empty state string is not a label: the `.label` chrome (padding and a
+    // background) would render a tiny blank pill on nothing. A sensor set to ""
+    // is the deliberate way to say "no text here", so honour it as absent.
+    const stateText = showState ? itemStateText(this.hass, item) : "";
+    const hasLabel = stateText.trim() !== "";
     const showIcon = item.showIcon ?? true;
     const display = item.display ?? "badge";
     const rippleColor = cssColorOr(item.rippleColor, "var(--primary-color, #03a9f4)");
@@ -380,7 +385,7 @@ export class FloorplanCard extends LitElement {
 
     // Nothing to draw and nothing to read: an empty div carrying role="button",
     // tabindex and a pointer cursor is an invisible thing to click on.
-    if (visual === nothing && !showState) return nothing;
+    if (visual === nothing && !hasLabel) return nothing;
 
     return html`
       <div
@@ -401,10 +406,8 @@ export class FloorplanCard extends LitElement {
         })}
       >
         ${visual}
-        ${showState
-          ? html`<span class="label ${labelOnly ? "inflow" : ""}"
-              >${itemStateText(this.hass, item)}</span
-            >`
+        ${hasLabel
+          ? html`<span class="label ${labelOnly ? "inflow" : ""}">${stateText}</span>`
           : nothing}
       </div>
     `;
@@ -427,6 +430,9 @@ export class FloorplanCard extends LitElement {
     if (!f.entity || !(f.showState || style?.icon)) return nothing;
     // A matched rule may hide the badge outright (only-when-active). See _renderItem.
     if (style?.hidden) return nothing;
+    // An empty state string is not a label -- skip the blank `.label` pill. See _renderItem.
+    const stateText = f.showState ? itemStateText(this.hass, f) : "";
+    const hasLabel = stateText.trim() !== "";
     const theta = ((f.angle ?? 0) * Math.PI) / 180;
     const hw = f.w / 2;
     const hh = f.h / 2;
@@ -450,7 +456,7 @@ export class FloorplanCard extends LitElement {
         })}
       >
         ${this._renderBadge({ entity: f.entity, kind: "generic", size: 22 }, style)}
-        ${f.showState ? html`<span class="label">${itemStateText(this.hass, f)}</span>` : nothing}
+        ${hasLabel ? html`<span class="label">${stateText}</span>` : nothing}
       </div>
     `;
   }
