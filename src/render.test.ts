@@ -1326,6 +1326,22 @@ describe("resolveStateStyle", () => {
     expect(resolveStateStyle([{ state: "on", color: "x" }], hass, "light.nope")).toBeUndefined();
     expect(resolveStateStyle([{ color: "x" }], hass, "light.nope")?.color).toBe("x");
   });
+
+  it("carries a matched rule's hidden flag through to the resolved style", () => {
+    // The only-when-active idiom: hide unless a sibling rule matches.
+    const rules = [
+      { state: "cleaning", color: "blue" },
+      { hidden: true },
+    ];
+    // Active: the first rule wins, nothing is hidden.
+    expect(resolveStateStyle(rules, hass, "vacuum.roomba")?.hidden).toBeUndefined();
+    // Docked: falls through to the catch-all hide rule.
+    const docked = {
+      states: { "vacuum.roomba": { state: "docked", attributes: {} } },
+      formatEntityState: (s: { state: string }) => s.state,
+    } as unknown as Parameters<typeof resolveStateStyle>[1];
+    expect(resolveStateStyle(rules, docked, "vacuum.roomba")?.hidden).toBe(true);
+  });
 });
 
 describe("stateStyleEntities", () => {

@@ -333,6 +333,8 @@ export interface ResolvedStyle {
   icon?: string;
   color?: string;
   animation?: StateAnimation;
+  /** The matched rule asks the element to render nothing at all. */
+  hidden?: boolean;
 }
 
 /**
@@ -357,7 +359,7 @@ export function resolveStateStyle(
     // `rgbColorOf` already emits a safe `rgb(n, n, n)`; a literal rule colour is
     // user-supplied and must be sanitised before it can reach a style attribute.
     const color = rule.color === "rgb" ? rgbColorOf(st) : cssColor(rule.color);
-    return { icon: rule.icon, color, animation: rule.animation };
+    return { icon: rule.icon, color, animation: rule.animation, hidden: rule.hidden };
   }
   return undefined;
 }

@@ -350,6 +350,10 @@ export class FloorplanCard extends LitElement {
     rot: Rotation,
   ): TemplateResult | typeof nothing {
     const style = this._itemStyle(item);
+    // A matched rule may hide the element outright: no badge, no ripple, no
+    // label. This is the only-when-active idiom -- an item that exists on the
+    // plan only while its entity is doing something.
+    if (style?.hidden) return nothing;
     const on = this._isOn(item);
     // No entity, no reading to show -- an explicit showState cannot conjure one.
     const showState = !!item.entity && (item.showState ?? item.kind === "sensor");
@@ -421,6 +425,8 @@ export class FloorplanCard extends LitElement {
     rot: Rotation,
   ): TemplateResult | typeof nothing {
     if (!f.entity || !(f.showState || style?.icon)) return nothing;
+    // A matched rule may hide the badge outright (only-when-active). See _renderItem.
+    if (style?.hidden) return nothing;
     const theta = ((f.angle ?? 0) * Math.PI) / 180;
     const hw = f.w / 2;
     const hh = f.h / 2;
