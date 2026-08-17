@@ -282,6 +282,10 @@
                     },
                     "type": "array"
                 },
+                "rotation": {
+                    "description": "Display-only quarter-turn rotation for this floor, overriding the card's\nown `rotation`. Coordinates stay canonical; the editor edits unrotated.\nAn explicit 0 means \"this floor is upright even though the card is not\".",
+                    "type": "number"
+                },
                 "short": {
                     "description": "Short label for the card's floor-switcher button (issue #67), e.g. \"GF\" —\nthe full `name` stays as the tooltip. Falls back to `name`.",
                     "type": "string"

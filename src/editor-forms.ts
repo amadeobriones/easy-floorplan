@@ -1248,6 +1248,40 @@ export function projectSunForm(c: FloorplanCardConfig): FormSpec {
   };
 }
 
+/**
+ * Per-floor rotation override (task 11): lets one floor in a multi-storey
+ * plan rotate independently of the card's own `rotation` — the case that
+ * motivated it is a floor whose scan was captured sideways. Defaults to
+ * "Inherit" so most floors need no entry at all; picking a degree value
+ * writes an explicit override, including 0, which pins a floor upright even
+ * when the card itself is rotated.
+ */
+export function floorRotationForm(f: Floor): FormSpec {
+  return {
+    fields: [
+      {
+        name: "rotation",
+        label: "Rotate this floor",
+        helper: "Overrides the card's own rotation for this floor only",
+        selector: dropdown(
+          opt("inherit", "Inherit from card"),
+          opt("0", "0°"),
+          opt("90", "90°"),
+          opt("180", "180°"),
+          opt("270", "270°")
+        ),
+      },
+    ],
+    data: {
+      rotation: f.rotation === undefined ? "inherit" : String(normalizePlanRotation(f.rotation)),
+    },
+    toPatch: (p) =>
+      "rotation" in p
+        ? { ...p, rotation: p.rotation === "inherit" ? undefined : Number(p.rotation) }
+        : p,
+  };
+}
+
 export function floorImageForm(f: Floor): FormSpec {
   const fields: FormField[] = [
     { name: "image", label: "Bg image", helper: "/local/floorplan.png or URL", selector: { text: {} } },

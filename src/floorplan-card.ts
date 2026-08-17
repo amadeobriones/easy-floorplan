@@ -87,7 +87,7 @@ import {
   resolveItemIcon,
   resolveIconAnimation,
   itemIconSize,
-  normalizePlanRotation,
+  resolveRotation,
   rotatedCanvasSize,
   rotatePlanPoint,
   planRotationTransform,
@@ -649,8 +649,10 @@ export class FloorplanCard extends LitElement {
       floors[0];
     // Whole-plan display rotation (issue #33): the SVG rotates via one group
     // transform below; the HTML overlay remaps per point in _renderItem /
-    // _renderText. Both must use the same mapping (rotatePlanPoint).
-    const rot = normalizePlanRotation(c.rotation);
+    // _renderText. Both must use the same mapping (rotatePlanPoint). A floor
+    // may override the card's own rotation (task 11) — e.g. a multi-storey
+    // plan where one floor was scanned sideways.
+    const rot = resolveRotation(c, active);
     const dims = rotatedCanvasSize(cssNumber(c.width, DEFAULT_WIDTH), cssNumber(c.height, DEFAULT_HEIGHT), rot);
     const rotTransform = planRotationTransform(c.width, c.height, rot);
     // Overlay sizing mode. --fp-plan-w is the canvas width *as displayed*, so a

@@ -16,6 +16,7 @@ import {
   projectSunForm,
   projectDeadSpaceForm,
   floorImageForm,
+  floorRotationForm,
   areaForm,
   areaNameForm,
   stateColorRuleMode,
@@ -876,6 +877,28 @@ describe("wallForm / projectForm / floorImageForm", () => {
     expect(toPatch({ imageFit: "cover" }).imageFit).toBe("cover");
     // Untouched keys must survive the patch — it rewrites one field, not the form.
     expect(toPatch({ imageFit: "stretch", imageOpacity: 0.5 }).imageOpacity).toBe(0.5);
+  });
+});
+
+describe("floorRotationForm (task 11)", () => {
+  it("shows Inherit when the floor sets no rotation, and maps it back to undefined", () => {
+    const form = floorRotationForm({} as Floor);
+    expect(form.data.rotation).toBe("inherit");
+    // Picking "inherit" back must clear the override, not write rotation: 0.
+    expect(form.toPatch({ rotation: "inherit" })).toEqual({ rotation: undefined });
+  });
+
+  it("round-trips an explicit override, including the 0 case", () => {
+    expect(floorRotationForm({ rotation: 180 } as Floor).data.rotation).toBe("180");
+    expect(floorRotationForm({ rotation: 0 } as Floor).data.rotation).toBe("0");
+    // An explicit 0 must survive as a real override, not collapse to "inherit".
+    expect(floorRotationForm({ rotation: 0 } as Floor).toPatch({ rotation: "0" })).toEqual({
+      rotation: 0,
+    });
+  });
+
+  it("normalizes a stray value to 0 rather than passing it through", () => {
+    expect(floorRotationForm({ rotation: 45 } as Floor).data.rotation).toBe("0");
   });
 });
 

@@ -140,6 +140,7 @@ import {
   areaNameForm,
   diffFormValue,
   floorImageForm,
+  floorRotationForm,
   furnitureForm,
   isLiveField,
   itemForm,
@@ -3873,6 +3874,9 @@ export class FloorplanCardEditor extends LitElement {
         })}
         ${this._renderForm(projectDisplayForm(this._config), (patch) =>
           this._patchConfig(patch as Partial<FloorplanCardConfig>)
+        )}
+        ${this._renderForm(floorRotationForm(this._floor()), (patch) =>
+          this._commitFloor(patch as Partial<Floor>)
         )}
         ${this._renderForm(projectSunForm(this._config), (patch) =>
           this._patchConfig(patch as Partial<FloorplanCardConfig>)

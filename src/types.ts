@@ -963,6 +963,12 @@ export interface Floor {
   areas: Area[];
   /** Awareness-layer markers on this floor. Optional: older configs have none. */
   awareness?: AwarenessMarker[];
+  /**
+   * Display-only quarter-turn rotation for this floor, overriding the card's
+   * own `rotation`. Coordinates stay canonical; the editor edits unrotated.
+   * An explicit 0 means "this floor is upright even though the card is not".
+   */
+  rotation?: number;
 }
 
 /** Sizing mode for the HTML overlay layer. See {@link FloorplanCardConfig.overlayScale}. */

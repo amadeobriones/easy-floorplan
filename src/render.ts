@@ -2681,6 +2681,18 @@ export function normalizePlanRotation(v: unknown): PlanRotation {
   return r === 90 || r === 180 || r === 270 ? r : 0;
 }
 
+/**
+ * The rotation to draw a floor at: its own if it sets one, otherwise the
+ * card's. An explicit `rotation: 0` on a floor is an override — one upright
+ * floor in a rotated plan — so this must test presence, not truthiness.
+ */
+export function resolveRotation(
+  c: { rotation?: number },
+  floor: { id?: string; rotation?: number },
+): PlanRotation {
+  return normalizePlanRotation(floor.rotation ?? c.rotation);
+}
+
 /** Canvas size as displayed: 90°/270° swap width and height. */
 export function rotatedCanvasSize(
   w: number,
