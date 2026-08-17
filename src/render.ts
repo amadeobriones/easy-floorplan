@@ -201,17 +201,15 @@ export function itemStateText(
 
 /**
  * The colour for a value (issues #68, #79, #82), or undefined for "use the
- * theme default". Precedence:
+ * theme default". A one-line wrapper over {@link matchStateRule}; the
+ * precedence it obeys is documented once, on `matchStateRuleWith` below.
  *
- * 1. an exact `state` match (case-insensitive) — a cover "open", a light "on";
- * 2. otherwise the highest matching `above` threshold;
- * 3. otherwise the default rule (neither `above` nor `state`).
+ * The returned color is config-supplied — callers MUST pass it through
+ * cssColor/cssColorOr before it reaches a style attribute.
  *
- * A `state` rule is checked against the raw value stringified, so `state: "on"`
- * works for a boolean-ish reading too. Non-numeric values (a climate saying
- * "heat") never match an `above` rule. The returned color is config-supplied —
- * callers MUST pass it through cssColor/cssColorOr before it reaches a style
- * attribute.
+ * Kept exported because it is upstream's own API surface, but nothing in this
+ * card calls it any more: every render path now goes through
+ * {@link matchStateRuleFor}, which additionally honours a rule's `entity`.
  */
 export function resolveStateColor(
   rules: readonly StateColorRule[] | undefined,
@@ -222,13 +220,16 @@ export function resolveStateColor(
 
 /**
  * The rule that applies to a value, by the precedence documented on
- * {@link resolveStateColor} — which is now a one-line wrapper around this.
+ * `matchStateRuleWith` below.
  *
  * Split out for issue #106: a rule can carry an `icon` as well as a `color`,
  * and both must come from the *same* matched rule. Re-running the precedence
  * once per property would be two chances to drift apart, and would quietly
  * allow one rule's colour beside another rule's icon. `animation` (a fork
  * extension) rides along for the same reason.
+ *
+ * Like {@link resolveStateColor}, exported for upstream compatibility and
+ * called by nothing here — see {@link matchStateRuleFor}.
  */
 export function matchStateRule(
   rules: readonly StateColorRule[] | undefined,
@@ -243,21 +244,57 @@ export function matchStateRule(
  * instead of the element's own, so a sofa can redden when the front door
  * opens. Rules without one behave exactly as {@link matchStateRule} always
  * has — so a config using no `entity:` resolves identically.
+ *
+ * `ownEntity` closes the one gap that split open: an element with an
+ * `attribute:` is judged on that attribute (`ownRaw`), so a rule naming the
+ * element's *own* entity id would otherwise silently switch to the domain
+ * state and disagree with the identical rule written without an `entity`.
+ * Pass the element's entity id and such a rule reads `ownRaw` like the rest.
+ * Optional because elements that cannot carry an `attribute` (furniture,
+ * areas) have no gap to close.
  */
 export function matchStateRuleFor(
   hass: RenderHass | undefined,
   rules: readonly StateColorRule[] | undefined,
   ownRaw: unknown,
+  ownEntity?: string,
 ): StateColorRule | undefined {
-  return matchStateRuleWith(rules, (r) => (r.entity ? hass?.states[r.entity]?.state : ownRaw));
+  return matchStateRuleWith(rules, (r) =>
+    !r.entity || r.entity === ownEntity ? ownRaw : hass?.states[r.entity]?.state
+  );
 }
 
 /**
- * The one-pass precedence loop shared by {@link matchStateRule} and
- * {@link matchStateRuleFor} — the reason the entity/state_not/below fork
- * extensions live inside a single loop rather than a second copy of it (a
- * second copy preserves precedence but drifts from this one the moment
- * upstream touches its own).
+ * **The canonical description of state-rule precedence.** Every public entry
+ * point above is a wrapper over this loop; when precedence is in question,
+ * this is the authority.
+ *
+ * A rule carries at most one condition. Rules are sorted into three tiers and
+ * the first non-empty tier wins:
+ *
+ * 1. **Exact** — `state` (case-insensitive) or `state_not` (a fork
+ *    extension), both compared against the reading stringified and trimmed,
+ *    so `state: "on"` matches a boolean-ish reading too. Within the tier the
+ *    **first matching rule listed** wins, so an earlier rule shadows a later
+ *    duplicate. Both fail closed on a blank/absent reading.
+ * 2. **Threshold** — `above`, or `below` (a fork extension). A non-numeric
+ *    reading (a climate saying "heat") matches neither. Within a *kind*, the
+ *    strictest match wins and order does not matter: highest matching `above`,
+ *    lowest matching `below`. **Across** the two kinds there is nothing to
+ *    compare — `above: 25` and `below: 100` are not on one scale — so the
+ *    first threshold rule to match decides which kind holds the tier, and
+ *    only a stricter rule of that same kind displaces it. A list mixing both
+ *    is therefore order-*dependent* where an all-`above` list is not; see the
+ *    "cross-kind" cases in render.test.ts, which pin both orderings.
+ * 3. **Default** — a rule with none of the four conditions. The first one
+ *    listed wins; later ones are unreachable.
+ *
+ * A rule with no string `color` is skipped entirely, at every tier.
+ *
+ * The loop is shared rather than duplicated per entry point: the
+ * entity/`state_not`/`below` fork extensions live inside this one pass, and a
+ * second copy would preserve precedence only until upstream next touches its
+ * own.
  *
  * `valueFor` is asked once per rule rather than once for the whole list, so a
  * rule carrying its own `entity` is judged on its own reading — `numeric`/
@@ -1364,7 +1401,8 @@ export function resolveIconAnimation(
   item: { entity?: string; iconAnimation?: IconAnimation; attribute?: string; stateColor?: StateColorRule[] },
   st: { state: string; attributes: Record<string, unknown> } | undefined,
 ): "spin" | "pulse" | undefined {
-  const ruleAnim = matchStateRuleFor(hass, item.stateColor, itemRawValue(item, st))?.animation;
+  const ruleAnim = matchStateRuleFor(hass, item.stateColor, itemRawValue(item, st), item.entity)
+    ?.animation;
   const mode = ruleAnim ?? item.iconAnimation ?? "auto";
   if (mode === "none") return undefined;
   if (!entityIsActive(item.entity, st?.state)) return undefined;
@@ -1482,7 +1520,9 @@ export function resolveItemIcon(
   // Config strings, so the icon goes through the allowlist (#106): an
   // unusable value falls through to the next candidate rather than rendering
   // an empty box.
-  const ruleIcon = cssIcon(matchStateRuleFor(hass, item.stateColor, itemRawValue(item, st))?.icon);
+  const ruleIcon = cssIcon(
+    matchStateRuleFor(hass, item.stateColor, itemRawValue(item, st), item.entity)?.icon
+  );
   if (ruleIcon) return ruleIcon;
   const configIcon = cssIcon(item.icon);
   if (configIcon) return configIcon;

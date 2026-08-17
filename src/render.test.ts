@@ -1972,6 +1972,53 @@ describe("matchStateRule — fork extensions", () => {
   });
 });
 
+// Threshold tie-breaks. Within one kind the strictest match wins and list
+// order is irrelevant; *across* the two kinds there is no shared scale to
+// compare on, so the first matching rule holds the tier. That asymmetry is a
+// decision (documented on matchStateRuleWith) and nothing pinned it, which is
+// how a decision quietly becomes an accident.
+describe("matchStateRule — threshold tie-breaks", () => {
+  it("picks the highest matching `above`, whichever order they are listed in", () => {
+    const rising = [{ above: 10, color: "warm" }, { above: 25, color: "hot" }];
+    const falling = [{ above: 25, color: "hot" }, { above: 10, color: "warm" }];
+    expect(matchStateRule(rising, 30)?.color).toBe("hot");
+    expect(matchStateRule(falling, 30)?.color).toBe("hot");
+  });
+
+  it("picks the lowest matching `below`, whichever order they are listed in", () => {
+    const rising = [{ below: 10, color: "freezing" }, { below: 25, color: "cool" }];
+    const falling = [{ below: 25, color: "cool" }, { below: 10, color: "freezing" }];
+    expect(matchStateRule(rising, 5)?.color).toBe("freezing");
+    expect(matchStateRule(falling, 5)?.color).toBe("freezing");
+  });
+
+  it("lets list order decide when a `below` and an `above` both match", () => {
+    // 30 is under 100 and over 25, so both rules match. There is no way to
+    // rank "below 100" against "above 25", so the first one listed holds the
+    // threshold tier and only a stricter rule of *its own kind* displaces it.
+    const belowFirst = [{ below: 100, color: "under" }, { above: 25, color: "over" }];
+    const aboveFirst = [{ above: 25, color: "over" }, { below: 100, color: "under" }];
+    expect(matchStateRule(belowFirst, 30)?.color).toBe("under");
+    expect(matchStateRule(aboveFirst, 30)?.color).toBe("over");
+  });
+
+  it("a later rule of the other kind never displaces the kind that got there first", () => {
+    // Even a "stricter-looking" below: 26 loses to the above rule listed
+    // first, because strictness is only comparable within a kind.
+    const rules = [{ above: 25, color: "over" }, { below: 26, color: "under" }];
+    expect(matchStateRule(rules, 25.5)?.color).toBe("over");
+  });
+
+  it("an exact match still beats whichever threshold rule won its tier", () => {
+    const rules = [
+      { below: 100, color: "under" },
+      { above: 25, color: "over" },
+      { state: "30", color: "exact" },
+    ];
+    expect(matchStateRule(rules, 30)?.color).toBe("exact");
+  });
+});
+
 // The `entity` fork extension (a sofa that reddens when the front door
 // opens): each rule may name its own entity, so the value it's judged on has
 // to be resolved *per rule* rather than once for the whole list.
@@ -2023,6 +2070,42 @@ describe("matchStateRuleFor — cross-entity rules", () => {
       { color: "gray" },
     ];
     expect(matchStateRuleFor(hass, rules, 20)?.color).toBe("orange");
+  });
+
+  // The `attribute:` trap, one step on from the two it was already fixed for
+  // (colour vs. icon, then animation): an element judged on an attribute has
+  // an `ownRaw` that is NOT its entity's state, so a rule naming that very
+  // entity would silently switch to the domain state and disagree with the
+  // identical rule written without an `entity`.
+  describe("a rule naming the element's own entity", () => {
+    // The element is a climate device with `attribute: "temperature"`, so its
+    // ownRaw is 30 while its *domain state* is the non-numeric "heat".
+    const climate = fakeHass([{ entity_id: "climate.hall", state: "heat" }]);
+
+    it("is judged on the same reading as a rule with no entity at all", () => {
+      const rules = [{ above: 25, color: "hot" }];
+      const withOwn = [{ entity: "climate.hall", above: 25, color: "hot" }];
+      // 30 comes from the `temperature` attribute; the domain state is "heat",
+      // which is not numeric and would match no threshold at all.
+      expect(matchStateRuleFor(climate, rules, 30, "climate.hall")?.color).toBe("hot");
+      expect(matchStateRuleFor(climate, withOwn, 30, "climate.hall")?.color).toBe("hot");
+    });
+
+    it("still reads hass for any *other* entity in the same list", () => {
+      const rules = [
+        { entity: "binary_sensor.front_door", state: "on", color: "red" },
+        { entity: "climate.hall", above: 25, color: "hot" },
+      ];
+      // front_door is a different entity, so it keeps resolving through hass.
+      expect(matchStateRuleFor(hass, rules, 30, "climate.hall")?.color).toBe("red");
+    });
+
+    it("without ownEntity, keeps the old hass lookup (upstream/no-attribute callers)", () => {
+      const rules = [{ entity: "climate.hall", above: 25, color: "hot" }];
+      // "heat" is not numeric, so nothing matches — the behaviour before the
+      // fourth argument existed, preserved for callers that don't pass it.
+      expect(matchStateRuleFor(climate, rules, 30)).toBeUndefined();
+    });
   });
 });
 

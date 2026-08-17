@@ -3737,7 +3737,9 @@ export class FloorplanCardEditor extends LitElement {
     // Same resolution as the card, so the canvas shows the colour the plan
     // will actually render (state rules first, then the active colour).
     const rawValue = itemRawValue(it, st);
-    const stateColor = cssColor(matchStateRuleFor(this.hass, it.stateColor, rawValue)?.color);
+    const stateColor = cssColor(
+      matchStateRuleFor(this.hass, it.stateColor, rawValue, it.entity)?.color
+    );
     // …and the same badge contents, so "Badge shows: Value" previews here too.
     const value = badgeContentOf(it) === "value" ? badgeValue(this.hass, it) : undefined;
     // The active colour — the one the user set, else the bulb's own colour

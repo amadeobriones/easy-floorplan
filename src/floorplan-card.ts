@@ -498,7 +498,9 @@ export class FloorplanCard extends LitElement {
     // label *and* the badge. A sensor is never "on", so tying the badge to the
     // active state alone left threshold colours invisible on exactly the
     // devices they were written for.
-    const stateColor = cssColor(matchStateRuleFor(this.hass, item.stateColor, rawValue)?.color);
+    const stateColor = cssColor(
+      matchStateRuleFor(this.hass, item.stateColor, rawValue, item.entity)?.color
+    );
     const labelColor = stateColor;
     // "none" is the old `showIcon: false` — no badge, label only (issue #106).
     const showIcon = badgeContentOf(item) !== "none";
