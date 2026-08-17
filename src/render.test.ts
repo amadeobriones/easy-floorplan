@@ -1369,6 +1369,30 @@ describe("entityIsActive — domains that never say \"on\"", () => {
   });
 });
 
+describe("entityIsActive — domains whose state is not on/off", () => {
+  it("reads a heating thermostat as active", () => {
+    expect(entityIsActive("climate.hall", "heat")).toBe(true);
+  });
+  it("reads a cooling thermostat as active", () => {
+    expect(entityIsActive("climate.hall", "cool")).toBe(true);
+  });
+  it("reads an hvac mode we have never seen as active", () => {
+    expect(entityIsActive("climate.hall", "some_future_mode")).toBe(true);
+  });
+  it("reads an off thermostat as inactive", () => {
+    expect(entityIsActive("climate.hall", "off")).toBe(false);
+  });
+  it("reads a paused media player as active, as HA's own UI does", () => {
+    expect(entityIsActive("media_player.tv", "paused")).toBe(true);
+  });
+  it("reads an idle media player as inactive", () => {
+    expect(entityIsActive("media_player.tv", "idle")).toBe(false);
+  });
+  it("reads a jammed lock as not-locked", () => {
+    expect(entityIsActive("lock.front", "jammed")).toBe(true);
+  });
+});
+
 describe("resolveIconAnimation (issue #48)", () => {
   it("auto: a running fan spins, playback and a cleaning vacuum pulse", () => {
     expect(resolveIconAnimation({ entity: "fan.ceiling" }, "on")).toBe("spin");
@@ -1387,8 +1411,14 @@ describe("resolveIconAnimation (issue #48)", () => {
       resolveIconAnimation({ entity: "light.a", iconAnimation: "spin" }, "off"),
     ).toBeUndefined();
     expect(
-      resolveIconAnimation({ entity: "media_player.tv", iconAnimation: "pulse" }, "paused"),
+      resolveIconAnimation({ entity: "media_player.tv", iconAnimation: "pulse" }, "idle"),
     ).toBeUndefined();
+  });
+
+  it("animates a paused media player — paused is on, not off", () => {
+    expect(
+      resolveIconAnimation({ entity: "media_player.tv", iconAnimation: "pulse" }, "paused"),
+    ).toBe("pulse");
   });
 
   it("fail-closed: unavailable/unknown/missing state never animates", () => {

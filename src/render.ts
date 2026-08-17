@@ -1194,23 +1194,34 @@ export function isEntityOn(state: string | undefined): boolean {
 }
 
 /**
- * States that mean "this thing is doing something", for the domains that do not
- * say `on`.
+ * States that mean "this thing is NOT doing anything", for the domains that do
+ * not say `on`.
  *
- * A lock is `locked` / `unlocked`; a vacuum is `docked` / `cleaning`; a camera is
- * `idle` / `recording`. None of them ever reads `on`, so the generic on/off test
- * calls every one of them off, forever — and their state-dependent icons
- * (`DOMAIN_STATE_ICONS`, above) can never show their active half.
+ * Domains are listed by what counts as *inactive*, never as active. A domain
+ * whose states are an open set — climate's hvac modes, a media player's
+ * transport states — gains new ones as Home Assistant grows, and a list of
+ * active states would silently call every new one "off". A list of the inactive
+ * ones cannot.
  */
-const ACTIVE_STATES: Record<string, ReadonlySet<string>> = {
-  lock: new Set(["unlocked", "unlocking", "open", "opening"]),
-  vacuum: new Set(["cleaning", "returning"]),
-  camera: new Set(["recording", "streaming"]),
+const INACTIVE_STATES: Record<string, ReadonlySet<string>> = {
+  // A climate entity's state is its hvac mode — heat, cool, auto, dry,
+  // fan_only, off. None of them is "on", so a running thermostat read as off,
+  // permanently.
+  climate: new Set(["off"]),
+  water_heater: new Set(["off"]),
+  // "Not locked" includes jammed: a lock that failed to close must never draw
+  // the closed padlock.
+  lock: new Set(["locked", "locking"]),
+  vacuum: new Set(["docked", "idle", "paused", "error"]),
+  camera: new Set(["idle"]),
+  // Paused is not off — HA's own UI treats a paused player as on. Idle is: the
+  // player is on but nothing is playing.
+  media_player: new Set(["off", "standby", "idle"]),
 };
 
 /**
  * Whether an entity is in its active state, by the rules of its own domain.
- * Every domain not in {@link ACTIVE_STATES} falls back to the generic on/off
+ * Every domain not in {@link INACTIVE_STATES} falls back to the generic on/off
  * test, unchanged. An unavailable or unknown state is never active, whatever
  * the domain — a stale "unlocked" during a sensor dropout is worse than
  * showing locked.
@@ -1218,8 +1229,8 @@ const ACTIVE_STATES: Record<string, ReadonlySet<string>> = {
 export function entityIsActive(entityId: string | undefined, state: string | undefined): boolean {
   if (!state || state === "unavailable" || state === "unknown") return false;
   const domain = entityId?.split(".")[0] ?? "";
-  const active = ACTIVE_STATES[domain];
-  return active ? active.has(state) : isEntityOn(state);
+  const inactive = INACTIVE_STATES[domain];
+  return inactive ? !inactive.has(state) : isEntityOn(state);
 }
 
 /**
