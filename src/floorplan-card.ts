@@ -105,6 +105,9 @@ import "./energy-layer";
 // Registers the motion/safety overlay into the live-layer registry; nothing
 // else in this file references awareness-layer.ts directly.
 import "./awareness-layer";
+// Registers the climate/thermal overlay into the live-layer registry; nothing
+// else in this file references thermal.ts directly.
+import "./thermal";
 import type { FeatureName } from "./features";
 import {
   skinAttribute,

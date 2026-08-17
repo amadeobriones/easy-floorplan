@@ -755,6 +755,13 @@ export interface Area {
    * everything inside it — which reads better on a busy plan.
    */
   highlight?: "fill" | "border" | "both";
+  /**
+   * Temperature-class entity (e.g. a `sensor` with `device_class: temperature`)
+   * that drives this area's thermal-layer shading. Unset = the area is not
+   * shaded, even when the feature is on. Distinct from {@link Area.entity},
+   * which drives stateColor/activeColor for the fill.
+   */
+  tempEntity?: string;
 }
 
 /**
