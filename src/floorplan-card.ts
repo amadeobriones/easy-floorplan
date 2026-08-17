@@ -1145,7 +1145,7 @@ export class FloorplanCard extends LitElement {
        Opposite corner from the floor switcher so the two never collide. */
     .layer-toggles {
       position: absolute;
-      top: 8px;
+      bottom: 8px;
       left: 8px;
       display: flex;
       flex-direction: column;
