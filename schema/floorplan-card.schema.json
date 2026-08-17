@@ -788,13 +788,31 @@
             "type": "object"
         },
         "StateColorRule": {
-            "description": "One colour rule for {@link FloorItem.stateColor} / {@link Furniture.stateColor}.\n\nA rule matches either a numeric threshold (`above`) or an exact state\n(`state`); a rule with neither is the default. `state` covers non-numeric\nentities — a cover reading \"open\", a media player \"playing\" (issue #79) —\nwhile `above` covers readings like temperature or soil moisture (#68, #82).",
+            "description": "One colour rule for {@link FloorItem.stateColor} / {@link Furniture.stateColor}.\n\nA rule matches a numeric threshold (`above`/`below`) or a state condition\n(`state`/`state_not`); a rule with none of the four is the default. `state`/\n`state_not` cover non-numeric entities — a cover reading \"open\", a media\nplayer \"playing\" (issue #79) — while `above`/`below` cover readings like\ntemperature or soil moisture (#68, #82).",
             "properties": {
                 "above": {
                     "description": "Applies when the numeric value is strictly greater.",
                     "type": "number"
                 },
+                "animation": {
+                    "description": "Animation to play while this rule matches, reusing {@link IconAnimation}\nso a rule and a device's own animation setting speak the same vocabulary.",
+                    "enum": [
+                        "auto",
+                        "none",
+                        "pulse",
+                        "spin"
+                    ],
+                    "type": "string"
+                },
+                "below": {
+                    "description": "Applies when the numeric value is strictly less. The mirror of `above`.",
+                    "type": "number"
+                },
                 "color": {
+                    "type": "string"
+                },
+                "entity": {
+                    "description": "Evaluate this rule against another entity's state instead of the\nelement's own — a sofa that reddens when the front door opens. Rules\nwithout one are judged on the element's own reading, exactly as before.",
                     "type": "string"
                 },
                 "icon": {
@@ -803,6 +821,10 @@
                 },
                 "state": {
                     "description": "Applies when the value equals this exactly (case-insensitive).",
+                    "type": "string"
+                },
+                "state_not": {
+                    "description": "Applies when the state is anything other than this (case-insensitive).",
                     "type": "string"
                 }
             },

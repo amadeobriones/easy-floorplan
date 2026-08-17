@@ -18,6 +18,8 @@ import {
   floorImageForm,
   areaForm,
   areaNameForm,
+  stateColorRuleMode,
+  stateColorRuleModePatch,
 } from "./editor-forms";
 import type { FormField } from "./editor-forms";
 import type { Area, Opening, FloorItem, Floor, FloorplanCardConfig } from "./types";
@@ -234,6 +236,67 @@ describe("openingForm — two-panel sliders (issue #145)", () => {
     }
     expect(form.toPatch({ secondaryEntity: "binary_sensor.c" })).toEqual({
       secondaryEntity: "binary_sensor.c",
+    });
+  });
+});
+
+describe("stateColorRuleMode", () => {
+  it("reads state, state_not, above, below, in that priority", () => {
+    expect(stateColorRuleMode({ state: "on" })).toBe("state");
+    expect(stateColorRuleMode({ state_not: "off" })).toBe("state_not");
+    expect(stateColorRuleMode({ above: 10 })).toBe("above");
+    expect(stateColorRuleMode({ below: 10 })).toBe("below");
+  });
+
+  it("a rule with none of the four is the default rule", () => {
+    expect(stateColorRuleMode({})).toBe("else");
+  });
+
+  it("state wins over a stray above/below left on the same rule", () => {
+    expect(stateColorRuleMode({ state: "on", above: 10 })).toBe("state");
+  });
+});
+
+describe("stateColorRuleModePatch", () => {
+  it("switching to a mode carries over that mode's own prior value", () => {
+    expect(stateColorRuleModePatch("above", { above: 42 })).toEqual({
+      state: undefined,
+      state_not: undefined,
+      above: 42,
+      below: undefined,
+    });
+  });
+
+  it("switching to a mode with no prior value defaults it rather than leaving it blank", () => {
+    expect(stateColorRuleModePatch("above", {})).toEqual({
+      state: undefined,
+      state_not: undefined,
+      above: 0,
+      below: undefined,
+    });
+    expect(stateColorRuleModePatch("state", {})).toEqual({
+      state: "",
+      state_not: undefined,
+      above: undefined,
+      below: undefined,
+    });
+  });
+
+  it("switching away from a condition drops it, so a rule never carries two at once", () => {
+    expect(stateColorRuleModePatch("state", { above: 10, state: "on" })).toEqual({
+      state: "on",
+      state_not: undefined,
+      above: undefined,
+      below: undefined,
+    });
+  });
+
+  it("else clears every condition, becoming the default rule", () => {
+    expect(stateColorRuleModePatch("else", { above: 10 })).toEqual({
+      state: undefined,
+      state_not: undefined,
+      above: undefined,
+      below: undefined,
     });
   });
 });

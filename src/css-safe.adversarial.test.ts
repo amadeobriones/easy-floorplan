@@ -135,7 +135,7 @@ describe("entity-driven colors are gated (issues #68, #79, #82)", () => {
       entity: "sensor.soil",
       stateColor: [{ color: HOSTILE }],
     } as Furniture;
-    expect(furnitureColor(f, "1")).toBeUndefined();
+    expect(furnitureColor(undefined, f, "1")).toBeUndefined();
   });
 
   it("furnitureColor filters a hostile activeColor", () => {
@@ -149,16 +149,17 @@ describe("entity-driven colors are gated (issues #68, #79, #82)", () => {
       entity: "binary_sensor.x",
       activeColor: HOSTILE,
     } as Furniture;
-    expect(furnitureColor(f, "on")).toBeUndefined();
+    expect(furnitureColor(undefined, f, "on")).toBeUndefined();
   });
 
   it("a legitimate color still survives both paths", () => {
     const base = { id: "f", type: "plant", x: 0, y: 0, w: 10, h: 10, entity: "sensor.s" };
-    expect(furnitureColor({ ...base, stateColor: [{ color: "#ff0000" }] } as Furniture, "1")).toBe(
-      "#ff0000",
-    );
+    expect(
+      furnitureColor(undefined, { ...base, stateColor: [{ color: "#ff0000" }] } as Furniture, "1"),
+    ).toBe("#ff0000");
     expect(
       furnitureColor(
+        undefined,
         { ...base, entity: "binary_sensor.x", activeColor: "var(--primary-color)" } as Furniture,
         "on",
       ),

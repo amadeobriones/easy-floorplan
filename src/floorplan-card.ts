@@ -70,7 +70,7 @@ import {
   trackerSensorReading,
   entityIsActive,
   itemBadgeLabel,
-  resolveStateColor,
+  matchStateRuleFor,
   itemRawValue,
   badgeContentOf,
   badgeValue,
@@ -282,6 +282,7 @@ export class FloorplanCard extends LitElement {
 
   private _itemIcon(item: FloorItem): string {
     return resolveItemIcon(
+      this.hass,
       item,
       this.hass?.states[item.entity],
       this.hass?.entities?.[item.entity]?.icon,
@@ -496,7 +497,7 @@ export class FloorplanCard extends LitElement {
     // label *and* the badge. A sensor is never "on", so tying the badge to the
     // active state alone left threshold colours invisible on exactly the
     // devices they were written for.
-    const stateColor = cssColor(resolveStateColor(item.stateColor, rawValue));
+    const stateColor = cssColor(matchStateRuleFor(this.hass, item.stateColor, rawValue)?.color);
     const labelColor = stateColor;
     // "none" is the old `showIcon: false` — no badge, label only (issue #106).
     const showIcon = badgeContentOf(item) !== "none";
@@ -784,7 +785,10 @@ export class FloorplanCard extends LitElement {
             ${active.areas?.map(
               (a) =>
                 svg`<g class="area-tap-target" @click=${() => this._onAreaClick(a)}>
-                  ${renderArea(a, areaColor(a, a.entity ? this.hass?.states[a.entity]?.state : undefined))}
+                  ${renderArea(
+                    a,
+                    areaColor(this.hass, a, a.entity ? this.hass?.states[a.entity]?.state : undefined)
+                  )}
                 </g>`
             )}
             <!-- Dead spaces (issue #88): the regions the walls seal off that no
@@ -822,7 +826,7 @@ export class FloorplanCard extends LitElement {
             ${active.furniture.map((f) =>
               renderFurniture(
                 f,
-                furnitureColor(f, f.entity ? this.hass?.states[f.entity]?.state : undefined),
+                furnitureColor(this.hass, f, f.entity ? this.hass?.states[f.entity]?.state : undefined),
                 symbolCatalog(c.symbols)
               )
             )}
@@ -847,7 +851,7 @@ export class FloorplanCard extends LitElement {
               ${active.areas?.map((a, i) =>
                 renderAreaBorder(
                   a,
-                  areaColor(a, a.entity ? this.hass?.states[a.entity]?.state : undefined),
+                  areaColor(this.hass, a, a.entity ? this.hass?.states[a.entity]?.state : undefined),
                   `${this._wallMaskId}-area-${i}`
                 )
               )}

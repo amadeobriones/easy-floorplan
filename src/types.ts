@@ -444,16 +444,21 @@ export type BadgeEntity = "primary" | "secondary";
 /**
  * One colour rule for {@link FloorItem.stateColor} / {@link Furniture.stateColor}.
  *
- * A rule matches either a numeric threshold (`above`) or an exact state
- * (`state`); a rule with neither is the default. `state` covers non-numeric
- * entities — a cover reading "open", a media player "playing" (issue #79) —
- * while `above` covers readings like temperature or soil moisture (#68, #82).
+ * A rule matches a numeric threshold (`above`/`below`) or a state condition
+ * (`state`/`state_not`); a rule with none of the four is the default. `state`/
+ * `state_not` cover non-numeric entities — a cover reading "open", a media
+ * player "playing" (issue #79) — while `above`/`below` cover readings like
+ * temperature or soil moisture (#68, #82).
  */
 export interface StateColorRule {
   /** Applies when the numeric value is strictly greater. */
   above?: number;
+  /** Applies when the numeric value is strictly less. The mirror of `above`. */
+  below?: number;
   /** Applies when the value equals this exactly (case-insensitive). */
   state?: string;
+  /** Applies when the state is anything other than this (case-insensitive). */
+  state_not?: string;
   color: string;
   /**
    * Icon to show while this rule matches (issue #106) — "blinds open" and
@@ -464,6 +469,17 @@ export interface StateColorRule {
    * shape but draw polygons, so an `icon` on their rules is ignored.
    */
   icon?: string;
+  /**
+   * Evaluate this rule against another entity's state instead of the
+   * element's own — a sofa that reddens when the front door opens. Rules
+   * without one are judged on the element's own reading, exactly as before.
+   */
+  entity?: string;
+  /**
+   * Animation to play while this rule matches, reusing {@link IconAnimation}
+   * so a rule and a device's own animation setting speak the same vocabulary.
+   */
+  animation?: IconAnimation;
 }
 
 export type IconAnimation = "auto" | "none" | "spin" | "pulse";

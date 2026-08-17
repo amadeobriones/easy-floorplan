@@ -15,6 +15,7 @@ import type {
   Furniture,
   Opening,
   SliderStyle,
+  StateColorRule,
   Tracker,
   Wall,
 } from "./types";
@@ -560,6 +561,54 @@ export interface BadgeSourceInfo {
   /** Friendly names, falling back to the entity ids when hass has none. */
   primaryLabel?: string;
   secondaryLabel?: string;
+}
+
+/**
+ * Which condition one state-color rule row uses, for the editor's "when"
+ * dropdown (issues #68, #79, #82 and the fork's `state_not`/`below`).
+ *
+ * The state-color list itself stays a hand-rolled repeater in editor.ts —
+ * `ha-form` has no selector for a repeatable list of objects (its `object`
+ * selector is a raw YAML box), which is why the rows were hand-rolled in the
+ * first place and why upstream's own editor still hand-rolls them too. Only
+ * this pure "what mode is this rule in" question moves here, so it can be
+ * unit-tested like everything else in this file rather than only exercised
+ * through the DOM.
+ */
+export type StateColorRuleMode = "above" | "below" | "state" | "state_not" | "else";
+
+/**
+ * {@link StateColorRuleMode} for a rule, reading whichever single condition
+ * it carries. A rule with none of the four is "else" — upstream's default
+ * rule, unconditional.
+ */
+export function stateColorRuleMode(
+  rule: Pick<StateColorRule, "state" | "state_not" | "above" | "below">
+): StateColorRuleMode {
+  if (typeof rule.state === "string") return "state";
+  if (typeof rule.state_not === "string") return "state_not";
+  if (typeof rule.above === "number") return "above";
+  if (typeof rule.below === "number") return "below";
+  return "else";
+}
+
+/**
+ * The condition fields implied by switching a row to `mode`, clearing every
+ * other condition — the same "one control names every key it stands for"
+ * shape as {@link badgeModePatch}. A rule carries at most one condition, so
+ * switching from "above" to "state" has to drop the old threshold rather
+ * than leaving it stored and unreachable behind the new one.
+ */
+export function stateColorRuleModePatch(
+  mode: StateColorRuleMode,
+  rule: Pick<StateColorRule, "state" | "state_not" | "above" | "below">
+): Pick<StateColorRule, "state" | "state_not" | "above" | "below"> {
+  return {
+    state: mode === "state" ? (rule.state ?? "") : undefined,
+    state_not: mode === "state_not" ? (rule.state_not ?? "") : undefined,
+    above: mode === "above" ? (rule.above ?? 0) : undefined,
+    below: mode === "below" ? (rule.below ?? 0) : undefined,
+  };
 }
 
 /**

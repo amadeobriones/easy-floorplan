@@ -76,6 +76,7 @@ import {
   entityIsActive,
   resolveItemIcon,
   matchStateRule,
+  matchStateRuleFor,
   badgeContentOf,
   pressEffectOf,
   badgeValue,
@@ -988,33 +989,33 @@ describe("isEntityOn / resolveItemIcon", () => {
 
   it("resolves icon precedence: override → entity icon → device_class → kind default", () => {
     const item = { entity: "binary_sensor.a", kind: "sensor" as const };
-    expect(resolveItemIcon({ ...item, icon: "mdi:override" }, undefined)).toBe("mdi:override");
+    expect(resolveItemIcon(undefined, { ...item, icon: "mdi:override" }, undefined)).toBe("mdi:override");
     expect(
-      resolveItemIcon(item, { state: "on", attributes: { icon: "mdi:from-entity" } })
+      resolveItemIcon(undefined, item, { state: "on", attributes: { icon: "mdi:from-entity" } })
     ).toBe("mdi:from-entity");
     expect(
-      resolveItemIcon(item, { state: "on", attributes: { device_class: "door" } })
+      resolveItemIcon(undefined, item, { state: "on", attributes: { device_class: "door" } })
     ).toBe(entityDefaultIcon("binary_sensor.a", "door", true));
-    expect(resolveItemIcon(item, undefined)).toBe(defaultIcon("sensor"));
+    expect(resolveItemIcon(undefined, item, undefined)).toBe(defaultIcon("sensor"));
   });
 
   it("honours the entity-registry icon: config override → registry → entity attr", () => {
     const item = { entity: "binary_sensor.a", kind: "sensor" as const };
     // Registry icon wins when there's no config override.
-    expect(resolveItemIcon(item, { state: "on", attributes: {} }, "mdi:from-registry")).toBe(
+    expect(resolveItemIcon(undefined, item, { state: "on", attributes: {} }, "mdi:from-registry")).toBe(
       "mdi:from-registry"
     );
     // A config icon still beats the registry.
     expect(
-      resolveItemIcon({ ...item, icon: "mdi:config" }, undefined, "mdi:from-registry")
+      resolveItemIcon(undefined, { ...item, icon: "mdi:config" }, undefined, "mdi:from-registry")
     ).toBe("mdi:config");
     // The registry beats the entity's own attribute icon.
     expect(
-      resolveItemIcon(item, { state: "on", attributes: { icon: "mdi:from-entity" } }, "mdi:from-registry")
+      resolveItemIcon(undefined, item, { state: "on", attributes: { icon: "mdi:from-entity" } }, "mdi:from-registry")
     ).toBe("mdi:from-registry");
     // Absent registry icon: unchanged behaviour.
     expect(
-      resolveItemIcon(item, { state: "on", attributes: { icon: "mdi:from-entity" } }, undefined)
+      resolveItemIcon(undefined, item, { state: "on", attributes: { icon: "mdi:from-entity" } }, undefined)
     ).toBe("mdi:from-entity");
   });
 
@@ -1032,23 +1033,23 @@ describe("isEntityOn / resolveItemIcon", () => {
     const st = (state: string) => ({ state, attributes: {} });
 
     it("swaps the glyph with the state", () => {
-      expect(resolveItemIcon(blind, st("open"))).toBe("mdi:blinds-open");
-      expect(resolveItemIcon(blind, st("closed"))).toBe("mdi:blinds");
+      expect(resolveItemIcon(undefined, blind, st("open"))).toBe("mdi:blinds-open");
+      expect(resolveItemIcon(undefined, blind, st("closed"))).toBe("mdi:blinds");
     });
 
     it("beats a config icon — which used to freeze the glyph outright", () => {
       const pinned = { ...blind, icon: "mdi:pinned" };
-      expect(resolveItemIcon(pinned, st("open"))).toBe("mdi:blinds-open");
+      expect(resolveItemIcon(undefined, pinned, st("open"))).toBe("mdi:blinds-open");
       // No rule matches: the config icon is still in charge.
-      expect(resolveItemIcon(pinned, st("opening"))).toBe("mdi:pinned");
+      expect(resolveItemIcon(undefined, pinned, st("opening"))).toBe("mdi:pinned");
     });
 
     it("a rule with no icon changes nothing (colour-only rules are unaffected)", () => {
       const colourOnly = { ...blind, stateColor: [{ state: "open", color: "#4caf50" }] };
-      expect(resolveItemIcon(colourOnly, st("open"))).toBe(
+      expect(resolveItemIcon(undefined, colourOnly, st("open"))).toBe(
         entityDefaultIcon("cover.blind", undefined, true) ?? defaultIcon("cover")
       );
-      expect(resolveItemIcon({ ...colourOnly, icon: "mdi:pinned" }, st("open"))).toBe("mdi:pinned");
+      expect(resolveItemIcon(undefined, { ...colourOnly, icon: "mdi:pinned" }, st("open"))).toBe("mdi:pinned");
     });
 
     it("judges the rule on the same reading the colour uses (an attribute when set)", () => {
@@ -1058,10 +1059,10 @@ describe("isEntityOn / resolveItemIcon", () => {
         attribute: "hvac_action",
         stateColor: [{ state: "heating", color: "red", icon: "mdi:fire" }],
       };
-      expect(resolveItemIcon(climate, { state: "heat", attributes: { hvac_action: "heating" } })).toBe(
+      expect(resolveItemIcon(undefined, climate, { state: "heat", attributes: { hvac_action: "heating" } })).toBe(
         "mdi:fire"
       );
-      expect(resolveItemIcon(climate, { state: "heat", attributes: { hvac_action: "idle" } })).toBe(
+      expect(resolveItemIcon(undefined, climate, { state: "heat", attributes: { hvac_action: "idle" } })).toBe(
         defaultIcon("climate")
       );
     });
@@ -1072,7 +1073,7 @@ describe("isEntityOn / resolveItemIcon", () => {
         icon: "mdi:fallback",
         stateColor: [{ state: "open", color: "red", icon: '"><script>' }],
       };
-      const icon = resolveItemIcon(hostile, st("open"));
+      const icon = resolveItemIcon(undefined, hostile, st("open"));
       expect(icon).toBe("mdi:fallback");
       expect(icon).not.toContain("<");
     });
@@ -1086,8 +1087,23 @@ describe("isEntityOn / resolveItemIcon", () => {
           { color: "red", icon: "mdi:battery-alert" },
         ],
       };
-      expect(resolveItemIcon(battery, st("95"))).toBe("mdi:battery");
-      expect(resolveItemIcon(battery, st("12"))).toBe("mdi:battery-alert");
+      expect(resolveItemIcon(undefined, battery, st("95"))).toBe("mdi:battery");
+      expect(resolveItemIcon(undefined, battery, st("12"))).toBe("mdi:battery-alert");
+    });
+
+    // The `entity` fork extension: the icon-bearing rule can watch a
+    // different entity than the badge it's drawn on.
+    it("a rule naming its own entity picks its icon off that entity's state", () => {
+      const hass = fakeHass([{ entity_id: "binary_sensor.front_door", state: "on" }]);
+      const item = {
+        entity: "light.a",
+        kind: "light" as const,
+        stateColor: [
+          { entity: "binary_sensor.front_door", state: "on", color: "red", icon: "mdi:alert" },
+        ],
+      };
+      expect(resolveItemIcon(hass, item, st("off"))).toBe("mdi:alert");
+      expect(resolveItemIcon(undefined, item, st("off"))).not.toBe("mdi:alert");
     });
   });
 });
@@ -1145,6 +1161,48 @@ describe("collectWatchedEntities", () => {
     expect(got.has("sensor.soil")).toBe(true);
     expect(got.size).toBe(1);
   });
+
+  // A state rule's own `entity` (the fork extension) watches an entity the
+  // element itself never binds — miss this and a sofa that's meant to redden
+  // when the front door opens is painted once and frozen, exactly the #82/#6
+  // trap the tests above already guard against for an element's own entity.
+  it("collects a state rule's own entity across items, furniture and areas", () => {
+    const got = collectWatchedEntities({
+      items: [
+        {
+          id: "i",
+          kind: "light",
+          x: 0,
+          y: 0,
+          entity: "light.a",
+          stateColor: [{ entity: "binary_sensor.door", state: "on", color: "red" }],
+        },
+      ],
+      furniture: [
+        {
+          id: "f",
+          type: "plant",
+          x: 0,
+          y: 0,
+          w: 10,
+          h: 10,
+          entity: "sensor.soil",
+          stateColor: [{ entity: "binary_sensor.window", state: "on", color: "red" }],
+        },
+      ],
+      areas: [
+        {
+          id: "a",
+          points: [],
+          entity: "binary_sensor.occupancy",
+          stateColor: [{ entity: "binary_sensor.motion", state: "on", color: "red" }],
+        },
+      ],
+    } as unknown as FloorplanCardConfig);
+    for (const id of ["binary_sensor.door", "binary_sensor.window", "binary_sensor.motion"]) {
+      expect(got.has(id)).toBe(true);
+    }
+  });
 });
 
 describe("furnitureColor (issue #82)", () => {
@@ -1152,8 +1210,8 @@ describe("furnitureColor (issue #82)", () => {
     ({ id: "p", type: "plant", x: 0, y: 0, w: 40, h: 40, ...extra }) as Furniture;
 
   it("is undefined without an entity, so unbound furniture stays static", () => {
-    expect(furnitureColor(plant({ stateColor: [{ color: "red" }] }), "42")).toBeUndefined();
-    expect(furnitureColor(plant({ activeColor: "red" }), "on")).toBeUndefined();
+    expect(furnitureColor(undefined, plant({ stateColor: [{ color: "red" }] }), "42")).toBeUndefined();
+    expect(furnitureColor(undefined, plant({ activeColor: "red" }), "on")).toBeUndefined();
   });
 
   it("resolves the matching threshold rule", () => {
@@ -1165,16 +1223,16 @@ describe("furnitureColor (issue #82)", () => {
         { color: "red" },
       ],
     });
-    expect(furnitureColor(f, "90")).toBe("green");
-    expect(furnitureColor(f, "70")).toBe("yellow");
-    expect(furnitureColor(f, "40")).toBe("red");
+    expect(furnitureColor(undefined, f, "90")).toBe("green");
+    expect(furnitureColor(undefined, f, "70")).toBe("yellow");
+    expect(furnitureColor(undefined, f, "40")).toBe("red");
   });
 
   it("falls back to activeColor only while the entity is active", () => {
     const f = plant({ entity: "binary_sensor.cabinet", activeColor: "orange" });
-    expect(furnitureColor(f, "on")).toBe("orange");
-    expect(furnitureColor(f, "off")).toBeUndefined();
-    expect(furnitureColor(f, "unavailable")).toBeUndefined();
+    expect(furnitureColor(undefined, f, "on")).toBe("orange");
+    expect(furnitureColor(undefined, f, "off")).toBeUndefined();
+    expect(furnitureColor(undefined, f, "unavailable")).toBeUndefined();
   });
 
   it("prefers a matching rule over activeColor", () => {
@@ -1183,14 +1241,29 @@ describe("furnitureColor (issue #82)", () => {
       activeColor: "orange",
       stateColor: [{ state: "on", color: "purple" }],
     });
-    expect(furnitureColor(f, "on")).toBe("purple");
+    expect(furnitureColor(undefined, f, "on")).toBe("purple");
+  });
+
+  // The `entity` fork extension: a piece can be coloured by a *different*
+  // entity than the one that makes it live — a sofa reddening when the front
+  // door opens, drawn here as a chair colored by a window sensor instead of
+  // its own (still-open) contact sensor.
+  it("a rule naming its own entity is judged on that entity, not the piece's", () => {
+    const hass = fakeHass([{ entity_id: "binary_sensor.window", state: "on" }]);
+    const f = plant({
+      entity: "binary_sensor.cabinet",
+      stateColor: [{ entity: "binary_sensor.window", state: "on", color: "red" }],
+    });
+    // The piece's own reading is "off" — only the named entity is "on".
+    expect(furnitureColor(hass, f, "off")).toBe("red");
+    expect(furnitureColor(undefined, f, "off")).toBeUndefined();
   });
 
   // The color reaches a `stroke` attribute, so the allowlist (#64) has to run
   // on this path too — not only on the item label's.
   it("gates hostile colors through cssColor", () => {
     const f = plant({ entity: "sensor.soil", stateColor: [{ color: "red;fill:url(#x)" }] });
-    expect(furnitureColor(f, "1")).toBeUndefined();
+    expect(furnitureColor(undefined, f, "1")).toBeUndefined();
   });
 });
 
@@ -1486,14 +1559,14 @@ describe("isPresenceEntity (issue #127)", () => {
 
 describe("resolveItemIcon without an entity (issue #39)", () => {
   it("falls back to the kind default when no entity is bound", () => {
-    expect(resolveItemIcon({ entity: "", kind: "sensor" }, undefined)).toBe(
+    expect(resolveItemIcon(undefined, { entity: "", kind: "sensor" }, undefined)).toBe(
       defaultIcon("sensor"),
     );
-    expect(resolveItemIcon({ kind: "light" }, undefined)).toBe(defaultIcon("light"));
+    expect(resolveItemIcon(undefined, { kind: "light" }, undefined)).toBe(defaultIcon("light"));
   });
 
   it("still honors an explicit icon override", () => {
-    expect(resolveItemIcon({ entity: "", kind: "sensor", icon: "mdi:smoke-detector" }, undefined)).toBe(
+    expect(resolveItemIcon(undefined, { entity: "", kind: "sensor", icon: "mdi:smoke-detector" }, undefined)).toBe(
       "mdi:smoke-detector",
     );
   });
@@ -1793,6 +1866,85 @@ describe("resolveStateColor (issue #68)", () => {
       expect(matchStateRule(undefined, 1)).toBeUndefined();
       expect(matchStateRule([], 1)).toBeUndefined();
     });
+  });
+});
+
+describe("matchStateRule — fork extensions", () => {
+  it("matches when the state is anything but the named one", () => {
+    expect(matchStateRule([{ state_not: "off", color: "red" }], "on")?.color).toBe("red");
+  });
+  it("does not match when the state is the named one", () => {
+    expect(matchStateRule([{ state_not: "off", color: "red" }], "off")).toBeUndefined();
+  });
+  it("matches a reading strictly below the threshold", () => {
+    expect(matchStateRule([{ below: 20, color: "blue" }], 18)?.color).toBe("blue");
+  });
+  it("does not match a reading at the threshold", () => {
+    expect(matchStateRule([{ below: 20, color: "blue" }], 20)).toBeUndefined();
+  });
+  it("never matches a below rule against a non-numeric reading", () => {
+    expect(matchStateRule([{ below: 20, color: "blue" }], "heat")).toBeUndefined();
+  });
+  it("carries the matched rule's animation, not another rule's", () => {
+    const rules = [
+      { state: "on", color: "red", animation: "pulse" as const },
+      { state: "off", color: "grey", animation: "none" as const },
+    ];
+    expect(matchStateRule(rules, "on")?.animation).toBe("pulse");
+  });
+});
+
+// The `entity` fork extension (a sofa that reddens when the front door
+// opens): each rule may name its own entity, so the value it's judged on has
+// to be resolved *per rule* rather than once for the whole list.
+describe("matchStateRuleFor — cross-entity rules", () => {
+  const hass = fakeHass([
+    { entity_id: "binary_sensor.front_door", state: "on" },
+    { entity_id: "binary_sensor.window", state: "off" },
+  ]);
+
+  it("a rule with no entity is judged on the element's own value, unchanged", () => {
+    const rules = [{ state: "open", color: "red" }];
+    expect(matchStateRuleFor(hass, rules, "open")?.color).toBe("red");
+    expect(matchStateRuleFor(hass, rules, "closed")).toBeUndefined();
+  });
+
+  it("a rule with an entity is judged on that entity's state instead", () => {
+    const rules = [{ entity: "binary_sensor.front_door", state: "on", color: "red" }];
+    // The element's own reading ("closed") is irrelevant: the rule watches
+    // the front door, which is "on".
+    expect(matchStateRuleFor(hass, rules, "closed")?.color).toBe("red");
+  });
+
+  it("an absent hass or unknown entity resolves to no value, not a crash", () => {
+    const rules = [{ entity: "binary_sensor.missing", state: "on", color: "red" }];
+    expect(matchStateRuleFor(hass, rules, "closed")).toBeUndefined();
+    expect(matchStateRuleFor(undefined, rules, "closed")).toBeUndefined();
+  });
+
+  // The core correctness property (see PORT_PLAN task 10): a mixed list
+  // still resolves through the one exact/threshold/fallback pass — an exact
+  // `state` match anywhere in the list beats an `above` rule earlier in it,
+  // exactly as a single-value list already does, whether or not either rule
+  // carries its own `entity`.
+  it("preserves exact-beats-threshold-beats-default across a mixed own/cross-entity list", () => {
+    const rules = [
+      { above: 10, color: "orange" }, // judged on the element's own value
+      { entity: "binary_sensor.front_door", state: "on", color: "red" }, // exact, cross-entity
+      { color: "gray" }, // fallback
+    ];
+    // Own value (20) clears the `above` threshold, but the cross-entity exact
+    // match still wins — precedence, not list position, decides.
+    expect(matchStateRuleFor(hass, rules, 20)?.color).toBe("red");
+  });
+
+  it("falls to the threshold rule when the cross-entity exact rule doesn't match", () => {
+    const rules = [
+      { above: 10, color: "orange" },
+      { entity: "binary_sensor.window", state: "on", color: "red" }, // window is "off"
+      { color: "gray" },
+    ];
+    expect(matchStateRuleFor(hass, rules, 20)?.color).toBe("orange");
   });
 });
 
@@ -2917,7 +3069,7 @@ describe("areaColor", () => {
   const base = { id: "a", points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }] };
 
   it("returns undefined for an unbound area", () => {
-    expect(areaColor({ ...base, activeColor: "#4caf50" }, "on")).toBeUndefined();
+    expect(areaColor(undefined, { ...base, activeColor: "#4caf50" }, "on")).toBeUndefined();
   });
 
   it("prefers a matching stateColor rule over activeColor", () => {
@@ -2927,23 +3079,36 @@ describe("areaColor", () => {
       activeColor: "#4caf50",
       stateColor: [{ above: 1000, color: "#ff0000" }, { color: "#00ff00" }],
     };
-    expect(areaColor(a, "1200")).toBe("#ff0000");
-    expect(areaColor(a, "400")).toBe("#00ff00");
+    expect(areaColor(undefined, a, "1200")).toBe("#ff0000");
+    expect(areaColor(undefined, a, "400")).toBe("#00ff00");
   });
 
   it("uses activeColor when active and no rule matches", () => {
     const a = { ...base, entity: "binary_sensor.occupancy", activeColor: "#4caf50" };
-    expect(areaColor(a, "on")).toBe("#4caf50");
+    expect(areaColor(undefined, a, "on")).toBe("#4caf50");
+  });
+
+  // The `entity` fork extension: a room can light up off a sensor other than
+  // the one it's bound to (issue #6's own entity stays for `activeColor`).
+  it("a rule naming its own entity is judged on that entity, not the room's", () => {
+    const hass = fakeHass([{ entity_id: "binary_sensor.motion", state: "on" }]);
+    const a = {
+      ...base,
+      entity: "binary_sensor.occupancy",
+      stateColor: [{ entity: "binary_sensor.motion", state: "on", color: "#ff0000" }],
+    };
+    expect(areaColor(hass, a, "off")).toBe("#ff0000");
+    expect(areaColor(undefined, a, "off")).toBeUndefined();
   });
 
   it("returns undefined when the bound entity is inactive", () => {
     const a = { ...base, entity: "binary_sensor.occupancy", activeColor: "#4caf50" };
-    expect(areaColor(a, "off")).toBeUndefined();
+    expect(areaColor(undefined, a, "off")).toBeUndefined();
   });
 
   it("gates an unsafe activeColor through css-safe (#64)", () => {
     const a = { ...base, entity: "binary_sensor.occupancy", activeColor: "red;position:fixed;inset:0" };
-    expect(areaColor(a, "on")).toBeUndefined();
+    expect(areaColor(undefined, a, "on")).toBeUndefined();
   });
 });
 

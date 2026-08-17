@@ -46,9 +46,17 @@ const ITEM_KINDS = ["light","switch","sensor","binary_sensor","climate","cover",
 /**
  * A conditional-style rule shared by items/furniture/areas' `stateColor`
  * (StateColorRule in types.ts). `color` is the only required field; a rule
- * matches an `above` threshold, an exact `state`, or neither (the default).
+ * matches a threshold (`above`/`below`), a state check (`state`/`state_not`),
+ * or neither (the default) — plus the fork's own `entity` override and
+ * `animation`, which ride along on whichever condition matched.
  */
-const stateColorRule = shape({ color: str }, { above: num, state: str, icon: str });
+const stateColorRule = shape(
+  { color: str },
+  {
+    above: num, below: num, state: str, state_not: str, icon: str,
+    entity: str, animation: oneOf("auto", "none", "spin", "pulse"),
+  }
+);
 const stateColorRules = arrayOf(stateColorRule);
 // A conditional-style rule from the pre-port fork (FloorItem/Furniture no
 // longer declare this field — StateColorRule/`stateColor` replaced it — but a

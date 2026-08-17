@@ -92,7 +92,7 @@ import {
   trackerSensorReading,
   kindFromEntity,
   resolveItemIcon,
-  resolveStateColor,
+  matchStateRuleFor,
   entityIsActive,
   lightBadgePaint,
   itemRawValue,
@@ -155,8 +155,11 @@ import {
   textForm,
   trackerForm,
   wallForm,
+  stateColorRuleMode,
+  stateColorRuleModePatch,
   type FormField,
   type FormSpec,
+  type StateColorRuleMode,
 } from "./editor-forms";
 
 const formLabel = (s: FormField): string => s.label;
@@ -1910,6 +1913,7 @@ export class FloorplanCardEditor extends LitElement {
   private _itemDefaultIcon(it: FloorItem): string {
     const st = it.entity ? this.hass?.states[it.entity] : undefined;
     return resolveItemIcon(
+      this.hass,
       { ...it, stateColor: undefined },
       st,
       it.entity ? this.hass?.entities?.[it.entity]?.icon : undefined
@@ -1946,17 +1950,21 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   /**
-   * The "Color by state" block (issues #68, #79, #82): a list of rules, each
-   * one a condition and a colour, plus an "Add rule" button.
+   * The "Color by state" block (issues #68, #79, #82, and the fork's
+   * `entity`/`state_not`/`below`/`animation`): a list of rules, each one a
+   * condition and a colour, plus an "Add rule" button.
    *
-   * A rule's condition is either a numeric threshold or an exact state, chosen
-   * per row — the two ways an entity's value comes back. A rule with neither is
-   * the fallback, and reads as "otherwise" in the UI.
+   * A rule's condition is a numeric threshold (`above`/`below`) or a state
+   * check (`state`/`state_not`), chosen per row via {@link stateColorRuleMode}
+   * — the two ways an entity's value comes back, now each with a mirror. A
+   * rule with none of the four is the fallback, and reads as "otherwise" in
+   * the UI.
    *
    * These are plain rows rather than `ha-form` fields: the list is repeatable
    * and ha-form has no selector for that (its `object` selector is a raw YAML
-   * box). Colours are the one part of this editor that was always hand-rolled,
-   * so the block still matches its neighbours.
+   * box) — upstream's own editor hand-rolls this same block for the same
+   * reason. Colours are the one part of this editor that was always
+   * hand-rolled, so the block still matches its neighbours.
    */
   private _renderStateColorRules(
     rules: StateColorRule[] | undefined,
@@ -1978,24 +1986,24 @@ export class FloorplanCardEditor extends LitElement {
         >
       </div>
       ${list.map((rule, i) => {
-        const mode = typeof rule.state === "string" ? "state" : typeof rule.above === "number" ? "above" : "else";
+        const mode = stateColorRuleMode(rule);
         return html`
           <div class="row wide state-color-rule">
             <select
               .value=${mode}
               title="When this rule applies"
               @change=${(e: Event) => {
-                const m = (e.target as HTMLSelectElement).value;
-                // Switching condition drops the other kind, so a rule can
-                // never carry both an `above` and a `state`.
-                patch(i, {
-                  above: m === "above" ? (rule.above ?? 0) : undefined,
-                  state: m === "state" ? (rule.state ?? "") : undefined,
-                });
+                const m = (e.target as HTMLSelectElement).value as StateColorRuleMode;
+                // One control names every condition key (mirrors badgeMode):
+                // switching modes drops whichever the rule carried before, so
+                // it never ends up storing two at once.
+                patch(i, stateColorRuleModePatch(m, rule));
               }}
             >
               <option value="above">above</option>
+              <option value="below">below</option>
               <option value="state">state is</option>
+              <option value="state_not">state isn't</option>
               <option value="else">otherwise</option>
             </select>
             ${mode === "above"
@@ -2006,15 +2014,32 @@ export class FloorplanCardEditor extends LitElement {
                   @change=${(e: Event) =>
                     patch(i, { above: Number((e.target as HTMLInputElement).value) || 0 })}
                 />`
-              : mode === "state"
+              : mode === "below"
                 ? html`<input
-                    type="text"
+                    type="number"
                     class="cond"
-                    placeholder="on"
-                    .value=${rule.state ?? ""}
-                    @change=${(e: Event) => patch(i, { state: (e.target as HTMLInputElement).value })}
+                    .value=${String(rule.below ?? 0)}
+                    @change=${(e: Event) =>
+                      patch(i, { below: Number((e.target as HTMLInputElement).value) || 0 })}
                   />`
-                : html`<span class="cond hint">any other value</span>`}
+                : mode === "state"
+                  ? html`<input
+                      type="text"
+                      class="cond"
+                      placeholder="on"
+                      .value=${rule.state ?? ""}
+                      @change=${(e: Event) => patch(i, { state: (e.target as HTMLInputElement).value })}
+                    />`
+                  : mode === "state_not"
+                    ? html`<input
+                        type="text"
+                        class="cond"
+                        placeholder="off"
+                        .value=${rule.state_not ?? ""}
+                        @change=${(e: Event) =>
+                          patch(i, { state_not: (e.target as HTMLInputElement).value })}
+                      />`
+                    : html`<span class="cond hint">any other value</span>`}
             <input
               type="color"
               .value=${rule.color || "#ff0000"}
@@ -2047,6 +2072,26 @@ export class FloorplanCardEditor extends LitElement {
             >
               <ha-icon icon="mdi:close"></ha-icon>
             </button>
+            <div class="row rule-wide">
+              <label title="Judge this rule on a different entity than the one above">For entity</label>
+              ${this._renderEntityPicker(rule.entity ?? "", (v) => patch(i, { entity: v || undefined }))}
+            </div>
+            <div class="row rule-wide">
+              <label title="Animation to play on the badge while this rule matches">Animation</label>
+              <select
+                .value=${rule.animation ?? ""}
+                @change=${(e: Event) => {
+                  const v = (e.target as HTMLSelectElement).value;
+                  patch(i, { animation: (v || undefined) as StateColorRule["animation"] });
+                }}
+              >
+                <option value="">(unset)</option>
+                <option value="auto">Auto</option>
+                <option value="none">None</option>
+                <option value="spin">Spin</option>
+                <option value="pulse">Pulse</option>
+              </select>
+            </div>
           </div>
         `;
       })}
@@ -3651,7 +3696,12 @@ export class FloorplanCardEditor extends LitElement {
     const selected = this._isSel("item", it.id);
     const st = it.entity ? this.hass?.states[it.entity] : undefined;
     // Pass the registry icon here too, so the editor preview matches the card.
-    const icon = resolveItemIcon(it, st, it.entity ? this.hass?.entities?.[it.entity]?.icon : undefined);
+    const icon = resolveItemIcon(
+      this.hass,
+      it,
+      st,
+      it.entity ? this.hass?.entities?.[it.entity]?.icon : undefined
+    );
     // The card's own label line when it has one, else a dim editor-only
     // stand-in so devices stay tellable apart (issue #135). The rule lives in
     // render.ts, where it can be unit-tested.
@@ -3662,7 +3712,7 @@ export class FloorplanCardEditor extends LitElement {
     // Same resolution as the card, so the canvas shows the colour the plan
     // will actually render (state rules first, then the active colour).
     const rawValue = itemRawValue(it, st);
-    const stateColor = cssColor(resolveStateColor(it.stateColor, rawValue));
+    const stateColor = cssColor(matchStateRuleFor(this.hass, it.stateColor, rawValue)?.color);
     // …and the same badge contents, so "Badge shows: Value" previews here too.
     const value = badgeContentOf(it) === "value" ? badgeValue(this.hass, it) : undefined;
     // The active colour — the one the user set, else the bulb's own colour
@@ -5709,6 +5759,15 @@ export class FloorplanCardEditor extends LitElement {
     .row.state-color-rule .rule-icon {
       flex: 1 1 100%;
       min-width: 0;
+    }
+    /* The entity and animation fork extensions: each gets its own
+       full-width line for the same reason the icon picker above does — a
+       nested .row reuses that div's own label/control sizing rather than
+       fighting the rule row's flex layout. */
+    .row.state-color-rule .row.rule-wide {
+      flex: 1 1 100%;
+      min-width: 0;
+      margin-bottom: 0;
     }
     .state-color-rule .rule-remove,
     .state-color-add button {

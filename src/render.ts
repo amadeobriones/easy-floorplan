@@ -123,18 +123,25 @@ export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
     for (const it of f.items) {
       if (it.entity) ids.add(it.entity);
       if (it.secondaryEntity) ids.add(it.secondaryEntity);
+      // A state rule's own `entity` (the fork extension) watches somewhere
+      // else entirely — miss it and a sofa that's meant to redden when the
+      // front door opens stays its first-painted colour until something
+      // *else* on the plan happens to trigger a re-render.
+      for (const r of it.stateColor ?? []) if (r.entity) ids.add(r.entity);
     }
     // Entity-bound furniture (issue #82) — without this the card never
     // re-renders when the soil sensor moves, and the plant stays its
     // first-painted color forever.
     for (const fu of f.furniture) {
       if (fu.entity) ids.add(fu.entity);
+      for (const r of fu.stateColor ?? []) if (r.entity) ids.add(r.entity);
     }
     // Entity-bound areas (issue #6) — same reasoning as furniture above: miss
     // these and a room's color is painted once and then frozen, because
     // shouldUpdate drops every hass tick that only moved an unwatched entity.
     for (const a of f.areas) {
       if (a.entity) ids.add(a.entity);
+      for (const r of a.stateColor ?? []) if (r.entity) ids.add(r.entity);
     }
     for (const tr of f.trackers) {
       for (const s of [tr.xSensor, tr.ySensor]) {
@@ -220,29 +227,83 @@ export function resolveStateColor(
  * Split out for issue #106: a rule can carry an `icon` as well as a `color`,
  * and both must come from the *same* matched rule. Re-running the precedence
  * once per property would be two chances to drift apart, and would quietly
- * allow one rule's colour beside another rule's icon.
+ * allow one rule's colour beside another rule's icon. `animation` (a fork
+ * extension) rides along for the same reason.
  */
 export function matchStateRule(
   rules: readonly StateColorRule[] | undefined,
   raw: unknown,
 ): StateColorRule | undefined {
+  return matchStateRuleWith(rules, () => raw);
+}
+
+/**
+ * The rule that applies, honouring a rule's own `entity` override (a fork
+ * extension): a rule naming one is judged against *that* entity's state
+ * instead of the element's own, so a sofa can redden when the front door
+ * opens. Rules without one behave exactly as {@link matchStateRule} always
+ * has — so a config using no `entity:` resolves identically.
+ */
+export function matchStateRuleFor(
+  hass: RenderHass | undefined,
+  rules: readonly StateColorRule[] | undefined,
+  ownRaw: unknown,
+): StateColorRule | undefined {
+  return matchStateRuleWith(rules, (r) => (r.entity ? hass?.states[r.entity]?.state : ownRaw));
+}
+
+/**
+ * The one-pass precedence loop shared by {@link matchStateRule} and
+ * {@link matchStateRuleFor} — the reason the entity/state_not/below fork
+ * extensions live inside a single loop rather than a second copy of it (a
+ * second copy preserves precedence but drifts from this one the moment
+ * upstream touches its own).
+ *
+ * `valueFor` is asked once per rule rather than once for the whole list, so a
+ * rule carrying its own `entity` is judged on its own reading — `numeric`/
+ * `text` therefore have to be derived *inside* the loop; deriving them once
+ * above it (as the pre-fork version did, safely, when every rule shared one
+ * value) would silently compare every rule against the first rule's value.
+ */
+function matchStateRuleWith(
+  rules: readonly StateColorRule[] | undefined,
+  valueFor: (rule: StateColorRule) => unknown,
+): StateColorRule | undefined {
   if (!rules?.length) return undefined;
-  const n = typeof raw === "number" ? raw : Number(raw);
-  const numeric = typeof raw !== "boolean" && raw !== "" && raw != null && Number.isFinite(n);
-  const text = raw == null ? "" : String(raw).trim().toLowerCase();
   let exact: StateColorRule | undefined;
   let best: StateColorRule | undefined;
   let fallback: StateColorRule | undefined;
   for (const rule of rules) {
     if (!rule || typeof rule !== "object" || typeof rule.color !== "string") continue;
+    const raw = valueFor(rule);
+    const n = typeof raw === "number" ? raw : Number(raw);
+    const numeric = typeof raw !== "boolean" && raw !== "" && raw != null && Number.isFinite(n);
+    const text = raw == null ? "" : String(raw).trim().toLowerCase();
     if (typeof rule.state === "string" && rule.state !== "") {
       // First matching state rule wins, so an earlier rule shadows a later
       // duplicate — the same "first one listed" reading as the default rule.
       if (exact === undefined && text !== "" && rule.state.trim().toLowerCase() === text) {
         exact = rule;
       }
+    } else if (typeof rule.state_not === "string" && rule.state_not !== "") {
+      // Same exact tier as `state`, inverted. Fails closed on a blank reading
+      // (an outage, or no entity at all) rather than assuming "anything but
+      // X" is satisfied by not knowing X — the same guard `text !== ""`
+      // already gives the `state` branch above.
+      if (exact === undefined && text !== "" && rule.state_not.trim().toLowerCase() !== text) {
+        exact = rule;
+      }
     } else if (typeof rule.above === "number") {
-      if (numeric && n > rule.above && (!best || rule.above > (best.above ?? -Infinity))) {
+      // Highest matching `above` wins. A `below` rule matching later never
+      // displaces it — the two thresholds aren't on a shared scale to compare
+      // against each other, so the first threshold-tier rule found decides
+      // which *kind* wins, refined only by a stricter match of its own kind.
+      if (numeric && n > rule.above && (!best || (typeof best.above === "number" && rule.above > best.above))) {
+        best = rule;
+      }
+    } else if (typeof rule.below === "number") {
+      // The mirror of the `above` branch: lowest matching `below` wins.
+      if (numeric && n < rule.below && (!best || (typeof best.below === "number" && rule.below < best.below))) {
         best = rule;
       }
     } else if (fallback === undefined) {
@@ -258,29 +319,43 @@ export function matchStateRule(
  * the entity is on — so a plant can go red below 50% moisture, and a cabinet
  * with a contact sensor can go amber while its door is open.
  *
+ * Takes `hass` — rather than just `f`'s own state, as before the `entity` fork
+ * extension — so a rule naming its own `entity` can be judged against a
+ * different reading than the piece it colours (see {@link matchStateRuleFor}).
+ *
  * Returns a value already through the style-injection allowlist (#64), because
  * it flows straight into `stroke`/`fill` attributes.
  */
-export function furnitureColor(f: Furniture, state: string | undefined): string | undefined {
+export function furnitureColor(
+  hass: RenderHass | undefined,
+  f: Furniture,
+  state: string | undefined,
+): string | undefined {
   if (!f.entity) return undefined;
-  const rule = resolveStateColor(f.stateColor, state);
-  if (rule) return cssColor(rule);
+  const color = matchStateRuleFor(hass, f.stateColor, state)?.color;
+  if (color) return cssColor(color);
   if (f.activeColor && entityIsActive(f.entity, state)) return cssColor(f.activeColor);
   return undefined;
 }
 
 /**
  * Resolve the live fill color for an {@link Area} bound to an entity (issue #6),
- * mirroring {@link furnitureColor}: `stateColor` rules win, then `activeColor`
- * while the entity is active, else undefined so the static `color` applies.
+ * mirroring {@link furnitureColor}: `stateColor` rules win (each judged against
+ * its own `entity` override, if any — the same fork extension), then
+ * `activeColor` while the entity is active, else undefined so the static
+ * `color` applies.
  *
  * Returns a value already through the style-injection allowlist (#64), because
  * it flows straight into a `fill` attribute.
  */
-export function areaColor(a: Area, state: string | undefined): string | undefined {
+export function areaColor(
+  hass: RenderHass | undefined,
+  a: Area,
+  state: string | undefined,
+): string | undefined {
   if (!a.entity) return undefined;
-  const rule = resolveStateColor(a.stateColor, state);
-  if (rule) return cssColor(rule);
+  const color = matchStateRuleFor(hass, a.stateColor, state)?.color;
+  if (color) return cssColor(color);
   if (a.activeColor && entityIsActive(a.entity, state)) return cssColor(a.activeColor);
   return undefined;
 }
@@ -1362,10 +1437,16 @@ export function itemRawValue(
  * The registry override lives at `hass.entities[id].icon` and never reaches
  * `attributes.icon`, so a user who set an icon in Settings → Entities sees it
  * everywhere in HA except here. HA's own `entityIcon()` prefers it over the
- * integration's icon; so must we. `registryIcon` is passed in because this helper
- * takes the state object, not `hass`.
+ * integration's icon; so must we. `registryIcon` is passed in separately
+ * because it comes off the registry, not the state object `st` this helper
+ * otherwise works from.
+ *
+ * `hass` is only consulted for a state rule's own `entity` override (the fork
+ * extension, {@link matchStateRuleFor}) — every other candidate above still
+ * reads off `item`/`st`/`registryIcon` exactly as before.
  */
 export function resolveItemIcon(
+  hass: RenderHass | undefined,
   item: {
     entity?: string;
     kind: ItemKind;
@@ -1379,7 +1460,7 @@ export function resolveItemIcon(
   // Config strings, so the icon goes through the allowlist (#106): an
   // unusable value falls through to the next candidate rather than rendering
   // an empty box.
-  const ruleIcon = cssIcon(matchStateRule(item.stateColor, itemRawValue(item, st))?.icon);
+  const ruleIcon = cssIcon(matchStateRuleFor(hass, item.stateColor, itemRawValue(item, st))?.icon);
   if (ruleIcon) return ruleIcon;
   const configIcon = cssIcon(item.icon);
   if (configIcon) return configIcon;

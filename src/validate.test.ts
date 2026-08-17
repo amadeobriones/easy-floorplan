@@ -195,6 +195,25 @@ describe("validateConfig", () => {
     };
     expect(validateConfig(good).ok).toBe(true);
   });
+  it("validates the fork's stateColor extensions: entity, state_not, below, animation", () => {
+    const good = {
+      type: "x", width: 10, height: 10,
+      items: [
+        {
+          id: "i", x: 0, y: 0, kind: "light",
+          stateColor: [
+            { entity: "binary_sensor.door", state_not: "off", below: 20, color: "red", animation: "pulse" },
+          ],
+        },
+      ],
+    };
+    expect(validateConfig(good).ok).toBe(true);
+    const bad = {
+      type: "x", width: 10, height: 10,
+      items: [{ id: "i", x: 0, y: 0, kind: "light", stateColor: [{ color: "red", animation: "blink" }] }],
+    };
+    expect(validateConfig(bad).ok).toBe(false);
+  });
   it("collects multiple errors in one pass", () => {
     const r = validateConfig({ width: "x", height: "y" });
     expect(r.ok).toBe(false);
