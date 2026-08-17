@@ -120,6 +120,8 @@ import {
 } from "./skins";
 import { actionForGesture, executeAction, hasAction, itemIsInteractive } from "./actions";
 import { actionHandler } from "./action-handler";
+import { radialHasHold, shouldOpenRadial } from "./radial-controls";
+import { openRadialPopover } from "./radial-popover";
 
 /**
  * Which floor each plan was last viewed on, keyed by its floor-id set (issue
@@ -297,7 +299,23 @@ export class FloorplanCard extends LitElement {
     item: FloorItem
   ): void {
     if (!this.hass) return;
+    if (ev.detail.action === "hold" && shouldOpenRadial(this._config, item.entity, item.hold_action)) {
+      this._openRadial(ev, item.entity!);
+      return;
+    }
     executeAction(this, this.hass, item, actionForGesture(item, ev.detail.action));
+  }
+
+  /**
+   * Opens the radial popover anchored to the piece that was held. The
+   * anchor is the DOM element the gesture fired on -- `.item`/`.badge` div
+   * -- so `getBoundingClientRect()` works the same as it did for `main`'s
+   * HTML overlay.
+   */
+  private _openRadial(ev: CustomEvent, entity: string): void {
+    if (!this.hass) return;
+    const anchor = (ev.currentTarget as Element).getBoundingClientRect();
+    openRadialPopover({ hass: this.hass, entity, anchor });
   }
 
   /**
@@ -547,7 +565,7 @@ export class FloorplanCard extends LitElement {
         @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
           this._handleItemAction(ev, item)}
         .actionHandler=${actionHandler({
-          hasHold: hasAction(item.hold_action),
+          hasHold: radialHasHold(this._config, item.entity, item.hold_action),
           hasDoubleClick: hasAction(item.double_tap_action),
           // Unbinds the gesture listeners outright, so keyboard activation
           // cannot reach an action that would do nothing.
