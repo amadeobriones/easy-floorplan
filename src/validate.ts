@@ -151,18 +151,30 @@ const floor = shape(
 );
 
 /**
- * FeaturesConfig is a closed set (issue #35 follow-up): exactly the five
+ * FeaturesConfig is a closed set (issue #35 follow-up): exactly the four
  * flags below. Unlike everything else in this file, an unknown key here is
  * rejected rather than passed through — a typo'd or since-removed flag
  * (the pre-port fork had ten) should tell the user, not silently do nothing.
  */
-const FEATURE_FLAGS = ["thermalLayer", "awarenessLayer", "energyLayer", "radialControls", "autoPopulateArea"] as const;
+const FEATURE_FLAGS = ["thermalLayer", "awarenessLayer", "energyLayer", "radialControls"] as const;
 const features: Check = (v, p) => {
   if (!isPlainObject(v)) return e(p, "expected an object");
   const errs: Errs = [];
   for (const k of FEATURE_FLAGS) if (v[k] !== undefined) errs.push(...bool(v[k], `${p}.${k}`));
   for (const k of Object.keys(v)) {
-    if (!(FEATURE_FLAGS as readonly string[]).includes(k)) errs.push(...e(`${p}.${k}`, "unknown feature flag"));
+    if ((FEATURE_FLAGS as readonly string[]).includes(k)) continue;
+    // Removed in the v1.4.1 port: upstream's own "Add all devices in this HA
+    // area" button is unconditional now, so the flag that used to gate it
+    // has nothing left to gate. Name the specific reason rather than making
+    // a config saved before the removal (e.g. an older exported YAML) hit
+    // the generic "unknown feature flag" with no explanation.
+    if (k === "autoPopulateArea") {
+      errs.push(
+        ...e(`${p}.${k}`, "autoPopulateArea was removed: adding an HA area's devices is now always available")
+      );
+      continue;
+    }
+    errs.push(...e(`${p}.${k}`, "unknown feature flag"));
   }
   return errs;
 };

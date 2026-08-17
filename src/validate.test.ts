@@ -27,12 +27,12 @@ describe("validateConfig", () => {
     const r = validateConfig({ type: "x", width: 10, height: 10, features: { thermalLayer: "yes" } });
     expect(r.ok).toBe(false);
   });
-  it("accepts a features block with all five current flags", () => {
+  it("accepts a features block with all four current flags", () => {
     const r = validateConfig({
       type: "x", width: 10, height: 10,
       features: {
         thermalLayer: true, awarenessLayer: true, energyLayer: true,
-        radialControls: true, autoPopulateArea: true,
+        radialControls: true,
       },
     });
     expect(r.ok).toBe(true);
@@ -46,6 +46,14 @@ describe("validateConfig", () => {
     const r = validateConfig({ type: "x", width: 10, height: 10, features: { notARealFlag: true } });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors.some((e) => e.includes("features.notARealFlag"))).toBe(true);
+  });
+  it("rejects autoPopulateArea with a specific removal message, not the generic 'unknown feature flag'", () => {
+    const r = validateConfig({ type: "x", width: 10, height: 10, features: { autoPopulateArea: true } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.some((e) => e.includes("features.autoPopulateArea") && e.includes("removed"))).toBe(true);
+      expect(r.errors.some((e) => e.includes("unknown feature flag"))).toBe(false);
+    }
   });
   it("accepts an area's tempEntity", () => {
     const cfg = {

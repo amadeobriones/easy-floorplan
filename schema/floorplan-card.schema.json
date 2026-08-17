@@ -194,10 +194,6 @@
         },
         "FeaturesConfig": {
             "properties": {
-                "autoPopulateArea": {
-                    "description": "Editor: drop an HA area's entities onto the plan.",
-                    "type": "boolean"
-                },
                 "awarenessLayer": {
                     "description": "Motion pings and safety alerts.",
                     "type": "boolean"

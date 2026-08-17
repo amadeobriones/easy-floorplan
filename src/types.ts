@@ -983,8 +983,6 @@ export interface FeaturesConfig {
   energyLayer?: boolean;
   /** Inline brightness/colour/thermostat on long-press. */
   radialControls?: boolean;
-  /** Editor: drop an HA area's entities onto the plan. */
-  autoPopulateArea?: boolean;
 }
 
 export interface FloorplanCardConfig extends LovelaceCardConfig {

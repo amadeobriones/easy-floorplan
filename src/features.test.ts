@@ -16,7 +16,7 @@ describe("featureEnabled", () => {
   it("META lists exactly the FeaturesConfig keys", () => {
     // guard against a key added to the type but not surfaced in the editor
     expect(FEATURE_META.map((m) => m.name).sort()).toEqual(
-      ["autoPopulateArea","awarenessLayer","energyLayer","radialControls","thermalLayer"].sort(),
+      ["awarenessLayer","energyLayer","radialControls","thermalLayer"].sort(),
     );
   });
 });
