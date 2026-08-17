@@ -159,7 +159,7 @@ const features: Check = (v, p) => {
   return errs;
 };
 
-/** `Furniture.symbols` values are untrusted geometry `normalizeSymbol` validates on the way in; just require an object here. */
+/** `FloorplanCardConfig.symbols` values are untrusted geometry `normalizeSymbol` validates on the way in; just require an object here. */
 const symbols: Check = (v, p) => (isPlainObject(v) ? [] : e(p, "expected an object"));
 
 const config = shape(
