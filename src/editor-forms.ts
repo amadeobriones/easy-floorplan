@@ -58,6 +58,8 @@ import {
 } from "./render";
 import { defaultItemAction } from "./actions";
 import { DEFAULT_SKIN, SKINS, findSkin, MAX_SKIN_WALL_WIDTH } from "./skins";
+import { FEATURE_META, featureEnabled } from "./features";
+import type { FeaturesConfig } from "./types";
 
 /** One ha-form schema item, extended with our label/helper (read by computeLabel). */
 export interface FormField {
@@ -817,6 +819,92 @@ export function itemForm(
           ring === undefined ? ripple : !!ring
         ),
       };
+    },
+  };
+}
+
+/**
+ * The device's power sensor, which the energy layer colours it by.
+ *
+ * Its own one-field form rather than a row in {@link itemForm}, for the same
+ * reason the skin and the press effect have theirs: the editor decides
+ * whether to show it, and that decision needs the card config (is the energy
+ * layer on?), which this file deliberately does not take. Keeping the gate at
+ * the call site also keeps `itemForm`'s signature — already four arguments —
+ * from growing a fifth.
+ *
+ * Sensors only: the layer reads the entity's *state* as a number
+ * (`parseWatts` in energy-layer.ts), so a domain whose state is a word could
+ * be bound here and would silently draw a neutral halo forever.
+ */
+export function itemPowerForm(it: FloorItem): FormSpec {
+  return {
+    fields: [
+      {
+        name: "powerEntity",
+        label: "Power sensor",
+        helper: "Watts. The energy layer colours this device by its reading",
+        selector: { entity: { filter: [{ domain: ["sensor"] }] } },
+      },
+    ],
+    data: { powerEntity: it.powerEntity ?? "" },
+    toPatch: identity,
+  };
+}
+
+/**
+ * The room's temperature sensor, which the climate layer shades it by. Its
+ * own one-field form for the same reason as {@link itemPowerForm} — and
+ * sensors only for the same reason too: `numericReading` in thermal.ts reads
+ * the state as a number, so a `climate.*` entity (state "heat", "off") would
+ * bind happily and never tint anything.
+ */
+export function areaTempForm(a: Area): FormSpec {
+  return {
+    fields: [
+      {
+        name: "tempEntity",
+        label: "Temperature sensor",
+        helper: "Its reading shades this room warm ↔ cool on the climate layer",
+        selector: { entity: { filter: [{ domain: ["sensor"] }] } },
+      },
+    ],
+    data: { tempEntity: a.tempEntity ?? "" },
+    toPatch: identity,
+  };
+}
+
+/**
+ * The opt-in features (issue #35), one toggle per {@link FEATURE_META} entry.
+ *
+ * Driven off FEATURE_META rather than a hand-written field list, because that
+ * is exactly how this went wrong: the port shipped four features with no
+ * editor UI at all, so a GUI user could not switch any of them on and the
+ * card behaved as though none had been built. A list written out here would
+ * be a fourth place a new flag has to be remembered.
+ *
+ * Off is the default for every flag, so `toPatch` writes down only what is
+ * **on** and drops the `features:` block entirely once nothing is — the same
+ * "the default stays out of the YAML" rule the skin, press effect and dead
+ * spaces forms follow. That also normalizes an explicit `thermalLayer: false`
+ * away on the next edit rather than carrying it forever.
+ */
+export function featuresForm(c: FloorplanCardConfig): FormSpec {
+  return {
+    fields: FEATURE_META.map((m) => ({
+      name: m.name,
+      label: m.label,
+      helper: m.help,
+      selector: { boolean: {} },
+    })),
+    data: Object.fromEntries(FEATURE_META.map((m) => [m.name, featureEnabled(c, m.name)])),
+    toPatch: (patch) => {
+      const next: FeaturesConfig = {};
+      for (const m of FEATURE_META) {
+        const on = m.name in patch ? !!patch[m.name] : featureEnabled(c, m.name);
+        if (on) next[m.name] = true;
+      }
+      return { features: Object.keys(next).length ? next : undefined };
     },
   };
 }

@@ -21,11 +21,15 @@ import {
   areaNameForm,
   stateColorRuleMode,
   stateColorRuleModePatch,
+  featuresForm,
+  itemPowerForm,
+  areaTempForm,
 } from "./editor-forms";
 import type { FormField } from "./editor-forms";
 import type { Area, Opening, FloorItem, Floor, FloorplanCardConfig } from "./types";
 import { DEFAULT_GLOW_RADIUS, DEFAULT_PRESS_EFFECT } from "./types";
 import { DEFAULT_SKIN, SKINS, MAX_SKIN_WALL_WIDTH } from "./skins";
+import { FEATURE_META } from "./features";
 
 const fields: FormField[] = [
   { name: "name", label: "Name", selector: { text: {} } },
@@ -1231,5 +1235,93 @@ describe("projectSunForm (issue #113)", () => {
     // Leaving them behind would resurrect stale values on re-enable.
     expect(toPatch({ sunDimming: true }).sunDimming).toBe(true);
     expect(toPatch({ sunBrightnessMin: 0.3 })).toEqual({ sunBrightnessMin: 0.3 });
+  });
+});
+
+/**
+ * The editor UI for the four fork features (issue #35).
+ *
+ * These exist because the v1.4.1 port shipped the features with no editor at
+ * all: FEATURE_META had zero non-test consumers, and `powerEntity` /
+ * `tempEntity` appeared nowhere in the editor. A GUI user could not switch a
+ * flag on, and even hand-editing YAML to set `energyLayer: true` left no
+ * field to bind the sensor the layer draws from.
+ */
+describe("featuresForm (issue #35)", () => {
+  const cfg = (features?: Record<string, boolean>) =>
+    ({ type: "custom:easy-floorplan-card", width: 100, height: 100, features }) as unknown as FloorplanCardConfig;
+
+  it("offers exactly one toggle per FEATURE_META entry, in order", () => {
+    // Derived, not hand-listed: a flag the card supports cannot go missing.
+    expect(featuresForm(cfg()).fields.map((f) => f.name)).toEqual(FEATURE_META.map((m) => m.name));
+    expect(featuresForm(cfg()).fields.every((f) => "boolean" in f.selector)).toBe(true);
+  });
+
+  it("labels each toggle with the feature's own label and help", () => {
+    // The same strings the card's layer chips use — see features.ts.
+    for (const f of featuresForm(cfg()).fields) {
+      const meta = FEATURE_META.find((m) => m.name === f.name)!;
+      expect(f.label).toBe(meta.label);
+      expect(f.helper).toBe(meta.help);
+    }
+  });
+
+  it("opens on the effective state, defaulting every flag to off", () => {
+    expect(featuresForm(cfg()).data).toEqual(
+      Object.fromEntries(FEATURE_META.map((m) => [m.name, false]))
+    );
+    expect(featuresForm(cfg({ energyLayer: true })).data).toMatchObject({
+      energyLayer: true,
+      thermalLayer: false,
+    });
+  });
+
+  it("switching one on leaves the others as they were", () => {
+    const { toPatch } = featuresForm(cfg({ thermalLayer: true }));
+    expect(toPatch({ energyLayer: true })).toEqual({
+      features: { thermalLayer: true, energyLayer: true },
+    });
+  });
+
+  it("writes down only what is on, and drops the block once nothing is", () => {
+    // Off is the default, so `false` never needs storing — and an explicit
+    // false already in the YAML is normalized away on the next edit.
+    const { toPatch } = featuresForm(cfg({ thermalLayer: true, energyLayer: false }));
+    expect(toPatch({})).toEqual({ features: { thermalLayer: true } });
+    expect(toPatch({ thermalLayer: false })).toEqual({ features: undefined });
+  });
+});
+
+describe("itemPowerForm / areaTempForm — the per-element bindings the layers read", () => {
+  it("binds an item's powerEntity", () => {
+    const it = { id: "i", x: 0, y: 0, kind: "switch", entity: "switch.plug" } as FloorItem;
+    const spec = itemPowerForm(it);
+    expect(spec.fields.map((f) => f.name)).toEqual(["powerEntity"]);
+    expect(spec.data).toEqual({ powerEntity: "" });
+    expect(itemPowerForm({ ...it, powerEntity: "sensor.plug_w" }).data).toEqual({
+      powerEntity: "sensor.plug_w",
+    });
+  });
+
+  it("binds an area's tempEntity", () => {
+    const a = { id: "a", points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }] } as Area;
+    const spec = areaTempForm(a);
+    expect(spec.fields.map((f) => f.name)).toEqual(["tempEntity"]);
+    expect(spec.data).toEqual({ tempEntity: "" });
+    expect(areaTempForm({ ...a, tempEntity: "sensor.hall_t" }).data).toEqual({
+      tempEntity: "sensor.hall_t",
+    });
+  });
+
+  it("offers sensors only — both layers read the state as a number", () => {
+    // parseWatts (energy-layer.ts) and numericReading (thermal.ts) both do
+    // Number(state), so a climate entity ("heat") would bind and never draw.
+    for (const spec of [
+      itemPowerForm({ id: "i", x: 0, y: 0, kind: "switch" } as FloorItem),
+      areaTempForm({ id: "a", points: [] } as unknown as Area),
+    ]) {
+      const sel = spec.fields[0]!.selector.entity as { filter: { domain: string[] }[] };
+      expect(sel.filter[0]!.domain).toEqual(["sensor"]);
+    }
   });
 });

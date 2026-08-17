@@ -139,13 +139,16 @@ import {
   furnitureLabel,
   areaForm,
   areaNameForm,
+  areaTempForm,
   diffFormValue,
+  featuresForm,
   floorImageForm,
   floorRotationForm,
   furnitureForm,
   isLiveField,
   itemForm,
   itemHasRipple,
+  itemPowerForm,
   normalizeFormPatch,
   openingForm,
   projectForm,
@@ -163,6 +166,8 @@ import {
   type FormSpec,
   type StateColorRuleMode,
 } from "./editor-forms";
+
+import { FEATURE_META, featureEnabled } from "./features";
 
 const formLabel = (s: FormField): string => s.label;
 const formHelper = (s: FormField): string | undefined => s.helper;
@@ -301,6 +306,8 @@ export class FloorplanCardEditor extends LitElement {
   @state() private _importError = "";
   /** Project section expanded? Collapsed by default — page settings are touched rarely. */
   @state() private _projectOpen = false;
+  /** Features section expanded? Collapsed by default, same rationale — these are opt-in flags most plans never touch. */
+  @state() private _featuresOpen = false;
   /**
    * Expanded (fullscreen) editing. HA renders the card config editor in a
    * narrow dialog (~480–560px), which is cramped for a visual canvas editor.
@@ -3088,6 +3095,7 @@ export class FloorplanCardEditor extends LitElement {
         <div class="side">
           ${this._renderElementEdit()}
           ${this._renderPanel()}
+          ${this._renderFeaturesPanel()}
         </div>
         </div>
       </div>
@@ -3920,6 +3928,46 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   /**
+   * The opt-in features (issue #35): one toggle per flag, driven by
+   * FEATURE_META so a flag the card supports can never be missing here.
+   *
+   * Its own section rather than a block inside Project, because switching one
+   * on changes what the *element* forms offer — a device gains a Power
+   * sensor, a room gains a Temperature sensor — so it is a mode for the whole
+   * editor rather than one more page setting. Collapsed by default, with the
+   * enabled count in the summary, so a plan using none of them pays one line.
+   */
+  private _renderFeaturesPanel(): TemplateResult {
+    const enabled = FEATURE_META.filter((m) => featureEnabled(this._config, m.name)).length;
+    return html`
+      <section class="panel">
+        <button
+          class="section-toggle"
+          aria-expanded=${this._featuresOpen}
+          @click=${() => {
+            this._featuresOpen = !this._featuresOpen;
+          }}
+        >
+          <ha-icon icon=${this._featuresOpen ? "mdi:chevron-down" : "mdi:chevron-right"}></ha-icon>
+          <span class="section-title-inline">Features</span>
+          ${this._featuresOpen
+            ? nothing
+            : html`<span class="section-summary"
+                >${enabled ? `${enabled} of ${FEATURE_META.length} enabled` : "All off"}</span
+              >`}
+        </button>
+        ${this._featuresOpen
+          ? html`<div class="rows panel-body">
+              ${this._renderForm(featuresForm(this._config), (patch) =>
+                this._patchConfig(patch as Partial<FloorplanCardConfig>)
+              )}
+            </div>`
+          : nothing}
+      </section>
+    `;
+  }
+
+  /**
    * Paste a furniture symbol into this plan (issue #90).
    *
    * The point is that you don't need a pull request to draw something the
@@ -4153,6 +4201,17 @@ export class FloorplanCardEditor extends LitElement {
           }
           this._applyElementPatch("item", it.id, patch, live);
         })}
+        ${
+          // The energy layer's per-device binding. Hidden until the layer is
+          // switched on, so a plan not using it does not carry a field that
+          // draws nothing — but shown regardless once a value exists, or a
+          // hand-written config's binding would be invisible and unclearable.
+          featureEnabled(this._config, "energyLayer") || it.powerEntity
+            ? this._renderForm(itemPowerForm(it), (patch, live) =>
+                this._applyElementPatch("item", it.id, patch, live)
+              )
+            : nothing
+        }
         ${it.stateColor?.length
           ? // Colour by state supersedes the fixed active colour, so showing
             // both invites setting one and seeing the other. Say which one is
@@ -4265,6 +4324,15 @@ export class FloorplanCardEditor extends LitElement {
         ${this._renderForm(areaForm(a), (patch, live) =>
           this._applyElementPatch("area", a.id, patch, live)
         )}
+        ${
+          // The climate layer's per-room binding, gated exactly as the energy
+          // layer's per-device one is — see the item branch above.
+          featureEnabled(this._config, "thermalLayer") || a.tempEntity
+            ? this._renderForm(areaTempForm(a), (patch, live) =>
+                this._applyElementPatch("area", a.id, patch, live)
+              )
+            : nothing
+        }
         ${this._renderColorRow({
           label: "Color",
           value: a.color,
