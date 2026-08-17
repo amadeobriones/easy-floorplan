@@ -660,6 +660,22 @@ export interface TrackerPresence {
   invert?: boolean;
 }
 
+export type AwarenessKind = "motion" | "safety";
+
+/**
+ * A placement point for the awareness layer: a motion marker pings a ripple
+ * where its sensor fires; a safety marker (leak, smoke, door left open) blinks
+ * in an alert palette when its sensor trips. `kind` selects which visual and
+ * which trip rule apply — see isMarkerTripped in awareness.ts.
+ */
+export interface AwarenessMarker {
+  id: string;
+  x: number;
+  y: number;
+  entity: string;
+  kind: AwarenessKind;
+}
+
 /** A vertex of an {@link Area} polygon, in virtual canvas units. */
 export interface AreaPoint {
   x: number;
@@ -922,6 +938,8 @@ export interface Floor {
   furniture: Furniture[];
   trackers: Tracker[];
   areas: Area[];
+  /** Awareness-layer markers on this floor. Optional: older configs have none. */
+  awareness?: AwarenessMarker[];
 }
 
 /** Sizing mode for the HTML overlay layer. See {@link FloorplanCardConfig.overlayScale}. */

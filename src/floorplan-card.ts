@@ -102,6 +102,9 @@ import { enabledLayers, layerWatchedEntities, type LiveLayer } from "./layers";
 // Registers the power-draw overlay into the live-layer registry; nothing else
 // in this file references energy-layer.ts directly.
 import "./energy-layer";
+// Registers the motion/safety overlay into the live-layer registry; nothing
+// else in this file references awareness-layer.ts directly.
+import "./awareness-layer";
 import type { FeatureName } from "./features";
 import {
   skinAttribute,
@@ -1659,6 +1662,15 @@ export class FloorplanCard extends LitElement {
         transform: scale(1);
         opacity: 0;
       }
+    }
+    /* === Awareness layer (live card). The motion marker reuses .ripple above;
+       these two rules are the safety marker's own palette. === */
+    .fp-awareness-safety {
+      fill: var(--fp-awareness-alert-color, #d32f2f);
+    }
+    .fp-awareness-safety-idle {
+      fill: var(--disabled-text-color, #9e9e9e);
+      fill-opacity: 0.35;
     }
     /* === Tracker animations (live card). The zone outline is editor-only —
        renderTracker is called with editing:false here, so only the marker /
