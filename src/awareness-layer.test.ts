@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { awarenessLayer } from "./awareness-layer";
 import { LIVE_LAYERS, enabledLayers, layerWatchedEntities } from "./layers";
 import type { Floor, FloorplanCardConfig, RenderHass } from "./types";
+// Raw source text, not the FloorplanCard class -- see the test below for why.
+import cardSrc from "./floorplan-card.ts?raw";
 
 // LayerRenderCtx.hass is required (RenderHass, not optional) -- these two
 // tests exercise floors with no markers/no trip lookups, so no real hass is
@@ -93,6 +95,27 @@ describe("awarenessLayer", () => {
     expect(fixed).not.toEqual(plan);
     expect(fixed).toContain("width:80px");
     expect(plan).toContain("width:calc(80 * var(--fp-u, 1px))");
+  });
+
+  it("defines a CSS rule and keyframe for the class the safety marker actually emits", () => {
+    // renderSafetyMarker emits the class name as a plain string -- nothing
+    // type-checks it against a real selector, so a renamed/typo'd class
+    // compiles clean and every markup-only test (e.g. the "blinks in the
+    // alert palette" test in awareness.test.ts) still passes. This is the
+    // test that would catch an emitted class with no matching rule.
+    //
+    // Imported as raw source text (Vite's `?raw` suffix, typed by
+    // vite/client.d.ts) rather than importing the FloorplanCard class: this
+    // suite runs in vitest's default node environment (no jsdom/happy-dom
+    // configured anywhere in this repo, and no @types/node either), and
+    // importing the class evaluates `class ActionHandler extends
+    // HTMLElement` at module load (action-handler.ts, pulled in
+    // transitively) -- which throws "HTMLElement is not defined" outside a
+    // DOM. A source-text check on the real static-styles rule/keyframe
+    // declarations still catches the actual failure mode (an emitted class
+    // name with no matching selector).
+    expect(cardSrc).toMatch(/\.fp-awareness-blink\s*\{/);
+    expect(cardSrc).toMatch(/@keyframes fp-awareness-blink\s*\{/);
   });
 
   it("end-to-end through the real framework registry: off by default, on when the flag is set", () => {

@@ -1664,13 +1664,34 @@ export class FloorplanCard extends LitElement {
       }
     }
     /* === Awareness layer (live card). The motion marker reuses .ripple above;
-       these two rules are the safety marker's own palette. === */
+       these rules are the safety marker's own palette and blink animation.
+       Timing/curve copied verbatim from the old fork's fp-furn-blink so the
+       alert language is unchanged; renamed fp-awareness-blink because this
+       marker isn't furniture (see awareness.ts's renderSafetyMarker). === */
     .fp-awareness-safety {
       fill: var(--fp-awareness-alert-color, #d32f2f);
     }
     .fp-awareness-safety-idle {
       fill: var(--disabled-text-color, #9e9e9e);
       fill-opacity: 0.35;
+    }
+    .fp-awareness-blink {
+      animation: fp-awareness-blink 1s steps(1, end) infinite;
+    }
+    @keyframes fp-awareness-blink {
+      0%,
+      49% {
+        opacity: 1;
+      }
+      50%,
+      100% {
+        opacity: 0.25;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .fp-awareness-blink {
+        animation: none;
+      }
     }
     /* === Tracker animations (live card). The zone outline is editor-only —
        renderTracker is called with editing:false here, so only the marker /

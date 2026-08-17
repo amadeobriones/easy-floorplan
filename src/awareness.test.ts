@@ -94,14 +94,14 @@ describe("renderAwarenessMarker — safety", () => {
   it("draws a dim idle marker when clear", () => {
     const out = serialize(renderAwarenessMarker(marker, false));
     expect(out).toContain("fp-awareness-safety-idle");
-    expect(out).not.toContain("fp-furn-anim-blink");
+    expect(out).not.toContain("fp-awareness-blink");
     expect(out).toContain("cx=50");
     expect(out).toContain("cy=60");
   });
 
-  it("blinks in the alert palette when tripped, reusing the furniture blink animation", () => {
+  it("blinks in the alert palette when tripped, using this layer's own blink animation", () => {
     const out = serialize(renderAwarenessMarker(marker, true));
     expect(out).toContain("fp-awareness-safety");
-    expect(out).toContain("fp-furn-anim-blink");
+    expect(out).toContain("fp-awareness-blink");
   });
 });

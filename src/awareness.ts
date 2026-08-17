@@ -78,15 +78,17 @@ function renderMotionMarker(
 const SAFETY_MARKER_RADIUS = 10;
 
 /**
- * A safety marker: a small dim dot at rest, or a red/alert dot blinking with
- * the existing furniture blink animation (fp-furn-blink, defined in
- * floorplan-card.ts and editor.ts) once its sensor trips. See the
- * .fp-awareness-safety / .fp-awareness-safety-idle rules added alongside
- * that keyframe.
+ * A safety marker: a small dim dot at rest, or a red/alert dot blinking once
+ * its sensor trips. `fp-awareness-blink` is this layer's own animation class
+ * (not the old fork's furniture-namespaced `fp-furn-blink` -- this marker
+ * isn't furniture, and every other furniture animation is being dropped from
+ * this port in favor of upstream's `IconAnimation`/skins system). See the
+ * `.fp-awareness-safety` / `.fp-awareness-safety-idle` / `.fp-awareness-blink`
+ * rules and the `fp-awareness-blink` keyframe in floorplan-card.ts.
  */
 function renderSafetyMarker(marker: AwarenessMarker, tripped: boolean): SVGTemplateResult {
   return svg`<circle
-    class="${tripped ? "fp-awareness-safety fp-furn-anim-blink" : "fp-awareness-safety-idle"}"
+    class="${tripped ? "fp-awareness-safety fp-awareness-blink" : "fp-awareness-safety-idle"}"
     cx=${marker.x} cy=${marker.y} r=${SAFETY_MARKER_RADIUS} />`;
 }
 
