@@ -98,6 +98,8 @@ import {
 import { symbolCatalog } from "./symbols";
 import { deadSpacesCached } from "./dead-space";
 import type { Opening } from "./types";
+import { enabledLayers, layerWatchedEntities, type LiveLayer } from "./layers";
+import type { FeatureName } from "./features";
 import {
   skinAttribute,
   skinPalettes,
@@ -138,6 +140,8 @@ export class FloorplanCard extends LitElement {
   @state() private _activeFloorId?: string;
   /** View-state: which area (if any) the plan is zoomed in to. Never persisted. */
   @state() private _zoomedAreaId?: string;
+  /** View-state: enabled live layers the user has hidden via a toggle chip. Never persisted to config. */
+  @state() private _hiddenLayers = new Set<FeatureName>();
   private readonly _wallMaskId = `fp-wall-mask-${FloorplanCard._nextWallMaskId++}`;
   /** Prefix for this card's glow gradient ids, unique per instance (issue #6). */
   private readonly _glowIdBase = `fp-glow-${FloorplanCard._nextGlowId++}`;
@@ -169,7 +173,10 @@ export class FloorplanCard extends LitElement {
       texts: config.texts ?? [],
       furniture: config.furniture ?? [],
     };
-    this._watchedEntities = collectWatchedEntities(this._config);
+    this._watchedEntities = new Set([
+      ...collectWatchedEntities(this._config),
+      ...layerWatchedEntities(this._config),
+    ]);
     // Restore the floor this plan was last viewed on (issue #81). Only when
     // this instance has no floor of its own yet — a live floor switch always
     // wins — and only if that floor still exists.
@@ -672,6 +679,12 @@ export class FloorplanCard extends LitElement {
     // reframe identically instead of drifting apart under zoom.
     const zoomedArea = active.areas?.find((a) => a.id === this._zoomedAreaId);
     const zoom = zoomedArea ? areaZoomTransform(zoomedArea.points, c.width, c.height, rot) : IDENTITY_ZOOM;
+    // Captured so the closure below narrows to non-undefined -- LiveLayer's
+    // ctx wants a definite RenderHass, and with no hass yet there is nothing
+    // live to draw anyway.
+    const hass = this.hass;
+    const layers = enabledLayers(c);
+    const visibleLayers = layers.filter((l) => !this._hiddenLayers.has(l.id));
     return html`
       <!-- The skin (issue #122) rides on the card rather than on .plan, so the
            floor switcher and the card's own background follow it too — a Tron
@@ -900,6 +913,7 @@ export class FloorplanCard extends LitElement {
                             opacity=${1 - sunLevel} />`
                 : nothing
             }
+            ${hass ? visibleLayers.map((l) => l.render({ hass, config: c, floor: active })) : nothing}
             </g>
           </svg>`
           )}
@@ -941,9 +955,36 @@ export class FloorplanCard extends LitElement {
                 <ha-icon icon="mdi:magnify-minus-outline"></ha-icon>
               </button>`
             : nothing}
+          ${layers.length > 0 ? this._renderLayerToggles(layers) : nothing}
           ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
         </div>
       </ha-card>
+    `;
+  }
+
+  private _toggleLayer(id: FeatureName): void {
+    const next = new Set(this._hiddenLayers);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this._hiddenLayers = next;
+  }
+
+  private _renderLayerToggles(layers: LiveLayer[]): TemplateResult {
+    return html`
+      <div class="layer-toggles">
+        ${layers.map(
+          (l) => html`
+            <button
+              class="layer-chip ${this._hiddenLayers.has(l.id) ? "off" : ""}"
+              title=${l.label}
+              @click=${() => this._toggleLayer(l.id)}
+            >
+              <ha-icon icon=${l.icon}></ha-icon>
+              <span>${l.label}</span>
+            </button>
+          `
+        )}
+      </div>
     `;
   }
 
@@ -1099,6 +1140,45 @@ export class FloorplanCard extends LitElement {
          Tron print near-white on a pale blue and a bright cyan. */
       color: var(--fp-skin-accent-ink, var(--text-primary-color, #fff));
       border-color: var(--fp-skin-accent, var(--primary-color, #03a9f4));
+    }
+    /* Live-layer toggle chips: a corner overlay, one chip per enabled layer.
+       Opposite corner from the floor switcher so the two never collide. */
+    .layer-toggles {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      pointer-events: auto;
+      z-index: 1;
+    }
+    .layer-chip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      border: 1px solid var(--divider-color, #ccc);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      line-height: 1;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      max-width: 160px;
+    }
+    .layer-chip ha-icon {
+      --mdc-icon-size: 16px;
+    }
+    .layer-chip span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .layer-chip.off {
+      opacity: 0.5;
+      background: var(--secondary-background-color, #eee);
     }
     /* Zoom-to-room (tap an area). One wrapper around both the SVG and the
        HTML overlay so a transform here reframes both layers identically —

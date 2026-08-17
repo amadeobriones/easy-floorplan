@@ -925,6 +925,19 @@ export interface Floor {
 /** Sizing mode for the HTML overlay layer. See {@link FloorplanCardConfig.overlayScale}. */
 export type OverlayScale = "fixed" | "plan";
 
+export interface FeaturesConfig {
+  /** Shade areas warm/cool by temperature. */
+  thermalLayer?: boolean;
+  /** Motion pings and safety alerts. */
+  awarenessLayer?: boolean;
+  /** Colour devices by live power draw. */
+  energyLayer?: boolean;
+  /** Inline brightness/colour/thermostat on long-press. */
+  radialControls?: boolean;
+  /** Editor: drop an HA area's entities onto the plan. */
+  autoPopulateArea?: boolean;
+}
+
 export interface FloorplanCardConfig extends LovelaceCardConfig {
   type: string;
   title?: string;
@@ -1058,6 +1071,8 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
    * markup here to sanitise — see `symbols.ts`.
    */
   symbols?: Record<string, unknown>;
+  /** Opt-in live layers and editor conveniences. See {@link FeaturesConfig}. */
+  features?: FeaturesConfig;
 }
 
 export const DEFAULT_WIDTH = 1000;
