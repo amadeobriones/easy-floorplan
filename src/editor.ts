@@ -2292,10 +2292,14 @@ export class FloorplanCardEditor extends LitElement {
     // Cursor position within the viewport — what must stay put.
     const rect = wrap?.getBoundingClientRect();
     const cursor = rect ? { x: ev.clientX - rect.left, y: ev.clientY - rect.top } : undefined;
+    // Scroll offset must be captured now too: zooming out can shrink the stage enough
+    // that the browser clamps scrollLeft/Top on its own, so reading it after the render
+    // below would see the clamped value instead of the pre-zoom offset the anchor math needs.
+    const scroll = wrap ? { left: wrap.scrollLeft, top: wrap.scrollTop } : undefined;
     this._setZoom(this._zoom - Math.sign(ev.deltaY) * 0.1);
-    if (!wrap || !cursor || this._zoom === prev) return;
+    if (!wrap || !cursor || !scroll || this._zoom === prev) return;
     void this.updateComplete.then(() => {
-      const next = zoomAnchoredScroll(prev, this._zoom, { left: wrap.scrollLeft, top: wrap.scrollTop }, cursor);
+      const next = zoomAnchoredScroll(prev, this._zoom, scroll, cursor);
       wrap.scrollLeft = next.left;
       wrap.scrollTop = next.top;
     });
