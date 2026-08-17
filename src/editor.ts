@@ -28,6 +28,7 @@ import {
   type SymbolCatalog,
   type SymbolDef,
 } from "./symbols";
+import { isTypingTarget, pathTags } from "./editor-keys";
 import {
   DEFAULT_CUSTOM_PERCENT,
   DEFAULT_GRID,
@@ -239,28 +240,6 @@ const HISTORY_MAX = 60;
 /** Angle (degrees) within which a drawn wall is snapped flat to horizontal/vertical. */
 const WALL_AXIS_SNAP_DEG = 10;
 
-/**
- * True when the event's composed path sits in a form field / picker — keys
- * typed there belong to the field, not the canvas. ha-form covers all its
- * inner controls — ha-select dropdowns have no native input in the event
- * path, so arrows/Escape/Delete would otherwise reach the canvas.
- */
-function isTypingPath(path: EventTarget[]): boolean {
-  return path.some((el) => {
-    const node = el as HTMLElement;
-    const tag = node.tagName?.toLowerCase();
-    return (
-      tag === "input" ||
-      tag === "textarea" ||
-      tag === "select" ||
-      tag === "ha-form" ||
-      tag === "ha-entity-picker" ||
-      tag === "ha-icon-picker" ||
-      node.isContentEditable === true
-    );
-  });
-}
-
 @customElement("easy-floorplan-card-editor")
 export class FloorplanCardEditor extends LitElement {
   private static _nextWallMaskId = 0;
@@ -352,7 +331,7 @@ export class FloorplanCardEditor extends LitElement {
     // behind it). Park focus on the canvas (not a bare blur, which would
     // strand focus on `body`) so the next Escape runs the normal cascade.
     if (ev.key !== "Escape" || !this._fullscreen) return;
-    if (!isTypingPath(ev.composedPath())) return;
+    if (!isTypingTarget(pathTags(ev.composedPath()), false)) return;
     ev.preventDefault();
     ev.stopPropagation();
     this._canvasWrap?.focus();
@@ -879,7 +858,7 @@ export class FloorplanCardEditor extends LitElement {
     // dropdown that focus can't escape. Escapes no overlay absorbs are
     // contained by the bubble-phase host listener (_onHostKeyDown) before
     // they can reach — and close — HA's dialog.
-    if (isTypingPath(path)) return;
+    if (isTypingTarget(pathTags(path), ev.ctrlKey || ev.metaKey)) return;
 
     const mod = ev.ctrlKey || ev.metaKey;
     const key = ev.key.toLowerCase();
