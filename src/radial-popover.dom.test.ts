@@ -11,7 +11,7 @@
  * fails to close is not a cosmetic bug — it is a panel stuck over the dashboard.
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
-import { openRadialPopover, closeRadialPopover } from "./radial-popover";
+import { openRadialPopover, closeRadialPopover, RadialPopover } from "./radial-popover";
 import type { HomeAssistant } from "./types";
 
 const anchor = () =>
@@ -122,6 +122,15 @@ describe("per-domain body", () => {
   it("an unsupported domain says so instead of rendering an empty panel", async () => {
     const el = await open("sensor.humidity", "48");
     expect(el.shadowRoot!.querySelector(".pop-body")!.textContent).toMatch(/no quick controls/i);
+  });
+
+  it("the empty-state body has a CSS rule of its own, not just a class name", () => {
+    // Asserting the class *name* renders (above) passes whether or not any
+    // rule defines it — the same failure the fp-awareness-blink fix hit. The
+    // element's own static styles are the thing that can be missing, so check
+    // them, not the markup.
+    const css = (RadialPopover as unknown as { styles: { cssText: string } }).styles.cssText;
+    expect(css).toMatch(/\.pop-body\s*\{/);
   });
 
   it("titles the panel with the entity it is controlling", async () => {

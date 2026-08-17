@@ -3,6 +3,7 @@ import type { FloorplanCardConfig } from "./types";
 import { getFloors } from "./types";
 import type { LayerRenderCtx, LiveLayer } from "./layers";
 import { LIVE_LAYERS } from "./layers";
+import { featureLabel } from "./features";
 import { isMarkerTripped, renderAwarenessMarker } from "./awareness";
 import { normalizeOverlayScale } from "./render";
 
@@ -34,7 +35,10 @@ function renderAwarenessLayer(ctx: LayerRenderCtx): SVGTemplateResult {
 
 export const awarenessLayer: LiveLayer = {
   id: "awarenessLayer",
-  label: "Awareness",
+  // Read from features.ts, not written out again -- the chip on the plan and
+  // the toggle in the editor's Features panel are the same feature, and used
+  // to disagree ("Awareness" vs "Awareness layer").
+  label: featureLabel("awarenessLayer"),
   icon: "mdi:motion-sensor",
   render: renderAwarenessLayer,
   watched: awarenessWatchedEntities,

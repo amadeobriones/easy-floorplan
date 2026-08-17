@@ -3,6 +3,7 @@ import type { Area, RenderHass, FloorplanCardConfig } from "./types";
 import { getFloors } from "./types";
 import type { LayerRenderCtx, LiveLayer } from "./layers";
 import { LIVE_LAYERS } from "./layers";
+import { featureLabel } from "./features";
 
 /** A comfort band: `min`/`max` are where the gradient saturates to pure
  * cold/hot; `mid` is the "neutral" comfort point the room reads as unstyled. */
@@ -52,7 +53,7 @@ export function tempColor(celsius: number, range: ThermalRange = DEFAULT_THERMAL
   return rgbToCss(lerpRgb(NEUTRAL_RGB, HOT_RGB, t));
 }
 
-/** Overlay opacity: visible over a room's own fill/stateStyles colour without
+/** Overlay opacity: visible over a room's own fill/stateColor colour without
  * washing it out -- this is a second polygon stacked on top, not a replacement. */
 export const THERMAL_FILL_OPACITY = 0.28;
 
@@ -77,7 +78,9 @@ export function renderThermalOverlay(
 
 /** A finite numeric reading, or undefined for an outage/non-numeric state --
  * mirrors how the rest of this card fails closed on `unavailable`/`unknown`
- * (see stateStyleMatches in src/render.ts) rather than reading an outage as 0. */
+ * (see the `numeric` guard inside matchStateRuleWith in src/render.ts, which
+ * likewise refuses to match a threshold rule against a non-numeric reading)
+ * rather than reading an outage as 0. */
 function numericReading(hass: RenderHass | undefined, entityId: string): number | undefined {
   const state = hass?.states[entityId]?.state;
   if (state === undefined) return undefined;
@@ -93,7 +96,8 @@ function numericReading(hass: RenderHass | undefined, entityId: string): number 
  */
 export const THERMAL_LAYER: LiveLayer = {
   id: "thermalLayer",
-  label: "Climate layer",
+  // See awareness-layer.ts: the label is the feature's, not the layer's.
+  label: featureLabel("thermalLayer"),
   icon: "mdi:thermometer",
   render(ctx: LayerRenderCtx): SVGTemplateResult {
     const areas = ctx.floor.areas ?? [];
@@ -116,4 +120,10 @@ export const THERMAL_LAYER: LiveLayer = {
   },
 };
 
-LIVE_LAYERS.push(THERMAL_LAYER);
+// Registration side effect. Guarded so importing this module more than once
+// in the same process (e.g. from more than one entry point) never double-adds
+// the layer to the shared registry -- the same guard energy-layer.ts and
+// awareness-layer.ts already carry, since all three push into one array.
+if (!LIVE_LAYERS.some((l) => l.id === "thermalLayer")) {
+  LIVE_LAYERS.push(THERMAL_LAYER);
+}

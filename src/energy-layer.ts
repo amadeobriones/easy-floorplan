@@ -3,6 +3,7 @@ import type { FloorItem, FloorplanCardConfig, RenderHass } from "./types";
 import { getFloors } from "./types";
 import type { LayerRenderCtx, LiveLayer } from "./layers";
 import { LIVE_LAYERS } from "./layers";
+import { featureLabel } from "./features";
 
 export interface EnergyRampOpts {
   lowW: number;
@@ -70,7 +71,8 @@ function renderEnergyCue(it: FloorItem & { powerEntity: string }, hass: RenderHa
  */
 export const energyLayer: LiveLayer = {
   id: "energyLayer",
-  label: "Energy",
+  // See awareness-layer.ts: the label is the feature's, not the layer's.
+  label: featureLabel("energyLayer"),
   icon: "mdi:flash",
   render(ctx: LayerRenderCtx): SVGTemplateResult {
     const items = ctx.floor.items.filter(

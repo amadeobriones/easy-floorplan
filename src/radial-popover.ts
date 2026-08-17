@@ -200,6 +200,19 @@ export class RadialPopover extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    /* The empty state ("no quick controls for this entity yet"). Every other
+       .pop-* child has a rule; this one had none, so the one message the
+       popover shows when it has nothing to offer rendered as unstyled body
+       text at odds with the panel around it. Secondary ink, because it
+       describes an absence rather than a control. */
+    .pop-body {
+      color: var(--secondary-text-color);
+      font-size: 12px;
+      /* Nothing unbreakable goes in here today (the entity id is in
+         .pop-title, which clamps), but this is the panel's only free-text
+         slot, so wrap rather than push past .pop's max-width. */
+      overflow-wrap: anywhere;
+    }
     .pop-row {
       display: flex;
       align-items: center;
