@@ -29,6 +29,7 @@ import {
   type SymbolDef,
 } from "./symbols";
 import { isTypingTarget, pathTags } from "./editor-keys";
+import { zoomAnchoredScroll } from "./editor-zoom";
 import {
   DEFAULT_CUSTOM_PERCENT,
   DEFAULT_GRID,
@@ -2286,7 +2287,18 @@ export class FloorplanCardEditor extends LitElement {
   private _onCanvasWheel(ev: WheelEvent): void {
     if (!ev.ctrlKey && !ev.metaKey) return;
     ev.preventDefault();
+    const wrap = this._canvasWrap;
+    const prev = this._zoom;
+    // Cursor position within the viewport — what must stay put.
+    const rect = wrap?.getBoundingClientRect();
+    const cursor = rect ? { x: ev.clientX - rect.left, y: ev.clientY - rect.top } : undefined;
     this._setZoom(this._zoom - Math.sign(ev.deltaY) * 0.1);
+    if (!wrap || !cursor || this._zoom === prev) return;
+    void this.updateComplete.then(() => {
+      const next = zoomAnchoredScroll(prev, this._zoom, { left: wrap.scrollLeft, top: wrap.scrollTop }, cursor);
+      wrap.scrollLeft = next.left;
+      wrap.scrollTop = next.top;
+    });
   }
 
   /** Reset to 100% (where the stage fits the wrap width) and scroll home. */
