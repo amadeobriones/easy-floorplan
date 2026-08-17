@@ -99,6 +99,9 @@ import { symbolCatalog } from "./symbols";
 import { deadSpacesCached } from "./dead-space";
 import type { Opening } from "./types";
 import { enabledLayers, layerWatchedEntities, type LiveLayer } from "./layers";
+// Registers the power-draw overlay into the live-layer registry; nothing else
+// in this file references energy-layer.ts directly.
+import "./energy-layer";
 import type { FeatureName } from "./features";
 import {
   skinAttribute,

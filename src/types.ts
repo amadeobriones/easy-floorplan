@@ -421,6 +421,8 @@ export interface FloorItem {
    * Defaults to {@link DEFAULT_GLOW_COLOR}, a warm white.
    */
   glowColor?: string;
+  /** A power/energy sensor (watts) whose live value colours this item in the energy layer. */
+  powerEntity?: string;
   /** Lovelace actions. Defaults: tap = toggle (controllable domains) or more-info; hold/double = none. */
   tap_action?: ActionConfig;
   hold_action?: ActionConfig;
