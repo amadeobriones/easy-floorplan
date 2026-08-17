@@ -14,6 +14,7 @@ import {
   areaNamePatch,
   entityHaAreaId,
   entityIdsInHaArea,
+  entityIsPlaceable,
   areaFiltersEntities,
   uid,
   configsEqual,
@@ -440,6 +441,43 @@ describe("entityHaAreaId / entityIdsInHaArea", () => {
   it("entityIdsInHaArea returns [] without an entity registry", () => {
     expect(entityIdsInHaArea({}, "living_room")).toEqual([]);
     expect(entityIdsInHaArea(undefined, "living_room")).toEqual([]);
+  });
+});
+
+describe("entityIsPlaceable", () => {
+  const hass = {
+    entities: {
+      "sensor.temp": { area_id: "kitchen" },
+      "sensor.batt": { area_id: "kitchen", entity_category: "diagnostic" },
+      "number.cfg": { area_id: "kitchen", entity_category: "config" },
+      "light.hidden": { area_id: "kitchen", hidden_by: "user" },
+      "light.disabled": { area_id: "kitchen", disabled_by: "integration" },
+      "light.normal": { area_id: "kitchen" },
+    },
+  };
+
+  it("keeps a plain entity with no category, hidden_by, or disabled_by", () => {
+    expect(entityIsPlaceable(hass, "light.normal")).toBe(true);
+    expect(entityIsPlaceable(hass, "sensor.temp")).toBe(true);
+  });
+
+  it("rejects diagnostic and config entity categories", () => {
+    expect(entityIsPlaceable(hass, "sensor.batt")).toBe(false);
+    expect(entityIsPlaceable(hass, "number.cfg")).toBe(false);
+  });
+
+  it("rejects a hidden entity", () => {
+    expect(entityIsPlaceable(hass, "light.hidden")).toBe(false);
+  });
+
+  it("rejects a disabled entity", () => {
+    expect(entityIsPlaceable(hass, "light.disabled")).toBe(false);
+  });
+
+  it("does not throw and defaults to placeable for an entity absent from the registry", () => {
+    expect(entityIsPlaceable(hass, "light.missing")).toBe(true);
+    expect(entityIsPlaceable(undefined, "light.missing")).toBe(true);
+    expect(entityIsPlaceable({}, "light.missing")).toBe(true);
   });
 });
 

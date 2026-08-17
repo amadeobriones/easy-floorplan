@@ -49,6 +49,7 @@ import {
   haAreasOf,
   areaNamePatch,
   entityIdsInHaArea,
+  entityIsPlaceable,
   areaFiltersEntities,
   moveFloor,
   resolveSnap,
@@ -2158,10 +2159,33 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   /** Every entity in `area`'s linked HA area not already placed as an item on this floor. */
-  private _pendingAreaEntities(area: Area): string[] {
+  private _unplacedAreaEntities(area: Area): string[] {
     if (!area.haArea) return [];
     const existing = new Set(this._floor().items.map((it) => it.entity));
     return entityIdsInHaArea(this.hass, area.haArea).filter((id) => !existing.has(id));
+  }
+
+  /**
+   * The subset of {@link _unplacedAreaEntities} worth placing: excludes
+   * entities `kindFromEntity` can't render as anything specific ("generic"),
+   * and — via {@link entityIsPlaceable} — diagnostic/config registry entries
+   * and entities hidden or disabled in Home Assistant. Without these, "Add
+   * all devices" would carpet the plan with battery/signal/firmware sensors
+   * and icons for entities HA will never report a state for.
+   */
+  private _pendingAreaEntities(area: Area): string[] {
+    return this._unplacedAreaEntities(area).filter(
+      (id) => kindFromEntity(id) !== "generic" && entityIsPlaceable(this.hass, id)
+    );
+  }
+
+  /**
+   * True when `area` has an unplaced entity that {@link _pendingAreaEntities}
+   * filtered out — distinct from "every entity is already placed", so the
+   * "Add all devices" button's title doesn't misreport why it's disabled.
+   */
+  private _areaHasFilteredOutEntities(area: Area): boolean {
+    return this._unplacedAreaEntities(area).length > 0;
   }
 
   /**
@@ -4222,6 +4246,11 @@ export class FloorplanCardEditor extends LitElement {
       if (!a) return html`${nothing}`;
       const haAreas = haAreasOf(this.hass);
       const pendingEntities = a.haArea ? this._pendingAreaEntities(a) : [];
+      // Distinguishes "nothing to add because it's all placed" from "nothing
+      // to add because what's left is hidden/disabled/diagnostic/generic" —
+      // the button must not misreport the latter as the former.
+      const filteredOutEntities =
+        !pendingEntities.length && a.haArea ? this._areaHasFilteredOutEntities(a) : false;
       return html`
         ${this._renderForm(
           areaNameForm(a, haAreas.map((ha) => ha.name)),
@@ -4289,7 +4318,9 @@ export class FloorplanCardEditor extends LitElement {
                 ?disabled=${!pendingEntities.length}
                 title=${pendingEntities.length
                   ? `Add ${pendingEntities.length} device${pendingEntities.length === 1 ? "" : "s"} from this HA area, spread out across the room`
-                  : "Every entity in this HA area is already placed on this floor"}
+                  : filteredOutEntities
+                    ? "Every unplaced entity in this HA area is hidden, disabled, diagnostic/config, or an unrecognized device type"
+                    : "Every entity in this HA area is already placed on this floor"}
                 @click=${() => this._addAreaEntities(a)}
               >
                 <ha-icon icon="mdi:shape-square-plus"></ha-icon>

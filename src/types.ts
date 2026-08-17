@@ -1260,7 +1260,17 @@ export function matchHaAreaByName(
  * `custom-card-helpers`, so callers take `hass: unknown` like {@link haFloorsOf}.
  */
 interface HaRegistryHass {
-  entities?: Record<string, { device_id?: string | null; area_id?: string | null } | undefined>;
+  entities?: Record<
+    string,
+    | {
+        device_id?: string | null;
+        area_id?: string | null;
+        entity_category?: string | null;
+        hidden_by?: string | null;
+        disabled_by?: string | null;
+      }
+    | undefined
+  >;
   devices?: Record<string, { area_id?: string | null } | undefined>;
 }
 
@@ -1284,6 +1294,25 @@ export function entityIdsInHaArea(hass: unknown, areaId: string): string[] {
   const entities = h?.entities;
   if (!entities || typeof entities !== "object") return [];
   return Object.keys(entities).filter((id) => entityHaAreaId(hass, id) === areaId);
+}
+
+/** Entity categories excluded from auto-placement: HA's own "not a primary device" markers. */
+const NON_PLACEABLE_CATEGORY = new Set(["diagnostic", "config"]);
+
+/**
+ * Whether an entity is fit to auto-place onto the plan (e.g. "Add all
+ * devices in this HA area"): not a diagnostic/config registry entry, and not
+ * hidden or disabled in Home Assistant. An entity absent from the registry
+ * defaults to placeable — the same fail-open behaviour as
+ * {@link entityHaAreaId} for a missing entry, since callers only reach here
+ * for ids already resolved via the registry.
+ */
+export function entityIsPlaceable(hass: unknown, entityId: string): boolean {
+  const h = hass as HaRegistryHass | null | undefined;
+  const ent = h?.entities?.[entityId];
+  if (ent?.hidden_by || ent?.disabled_by) return false;
+  if (ent?.entity_category && NON_PLACEABLE_CATEGORY.has(ent.entity_category)) return false;
+  return true;
 }
 
 export function emptyConfig(type: string): FloorplanCardConfig {
