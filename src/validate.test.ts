@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { validateConfig } from "./validate";
 import { parseAndValidate, configToText } from "./validate";
+import { FEATURE_DEFAULTS } from "./features";
 
 const valid = {
   type: "custom:floorplan-card",
@@ -36,6 +37,15 @@ describe("validateConfig", () => {
       },
     });
     expect(r.ok).toBe(true);
+  });
+  it("accepts every flag FEATURE_DEFAULTS declares, without a hand-written list", () => {
+    // The accepted set is derived from FEATURE_DEFAULTS (itself typed
+    // Required<FeaturesConfig>), so a flag added to the interface can never
+    // arrive here as "unknown". This pins that at runtime as well.
+    for (const name of Object.keys(FEATURE_DEFAULTS)) {
+      const r = validateConfig({ type: "x", width: 10, height: 10, features: { [name]: true } });
+      expect(r.ok, `features.${name} should validate`).toBe(true);
+    }
   });
   it("rejects a feature flag from the old ten-flag list (removed by the port)", () => {
     const r = validateConfig({ type: "x", width: 10, height: 10, features: { lightsLayer: true } });
@@ -179,17 +189,28 @@ describe("validateConfig", () => {
     if (!r.ok) expect(r.errors.some((e) => e.includes("at least 3 points"))).toBe(true);
   });
 
-  it("validates stateStyles shape (a string is not a rule list)", () => {
+  it("rejects an item's stateStyles, naming stateColor as its replacement", () => {
+    // Not "accepts, forward-compat": nothing on this base reads stateStyles,
+    // so an ok here would tell a v0.7.109 config its inert rules are fine.
     const cfg = {
-      type: "x", width: 10, height: 10,
-      items: [{ id: "i", x: 0, y: 0, kind: "light", stateStyles: "nope" }],
-    };
-    expect(validateConfig(cfg).ok).toBe(false);
-    const good = {
       type: "x", width: 10, height: 10,
       items: [{ id: "i", x: 0, y: 0, kind: "light", stateStyles: [{ state: "on", color: "#fff" }] }],
     };
-    expect(validateConfig(good).ok).toBe(true);
+    const r = validateConfig(cfg);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.some((e) => e.includes("items[0].stateStyles") && e.includes("stateColor"))).toBe(true);
+    }
+  });
+  it("rejects a furniture piece's stateStyles the same way", () => {
+    const cfg = {
+      type: "x", width: 10, height: 10,
+      furniture: [{ id: "u", type: "washer", x: 0, y: 0, w: 10, h: 10,
+        stateStyles: [{ state: "on", color: "#fff" }] }],
+    };
+    const r = validateConfig(cfg);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some((e) => e.includes("furniture[0].stateStyles"))).toBe(true);
   });
   it("validates an item's stateColor shape (StateColorRule, its non-deprecated replacement)", () => {
     const bad = {
@@ -276,8 +297,8 @@ describe("validateConfig", () => {
   it("accepts smart-furniture fields", () => {
     const cfg = { type: "custom:floorplan-card", width: 100, height: 100, floors: [{ id: "f",
       furniture: [{ id: "u1", type: "washer", x: 1, y: 1, w: 10, h: 10, entity: "switch.washer",
-        showState: true, stateStyles: [{ state: "on", color: "orange", animation: "pulse" }],
-        tap_action: { action: "toggle" } }] }] };
+        stateColor: [{ state: "on", color: "orange", animation: "pulse" }],
+        activeColor: "#03a9f4", tap_action: { action: "toggle" } }] }] };
     expect(validateConfig(cfg).ok).toBe(true);
   });
   it("rejects a furniture piece with a wrong-typed entity, with a path", () => {
@@ -387,28 +408,42 @@ describe("configToText round-trip", () => {
   });
 });
 
-it("accepts an awareness marker list", () => {
-  const r = validateConfig({
-    type: "x", width: 10, height: 10,
-    awareness: [{ id: "m1", x: 1, y: 2, entity: "binary_sensor.hall_motion", kind: "motion" }],
-  });
+// Awareness markers are read off a floor and nowhere else — getFloors' legacy
+// single-floor fallback builds from seven lists and `awareness` is not one of
+// them — so every case here goes through `floors:`.
+const withAwareness = (awareness: unknown) => ({
+  type: "x", width: 10, height: 10, floors: [{ id: "f1", awareness }],
+});
+
+it("accepts an awareness marker list on a floor", () => {
+  const r = validateConfig(
+    withAwareness([{ id: "m1", x: 1, y: 2, entity: "binary_sensor.hall_motion", kind: "motion" }])
+  );
   expect(r.ok).toBe(true);
 });
 
 it("rejects an awareness marker with an unknown kind", () => {
-  const r = validateConfig({
-    type: "x", width: 10, height: 10,
-    awareness: [{ id: "m1", x: 1, y: 2, entity: "binary_sensor.hall_motion", kind: "sideways" }],
-  });
+  const r = validateConfig(
+    withAwareness([{ id: "m1", x: 1, y: 2, entity: "binary_sensor.hall_motion", kind: "sideways" }])
+  );
   expect(r.ok).toBe(false);
 });
 
 it("rejects an awareness marker missing its entity", () => {
+  const r = validateConfig(withAwareness([{ id: "m1", x: 1, y: 2, kind: "safety" }]));
+  expect(r.ok).toBe(false);
+});
+
+it("rejects a top-level awareness list, pointing at floors:", () => {
+  // The pre-port fork's getFloors carried a top-level `awareness` into its
+  // implicit floor; this base's does not. Validating one as ok would promise
+  // markers that never render.
   const r = validateConfig({
     type: "x", width: 10, height: 10,
-    awareness: [{ id: "m1", x: 1, y: 2, kind: "safety" }],
+    awareness: [{ id: "m1", x: 1, y: 2, entity: "binary_sensor.hall_motion", kind: "motion" }],
   });
   expect(r.ok).toBe(false);
+  if (!r.ok) expect(r.errors.some((e) => e.includes("config.awareness") && e.includes("floors"))).toBe(true);
 });
 
 it("accepts an item with a powerEntity", () => {
@@ -426,19 +461,19 @@ it("rejects a non-string powerEntity", () => {
   expect(r.ok).toBe(false);
 });
 
-it("accepts a floor with imageLocked", () => {
+it("accepts a floor's background image and opacity", () => {
   const r = validateConfig({
     type: "x", width: 10, height: 10,
     floors: [{ id: "f1", walls: [], openings: [], items: [], texts: [], furniture: [], trackers: [],
-      image: "plan.png", imageOpacity: 0.5, imageLocked: true }],
+      image: "plan.png", imageOpacity: 0.5 }],
   });
   expect(r.ok).toBe(true);
 });
-it("rejects a non-boolean imageLocked", () => {
+it("rejects a non-numeric imageOpacity", () => {
   const r = validateConfig({
     type: "x", width: 10, height: 10,
     floors: [{ id: "f1", walls: [], openings: [], items: [], texts: [], furniture: [], trackers: [],
-      imageLocked: "yes" }],
+      imageOpacity: "half" }],
   });
   expect(r.ok).toBe(false);
 });

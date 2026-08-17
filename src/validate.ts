@@ -1,5 +1,6 @@
 import { load, dump } from "js-yaml";
-import type { FloorplanCardConfig } from "./types";
+import type { FeaturesConfig, FloorplanCardConfig } from "./types";
+import { FEATURE_DEFAULTS } from "./features";
 
 export type ValidationResult =
   | { ok: true; config: FloorplanCardConfig }
@@ -25,6 +26,17 @@ const arrayOf =
     Array.isArray(v) ? v.flatMap((it, i) => c(it, `${p}[${i}]`)) : e(p, "expected a list");
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * A key this card no longer reads. Unknown keys pass (forward-compat), but a
+ * key we *used* to honour is different: silence there reads as "accepted",
+ * and the config would go on doing nothing with no way to find out why. Used
+ * as an `opt` entry, so it only fires when the key is actually present.
+ */
+const removed =
+  (why: string): Check =>
+  (_v, p) =>
+    e(p, why);
 
 /** required fields + optional fields; unknown keys are allowed (forward-compat). */
 const shape =
@@ -58,19 +70,14 @@ const stateColorRule = shape(
   }
 );
 const stateColorRules = arrayOf(stateColorRule);
-// A conditional-style rule from the pre-port fork (FloorItem/Furniture no
-// longer declare this field — StateColorRule/`stateColor` replaced it — but a
-// saved config may still carry it, and a bad shape here otherwise reaches the
-// render/lights path unchecked, so it stays validated rather than silently
-// ignored).
-const stateStyle = shape(
-  {},
-  {
-    entity: str, state: str, state_not: str, above: num, below: num,
-    icon: str, color: str, animation: oneOf("none", "pulse", "blink"),
-  }
+// The pre-port fork's own conditional-rule list, replaced by `stateColor`
+// (StateColorRule above) and read by nothing on this base. A saved v0.7.109
+// config may still carry it, so say so rather than passing it through as an
+// unknown key: every rule in it is inert, which is exactly the failure a
+// validator exists to catch.
+const stateStyles = removed(
+  "stateStyles was replaced by stateColor — rename the key; its rules take the same above/below/state/state_not/color/icon fields"
 );
-const stateStyles = arrayOf(stateStyle);
 
 const wall = shape({ id: str, x1: num, y1: num, x2: num, y2: num });
 const opening = shape(
@@ -101,12 +108,14 @@ const item = shape(
   }
 );
 const text = shape({ id: str, x: num, y: num, text: str }, { size: num, color: str, angle: num });
+// `showState`/`secondaryEntity` are deliberately absent: the Furniture
+// interface declares neither, so neither is a field to bless. They fall
+// through the unknown-key allowance like any other key we simply don't know.
 const furniture = shape(
   { id: str, type: str, x: num, y: num, w: num, h: num },
   {
     hand: oneOf("left", "right"), angle: num, color: str,
-    entity: str, secondaryEntity: str, showState: bool,
-    stateColor: stateColorRules, activeColor: str, stateStyles,
+    entity: str, stateColor: stateColorRules, activeColor: str, stateStyles,
   }
 );
 const tracker = shape({ id: str, x: num, y: num, w: num, h: num }, { angle: num });
@@ -132,7 +141,14 @@ const area = shape(
 const AWARENESS_KINDS = ["motion", "safety"];
 const awarenessMarker = shape({ id: str, x: num, y: num, entity: str, kind: oneOf(...AWARENESS_KINDS) });
 
-const elementLists = {
+/**
+ * The element lists a *legacy single-floor* config may carry at the top
+ * level — exactly the seven `getFloors` wraps into its implicit floor
+ * (types.ts). Awareness markers are deliberately not among them: `getFloors`
+ * does not read a top-level `awareness`, so blessing one here would validate
+ * a config whose markers never reach the canvas.
+ */
+const legacyElementLists = {
   walls: arrayOf(wall),
   openings: arrayOf(opening),
   items: arrayOf(item),
@@ -140,6 +156,11 @@ const elementLists = {
   furniture: arrayOf(furniture),
   trackers: arrayOf(tracker),
   areas: arrayOf(area),
+};
+
+/** A floor carries the seven above plus its awareness markers. */
+const elementLists = {
+  ...legacyElementLists,
   awareness: arrayOf(awarenessMarker),
 };
 
@@ -147,16 +168,23 @@ const floor = shape(
   { id: str },
   // The card coerces any number to the nearest quarter turn (normalizeRotation),
   // so accept any number here rather than rejecting e.g. 45 that the card renders.
-  { name: str, haFloor: str, image: str, imageOpacity: num, imageLocked: bool, rotation: num, ...elementLists }
+  { name: str, haFloor: str, image: str, imageOpacity: num, rotation: num, ...elementLists }
 );
 
 /**
- * FeaturesConfig is a closed set (issue #35 follow-up): exactly the four
- * flags below. Unlike everything else in this file, an unknown key here is
- * rejected rather than passed through — a typo'd or since-removed flag
- * (the pre-port fork had ten) should tell the user, not silently do nothing.
+ * FeaturesConfig is a closed set (issue #35 follow-up). Unlike everything
+ * else in this file, an unknown key here is rejected rather than passed
+ * through — a typo'd or since-removed flag (the pre-port fork had ten)
+ * should tell the user, not silently do nothing.
+ *
+ * Derived from {@link FEATURE_DEFAULTS} rather than hand-listed. That object
+ * is typed `Required<FeaturesConfig>`, so adding a flag to the interface and
+ * forgetting it here is a *compile* error in features.ts instead of a
+ * runtime "unknown feature flag" on a config that is in fact correct — the
+ * drift this list had already suffered once, when `autoPopulateArea` was
+ * dropped and four separate files had to be edited by hand to keep up.
  */
-const FEATURE_FLAGS = ["thermalLayer", "awarenessLayer", "energyLayer", "radialControls"] as const;
+const FEATURE_FLAGS = Object.keys(FEATURE_DEFAULTS) as (keyof FeaturesConfig)[];
 const features: Check = (v, p) => {
   if (!isPlainObject(v)) return e(p, "expected an object");
   const errs: Errs = [];
@@ -189,7 +217,13 @@ const config = shape(
     skin: str, overlayScale: oneOf("fixed", "plan"), background: str, showDeadSpaces: bool,
     sunDimming: bool, sunBrightnessMin: num, sunBrightnessMax: num,
     pressEffect: oneOf("scale", "ripple", "flash", "none"),
-    defaultFloor: str, floors: arrayOf(floor), features, symbols, ...elementLists,
+    defaultFloor: str, floors: arrayOf(floor), features, symbols, ...legacyElementLists,
+    // Awareness markers only ever reach the canvas from inside a floor: the
+    // legacy single-floor fallback in `getFloors` builds its floor from the
+    // seven lists above and no others. A top-level `awareness:` is therefore
+    // read by nothing — and it *was* honoured by the pre-port fork, so a
+    // config that has one is following instructions that used to be true.
+    awareness: removed("awareness markers live on a floor, not at the top level — move them under floors: [{ id: …, awareness: [...] }]"),
   }
 );
 
