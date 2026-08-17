@@ -44,6 +44,9 @@ screen size.
 <img width="300" height="300" alt="odnetnin" src="https://github.com/user-attachments/assets/1d46f7a3-b894-4fcb-bdb9-a55270b8e4e4" />
 <img width="300" height="300" alt="tron" src="https://github.com/user-attachments/assets/de5b0825-3bff-4817-8a26-8f887bab8c48" />
 
+- (${\color{red}NEW!}$) **Optional layers** — three overlays that ship switched off, one line of config each: a **climate layer** shading rooms warm↔cool from a temperature sensor, an **awareness layer** pinging motion and blinking safety alerts where they happen, and an **energy layer** haloing devices by their live power draw. A viewer can hide any of them from a chip on the card. See [Optional features](#optional-features).
+- (${\color{red}NEW!}$) **Long-press controls** — press and hold a light, switch or thermostat for an inline brightness slider or setpoint, instead of the full dialog. Off by default; a device with its own `hold_action` keeps it.
+- **Import / export** — paste a whole card config into the editor and it replaces the plan, validated first. See [Importing a config](#importing-a-config).
 - **Auto-scaling** — SVG over a virtual coordinate space, so the plan fits any card size.
 
 ## Installation
@@ -121,15 +124,43 @@ then pick the entity in the **Element** section below the canvas.
   ```yaml
   stateColor:
     - { state: open, color: "#4caf50", icon: mdi:blinds-open }
-    - { above: 26, color: red }
+    - { state_not: "off", color: "#4caf50" }        # anything but "off"
+    - { above: 26, color: red, animation: pulse }
+    - { below: 5, color: "#2196f3" }
+    - { entity: binary_sensor.front_door, state: "on", color: red }
     - { color: white }   # default
   ```
 
-  An exact `state` beats a threshold, the highest matching `above` wins, and a rule with
-  neither is the default. `icon` is optional and beats the device's own icon while it
-  matches — a rule without one keeps that icon, so colouring by state costs nothing when
-  the glyph never changes. Rules beat **Active color**, which the editor hides once they
-  exist; the **Icon** field stays, since it is still what they fall back to.
+  A rule carries **one** condition, and rules resolve in three tiers — the first
+  non-empty tier wins:
+
+  1. **Exact** — `state` (equals, case-insensitive) or `state_not` (anything else). The
+     first matching rule *listed* wins, so an earlier rule shadows a later duplicate.
+     Both fail closed on an unavailable or unbound reading.
+  2. **Threshold** — `above` (strictly greater) or `below` (strictly less). A
+     non-numeric reading matches neither. Within one kind the strictest match wins and
+     order does not matter: highest matching `above`, lowest matching `below`. Between
+     the two kinds there is nothing to compare, so the first one to match holds the tier
+     — a list mixing `above` and `below` is order-dependent where an all-`above` list is
+     not.
+  3. **Default** — a rule with none of the four. The first one listed wins.
+
+  Two extras ride on whichever rule matched:
+
+  - **`entity`** — judge this rule against *another* entity's state instead of the
+    element's own: a sofa that reddens when the front door opens. Naming the element's
+    own entity is the same as naming none.
+  - **`animation`** — `spin`, `pulse` or `none` while the rule matches, overriding the
+    device's own `iconAnimation`.
+
+  `icon` is optional and beats the device's own icon while it matches — a rule without
+  one keeps that icon, so colouring by state costs nothing when the glyph never changes.
+  Colour, icon and animation always come from the *same* matched rule. Rules beat
+  **Active color**, which the editor hides once they exist; the **Icon** field stays,
+  since it is still what they fall back to.
+
+  Furniture and areas take the same rules, minus `icon` — they paint polygons, not
+  glyphs.
 - **Only when active** — hide the device on the card while its entity is off, idle or
   unavailable, so a busy room only shows what's doing something. The editor still draws
   it, faded with a dashed badge.
@@ -346,14 +377,19 @@ The editor writes this config for you; manual editing is optional.
 | `trackers`   | Tracker[]| `[]`               | Live position trackers (see [Tracker](#tracker)).    |
 | `areas`      | Area[]   | `[]`               | Named room polygons (see [Area](#area)).          |
 | `symbols`    | map      | —                  | Furniture symbols this plan defines for itself, merged over the shipped library. See [Drawing your own](#drawing-your-own). |
+| `features`   | map      | all off            | Opt-in live layers and controls: `thermalLayer`, `awarenessLayer`, `energyLayer`, `radialControls`. See [Optional features](#optional-features). |
 
 When `floors` is present each floor carries its own `walls`, `openings`, `items`, `texts`,
 `furniture`, `trackers` and `areas`. The top-level arrays describe a single implicit floor
 and remain valid for backward compatibility.
 
+`awareness` markers are the exception: they are read from a floor only, never from the
+top level, so a single-floor plan that uses them needs an explicit `floors:` block. See
+[Awareness marker](#awareness-marker).
+
 ### Floor
 
-`{ id, name, short?, color?, haFloor?, image?, imageFit?, imageOpacity?, walls, openings, items, texts, furniture, trackers, areas }`
+`{ id, name, short?, color?, haFloor?, image?, imageFit?, imageOpacity?, rotation?, walls, openings, items, texts, furniture, trackers, areas, awareness? }`
 — a named floor with its own elements. Add, rename, reorder, switch and delete floors from
 the editor's **floor** controls; the card shows a switcher when there is more than one.
 
@@ -362,6 +398,12 @@ the editor's **floor** controls; the card shows a switcher when there is more th
   **`defaultFloor`** picks which floor the card opens on.
 - **`haFloor`** — id of a linked Home Assistant floor, set from the floor gear popover.
   Today it auto-names the floor.
+- **`rotation`** — `0`, `90`, `180` or `270`, overriding the card's own `rotation` for
+  this floor alone: the case it exists for is one floor whose scan was captured sideways.
+  Omit it to inherit. Setting it to `0` is not the same as omitting it — that pins the
+  floor upright even when the card itself is rotated.
+- **`awareness`** — this floor's awareness markers, see
+  [Awareness marker](#awareness-marker).
 - **`image`** — a background URL (e.g. `/local/floorplan.png`) drawn behind the elements,
   for tracing over a real plan. **`imageOpacity`** (0–1, default 1) fades it.
 - **`imageFit`** — how that image maps onto the canvas, per floor so scans of differing
@@ -420,7 +462,7 @@ distorted anyway.
 | `secondaryEntity` | string                             | —            | Second entity shown alongside (e.g. humidity).         |
 | `attribute`   | string                                 | —            | Show this attribute instead of the state (e.g. `current_temperature`). |
 | `secondaryAttribute` | string                          | —            | Attribute for the 2nd reading — from `secondaryEntity`, or from `entity` when none. |
-| `stateColor`  | rule[]                                 | —            | Badge/label color rules, regardless of on/off; beats `activeColor`. Each is `{ above? , state?, color, icon? }` — an exact `state` beats a threshold, the highest matching `above` wins, neither is the default, and a matching `icon` beats the device's own. |
+| `stateColor`  | rule[]                                 | —            | Badge/label/icon color rules, regardless of on/off; beats `activeColor`. Each is `{ above?, below?, state?, state_not?, color, icon?, entity?, animation? }` — see **Color & icon by state** under [Devices](#devices) for the full precedence. |
 | `x`, `y`      | number                                 | —            | Position.                                              |
 | `kind`        | light/switch/sensor/binary_sensor/climate/cover/media_player/fan/camera/lock/humidifier/vacuum/generic | inferred | Used for the default icon. |
 | `icon`        | string                                 | entity icon  | Override mdi icon.                                     |
@@ -438,6 +480,7 @@ distorted anyway.
 | `badgeContent` | `icon` \| `value` \| `none`           | `icon`       | What the badge holds. `value` draws the reading inside it, falling back to the icon when there is no number; `none` leaves the label alone. |
 | `badgeEntity` | `primary` \| `secondary`               | automatic    | Which entity a `value` badge reads. Unset picks the first with a number to show; set, only that entity is read. |
 | `showIcon`    | boolean                                | `true`       | **Deprecated** — use `badgeContent`. Honoured only when it is unset (`false` = `none`). |
+| `powerEntity` | string                                 | —            | A watts sensor for this device. Only read when the **Energy layer** is on, which then draws a halo under the badge coloured by the live draw. See [Optional features](#optional-features). |
 | `hideWhenInactive` | boolean                           | `false`      | Hide on the card while the entity is inactive. Always shown, dimmed, in the editor. |
 | `showState`   | boolean                                | sensors only | Show the entity state in the label line.               |
 | `showName`    | boolean                                | `false`      | Show the device's name in the label line (`Name · state` when combined). |
@@ -588,7 +631,7 @@ animated inside a rectangular tracked area:
 
 ### Area
 
-`{ id, points, name?, showName?, labelSize?, color?, opacity?, haArea?, filterEntities?, entity?, stateColor?, activeColor?, activeOpacity?, borderColor?, borderWidth?, highlight? }`
+`{ id, points, name?, showName?, labelSize?, color?, opacity?, haArea?, filterEntities?, entity?, stateColor?, activeColor?, activeOpacity?, borderColor?, borderWidth?, highlight?, tempEntity? }`
 
 - `points` — `{ x, y }` vertices in drawing order, implicitly closed last-to-first.
 - `name` / `showName` — label centered on the polygon (`showName` defaults `true`).
@@ -603,11 +646,15 @@ animated inside a rectangular tracked area:
   polygon to that HA area's entities. Default `true`.
 - `entity` — makes the room live, driving `stateColor` and `activeColor` the same way
   furniture does. Unbound areas stay static polygons.
-- `stateColor` — threshold/state rules (same shape as a device's), beating `activeColor`
-  and `color`. `activeColor` is the fill while `entity` is active and no rule matches.
+- `stateColor` — threshold/state rules (same shape as a device's, minus `icon`), beating
+  `activeColor` and `color`. `activeColor` is the fill while `entity` is active and no
+  rule matches.
 - `activeOpacity` — fill opacity while a color resolves, so a room can lift out of the
   plan while live without being permanently darker. Falls back to `opacity`.
 - `borderColor` / `borderWidth` — a static outline, off by default (`borderWidth` `3`).
+- `tempEntity` — a temperature sensor for this room. Only read when the **Climate layer**
+  is on, which then shades the room blue↔red by its reading. See
+  [Optional features](#optional-features).
 - `highlight` — where a live color paints: `fill` (default), `border` or `both`. `border`
   suits a busy plan: the room outlines itself without tinting everything inside.
 
@@ -654,6 +701,49 @@ areas:
       - { color: "#58d32f" }
     points: [{ x: 500, y: 500 }, { x: 900, y: 500 }, { x: 900, y: 900 }, { x: 500, y: 900 }]
 ```
+
+### Awareness marker
+
+`{ id, x, y, entity, kind }` — a point on the plan that reacts to a sensor while the
+**Awareness layer** is on. There is no editor tool for these yet; they are written by
+hand.
+
+- `kind: motion` — pings an expanding ripple at `x, y` while its entity is on.
+- `kind: safety` — a dot that sits dim while clear and blinks in an alert palette when
+  its entity reads `on`, `detected`, `wet` or `open`. For leak, smoke and
+  door-left-open sensors.
+
+Both fail closed: `unavailable` and `unknown` read as *not* tripped, so an outage never
+blinks an alarm at you.
+
+Markers live on a **floor**, not at the top level — a top-level `awareness:` is reported
+as an error rather than silently ignored, so a single-floor plan that wants them needs an
+explicit `floors:` block:
+
+```yaml
+type: custom:easy-floorplan-card
+width: 1000
+height: 600
+features:
+  awarenessLayer: true
+floors:
+  - id: main
+    walls: [...]
+    items: [...]
+    awareness:
+      - { id: hall_motion, x: 300, y: 200, entity: binary_sensor.hall_motion, kind: motion }
+      - { id: leak, x: 820, y: 460, entity: binary_sensor.washer_leak, kind: safety }
+```
+
+### Importing a config
+
+The editor's **Project → Import config** box takes a whole card config — YAML or JSON —
+and replaces the plan with it. Useful for moving a plan between dashboards, restoring a
+copy you kept, or starting from someone else's.
+
+It is validated before anything is replaced, so a malformed or partly-wrong paste is
+reported in the box rather than becoming a broken plan. It **replaces everything**;
+Ctrl/Cmd+Z (or the editor's Undo button) puts the old plan back.
 
 ### Example
 
@@ -706,6 +796,95 @@ trackers:
     ySensor:
       { entity: sensor.radar_y_distance, min: 0, max: 3.5,
         presence: { entity: binary_sensor.living_room_presence } }
+```
+
+## Optional features
+
+Four extras ship switched **off** and are turned on per card, from the editor's
+**Features** panel or from `features:` in YAML:
+
+```yaml
+features:
+  thermalLayer: true
+  awarenessLayer: true
+  energyLayer: true
+  radialControls: true
+```
+
+| Flag | What it does | What it needs |
+| --- | --- | --- |
+| `thermalLayer` | **Climate layer** — shades each room by its temperature. | `tempEntity` on an [Area](#area). |
+| `awarenessLayer` | **Awareness layer** — motion pings and safety alerts on the plan. | [Awareness markers](#awareness-marker) on a floor. |
+| `energyLayer` | **Energy layer** — a halo under each device, coloured by its live draw. | `powerEntity` on an [Item](#item-device). |
+| `radialControls` | **Long-press controls** — inline brightness / on-off / setpoint. | Nothing; works on any `light`, `switch` or `climate` device. |
+
+`features:` is a closed list: a flag that is not one of these four is rejected rather
+than quietly ignored, so a typo tells you instead of doing nothing.
+
+The three **layers** draw on top of the plan and are all off by default because each one
+recolours the whole picture. When any is on, the card shows a small chip per layer so a
+viewer can hide and re-show it without editing the config — the chip names the same
+feature the editor's toggle does.
+
+Every layer's per-element field (`tempEntity`, `powerEntity`) only appears in the editor
+once its layer is on, since a field the card ignores is worse than no field. One already
+set in YAML stays visible either way, so it can always be seen and cleared.
+
+### Climate layer
+
+Give a room a temperature sensor and it tints blue when cold, neutral when comfortable
+and red when hot. The band is **Celsius** — 16, 21 and 27 are cold, comfortable and hot
+— and the sensor's reading is taken as-is, so a Fahrenheit sensor reads as permanently
+hot. The tint is a translucent polygon over the room's own fill, so it never replaces a
+colour you set. A sensor reading `unavailable`, or anything else non-numeric, tints
+nothing rather than reading as 0.
+
+```yaml
+features: { thermalLayer: true }
+areas:
+  - id: living_room
+    name: Living Room
+    points: [{ x: 100, y: 100 }, { x: 900, y: 100 }, { x: 900, y: 500 }, { x: 100, y: 500 }]
+    tempEntity: sensor.living_room_temperature
+```
+
+### Awareness layer
+
+Motion pings and safety alerts, placed as their own markers rather than as devices — see
+[Awareness marker](#awareness-marker) for the shape and a full example. They live on a
+floor, so this is the one feature that needs a `floors:` block.
+
+### Energy layer
+
+Give a device a watts sensor and it wears a halo sized and coloured by the live reading:
+slate and small while idle, red and larger at 500 W and above. The device's own badge is
+untouched, so the halo reads as extra information rather than as a different state.
+
+```yaml
+features: { energyLayer: true }
+items:
+  - id: dryer
+    x: 300
+    y: 220
+    kind: switch
+    entity: switch.dryer
+    powerEntity: sensor.dryer_power
+```
+
+### Long-press controls
+
+Press and hold a `light`, `switch` or `climate` device and a small panel opens beside it:
+a brightness slider, an on/off button, or a setpoint with plus and minus. It is meant for
+a wall tablet, where opening the full more-info dialog to nudge one lamp is a lot of
+taps.
+
+It only fills a gap. A device with its own `hold_action` keeps it — your wiring always
+wins — and a device in any other domain is unaffected.
+
+```yaml
+features: { radialControls: true }
+items:
+  - { id: lamp, x: 300, y: 220, kind: light, entity: light.living_room }
 ```
 
 ## Follow the sun
