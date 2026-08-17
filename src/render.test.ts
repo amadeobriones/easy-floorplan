@@ -1468,48 +1468,96 @@ describe("entityIsActive — domains whose state is not on/off", () => {
 
 describe("resolveIconAnimation (issue #48)", () => {
   it("auto: a running fan spins, playback and a cleaning vacuum pulse", () => {
-    expect(resolveIconAnimation({ entity: "fan.ceiling" }, "on")).toBe("spin");
-    expect(resolveIconAnimation({ entity: "media_player.tv" }, "playing")).toBe("pulse");
-    expect(resolveIconAnimation({ entity: "vacuum.robo" }, "cleaning")).toBe("pulse");
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "on")).toBe("spin");
+    expect(resolveIconAnimation(undefined, { entity: "media_player.tv" }, "playing")).toBe("pulse");
+    expect(resolveIconAnimation(undefined, { entity: "vacuum.robo" }, "cleaning")).toBe("pulse");
   });
 
   it("auto: everything else stays still, even when active", () => {
-    expect(resolveIconAnimation({ entity: "light.a" }, "on")).toBeUndefined();
-    expect(resolveIconAnimation({ entity: "switch.a" }, "on")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "light.a" }, "on")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "switch.a" }, "on")).toBeUndefined();
   });
 
   it("never animates an inactive entity — including forced spin/pulse", () => {
-    expect(resolveIconAnimation({ entity: "fan.ceiling" }, "off")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "off")).toBeUndefined();
     expect(
-      resolveIconAnimation({ entity: "light.a", iconAnimation: "spin" }, "off"),
+      resolveIconAnimation(undefined, { entity: "light.a", iconAnimation: "spin" }, "off"),
     ).toBeUndefined();
     expect(
-      resolveIconAnimation({ entity: "media_player.tv", iconAnimation: "pulse" }, "idle"),
+      resolveIconAnimation(undefined, { entity: "media_player.tv", iconAnimation: "pulse" }, "idle"),
     ).toBeUndefined();
   });
 
   it("animates a paused media player — paused is on, not off", () => {
     expect(
-      resolveIconAnimation({ entity: "media_player.tv", iconAnimation: "pulse" }, "paused"),
+      resolveIconAnimation(undefined, { entity: "media_player.tv", iconAnimation: "pulse" }, "paused"),
     ).toBe("pulse");
   });
 
   it("fail-closed: unavailable/unknown/missing state never animates", () => {
-    expect(resolveIconAnimation({ entity: "fan.ceiling" }, "unavailable")).toBeUndefined();
-    expect(resolveIconAnimation({ entity: "fan.ceiling" }, "unknown")).toBeUndefined();
-    expect(resolveIconAnimation({ entity: "fan.ceiling" }, undefined)).toBeUndefined();
-    expect(resolveIconAnimation({}, "on")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "unavailable")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "unknown")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, undefined)).toBeUndefined();
+    expect(resolveIconAnimation(undefined, {}, "on")).toBeUndefined();
   });
 
   it("explicit spin/pulse override the domain default while active", () => {
-    expect(resolveIconAnimation({ entity: "light.a", iconAnimation: "spin" }, "on")).toBe("spin");
-    expect(resolveIconAnimation({ entity: "fan.ceiling", iconAnimation: "pulse" }, "on")).toBe(
+    expect(resolveIconAnimation(undefined, { entity: "light.a", iconAnimation: "spin" }, "on")).toBe("spin");
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling", iconAnimation: "pulse" }, "on")).toBe(
       "pulse",
     );
   });
 
   it("none disables the domain default", () => {
-    expect(resolveIconAnimation({ entity: "fan.ceiling", iconAnimation: "none" }, "on")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling", iconAnimation: "none" }, "on")).toBeUndefined();
+  });
+
+  // The `animation` fork extension (Task 10 follow-up): a matching state
+  // rule's own `animation` is the more specific statement, exactly as a
+  // rule's `icon` already beats the config `icon` (issue #106).
+  describe("a state rule's animation (fork extension)", () => {
+    it("a matching rule's animation overrides the item's iconAnimation", () => {
+      const item = {
+        entity: "light.a",
+        iconAnimation: "pulse" as const,
+        stateColor: [{ state: "on", color: "red", animation: "spin" as const }],
+      };
+      expect(resolveIconAnimation(undefined, item, "on")).toBe("spin");
+    });
+
+    it("a non-matching rule leaves the item's own setting alone", () => {
+      const item = {
+        entity: "light.a",
+        iconAnimation: "pulse" as const,
+        // Condition never matches the "on" reading below.
+        stateColor: [{ state: "flashing", color: "red", animation: "spin" as const }],
+      };
+      expect(resolveIconAnimation(undefined, item, "on")).toBe("pulse");
+    });
+
+    it("a matching rule's animation is still suppressed on an inactive entity", () => {
+      const item = {
+        entity: "light.a",
+        stateColor: [{ state: "off", color: "red", animation: "spin" as const }],
+      };
+      // The rule matches "off", but "off" is not active for a light — the
+      // fail-closed gate applies no matter which of the three named the mode.
+      expect(resolveIconAnimation(undefined, item, "off")).toBeUndefined();
+    });
+
+    it("a cross-entity rule's animation applies too, via matchStateRuleFor", () => {
+      const hass = fakeHass([{ entity_id: "binary_sensor.front_door", state: "on" }]);
+      const item = {
+        entity: "light.a",
+        stateColor: [
+          { entity: "binary_sensor.front_door", state: "on", color: "red", animation: "spin" as const },
+        ],
+      };
+      // The item's own reading ("on") never appears in the rule; only the
+      // named entity's state ("on") does.
+      expect(resolveIconAnimation(hass, item, "on")).toBe("spin");
+      expect(resolveIconAnimation(undefined, item, "on")).not.toBe("spin");
+    });
   });
 });
 
@@ -1524,7 +1572,7 @@ describe("domainIconAnimation (issue #127)", () => {
 
   it("is the same table resolveIconAnimation applies, so the two cannot drift", () => {
     // Active fan, nothing configured → auto → spin, both ways round.
-    expect(resolveIconAnimation({ entity: "fan.ceiling" }, "on")).toBe(
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "on")).toBe(
       domainIconAnimation("fan.ceiling"),
     );
   });

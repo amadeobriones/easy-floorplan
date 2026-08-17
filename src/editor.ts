@@ -3730,7 +3730,7 @@ export class FloorplanCardEditor extends LitElement {
     // Live preview: the icon animates exactly when the card would animate it
     // (entity currently active), so the "Badge shows" dropdown shows its
     // effect without leaving the editor.
-    const anim = resolveIconAnimation(it, st?.state);
+    const anim = resolveIconAnimation(this.hass, it, st?.state);
     const badge = html`<div
       class="badge ${showIcon ? "" : "ghost"} ${stateColor
         ? "state-colored"

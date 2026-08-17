@@ -1335,15 +1335,26 @@ export function domainIconAnimation(entity: string | undefined): "spin" | "pulse
 /**
  * Which animation an item's icon should play right now, or undefined for
  * none. Shared by card and editor. Never animates an inactive (or
- * unavailable) entity — including when the config forces "spin"/"pulse": a
- * spinning fan icon is a claim that the fan is running, so it obeys the same
- * fail-closed rule as the active highlight ({@link entityIsActive}).
+ * unavailable) entity — including when the config forces "spin"/"pulse", or
+ * a matched rule does: a spinning fan icon is a claim that the fan is
+ * running, so it obeys the same fail-closed rule as the active highlight
+ * ({@link entityIsActive}) no matter which of the three named it.
+ *
+ * A matching state rule's own `animation` (a fork extension) beats the
+ * item's blanket `iconAnimation` — the same reasoning `icon` already uses
+ * (issue #106): a rule that matches the current state is a more specific
+ * statement about what this device looks like right now than a setting that
+ * applies regardless of state. A rule with no `animation` of its own falls
+ * through to `iconAnimation` untouched, so a config using no rule-level
+ * `animation:` resolves exactly as before.
  */
 export function resolveIconAnimation(
-  item: { entity?: string; iconAnimation?: IconAnimation },
+  hass: RenderHass | undefined,
+  item: { entity?: string; iconAnimation?: IconAnimation; stateColor?: StateColorRule[] },
   state: string | undefined,
 ): "spin" | "pulse" | undefined {
-  const mode = item.iconAnimation ?? "auto";
+  const ruleAnim = matchStateRuleFor(hass, item.stateColor, state)?.animation;
+  const mode = ruleAnim ?? item.iconAnimation ?? "auto";
   if (mode === "none") return undefined;
   if (!entityIsActive(item.entity, state)) return undefined;
   if (mode === "spin" || mode === "pulse") return mode;

@@ -426,6 +426,7 @@ export class FloorplanCard extends LitElement {
     // the user's `angle` rotation, and a spin on the same element would
     // overwrite it.
     const anim = resolveIconAnimation(
+      this.hass,
       item,
       item.entity ? this.hass?.states[item.entity]?.state : undefined,
     );
