@@ -77,6 +77,7 @@ import {
   resolveItemIcon,
   matchStateRule,
   matchStateRuleFor,
+  itemRawValue,
   badgeContentOf,
   pressEffectOf,
   badgeValue,
@@ -1467,49 +1468,59 @@ describe("entityIsActive — domains whose state is not on/off", () => {
 });
 
 describe("resolveIconAnimation (issue #48)", () => {
+  // resolveIconAnimation takes the state object (matching resolveItemIcon's
+  // shape) rather than a bare state string, so a rule's `attribute` reaches
+  // it too — see the "judges the rule on the same reading colour/icon use"
+  // test below.
+  const st = (state: string, attributes: Record<string, unknown> = {}) => ({ state, attributes });
+
   it("auto: a running fan spins, playback and a cleaning vacuum pulse", () => {
-    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "on")).toBe("spin");
-    expect(resolveIconAnimation(undefined, { entity: "media_player.tv" }, "playing")).toBe("pulse");
-    expect(resolveIconAnimation(undefined, { entity: "vacuum.robo" }, "cleaning")).toBe("pulse");
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, st("on"))).toBe("spin");
+    expect(resolveIconAnimation(undefined, { entity: "media_player.tv" }, st("playing"))).toBe("pulse");
+    expect(resolveIconAnimation(undefined, { entity: "vacuum.robo" }, st("cleaning"))).toBe("pulse");
   });
 
   it("auto: everything else stays still, even when active", () => {
-    expect(resolveIconAnimation(undefined, { entity: "light.a" }, "on")).toBeUndefined();
-    expect(resolveIconAnimation(undefined, { entity: "switch.a" }, "on")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "light.a" }, st("on"))).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "switch.a" }, st("on"))).toBeUndefined();
   });
 
   it("never animates an inactive entity — including forced spin/pulse", () => {
-    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "off")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, st("off"))).toBeUndefined();
     expect(
-      resolveIconAnimation(undefined, { entity: "light.a", iconAnimation: "spin" }, "off"),
+      resolveIconAnimation(undefined, { entity: "light.a", iconAnimation: "spin" }, st("off")),
     ).toBeUndefined();
     expect(
-      resolveIconAnimation(undefined, { entity: "media_player.tv", iconAnimation: "pulse" }, "idle"),
+      resolveIconAnimation(undefined, { entity: "media_player.tv", iconAnimation: "pulse" }, st("idle")),
     ).toBeUndefined();
   });
 
   it("animates a paused media player — paused is on, not off", () => {
     expect(
-      resolveIconAnimation(undefined, { entity: "media_player.tv", iconAnimation: "pulse" }, "paused"),
+      resolveIconAnimation(undefined, { entity: "media_player.tv", iconAnimation: "pulse" }, st("paused")),
     ).toBe("pulse");
   });
 
   it("fail-closed: unavailable/unknown/missing state never animates", () => {
-    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "unavailable")).toBeUndefined();
-    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "unknown")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, st("unavailable"))).toBeUndefined();
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, st("unknown"))).toBeUndefined();
     expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, undefined)).toBeUndefined();
-    expect(resolveIconAnimation(undefined, {}, "on")).toBeUndefined();
+    expect(resolveIconAnimation(undefined, {}, st("on"))).toBeUndefined();
   });
 
   it("explicit spin/pulse override the domain default while active", () => {
-    expect(resolveIconAnimation(undefined, { entity: "light.a", iconAnimation: "spin" }, "on")).toBe("spin");
-    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling", iconAnimation: "pulse" }, "on")).toBe(
-      "pulse",
+    expect(resolveIconAnimation(undefined, { entity: "light.a", iconAnimation: "spin" }, st("on"))).toBe(
+      "spin",
     );
+    expect(
+      resolveIconAnimation(undefined, { entity: "fan.ceiling", iconAnimation: "pulse" }, st("on")),
+    ).toBe("pulse");
   });
 
   it("none disables the domain default", () => {
-    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling", iconAnimation: "none" }, "on")).toBeUndefined();
+    expect(
+      resolveIconAnimation(undefined, { entity: "fan.ceiling", iconAnimation: "none" }, st("on")),
+    ).toBeUndefined();
   });
 
   // The `animation` fork extension (Task 10 follow-up): a matching state
@@ -1522,7 +1533,7 @@ describe("resolveIconAnimation (issue #48)", () => {
         iconAnimation: "pulse" as const,
         stateColor: [{ state: "on", color: "red", animation: "spin" as const }],
       };
-      expect(resolveIconAnimation(undefined, item, "on")).toBe("spin");
+      expect(resolveIconAnimation(undefined, item, st("on"))).toBe("spin");
     });
 
     it("a non-matching rule leaves the item's own setting alone", () => {
@@ -1532,7 +1543,7 @@ describe("resolveIconAnimation (issue #48)", () => {
         // Condition never matches the "on" reading below.
         stateColor: [{ state: "flashing", color: "red", animation: "spin" as const }],
       };
-      expect(resolveIconAnimation(undefined, item, "on")).toBe("pulse");
+      expect(resolveIconAnimation(undefined, item, st("on"))).toBe("pulse");
     });
 
     it("a matching rule's animation is still suppressed on an inactive entity", () => {
@@ -1542,7 +1553,7 @@ describe("resolveIconAnimation (issue #48)", () => {
       };
       // The rule matches "off", but "off" is not active for a light — the
       // fail-closed gate applies no matter which of the three named the mode.
-      expect(resolveIconAnimation(undefined, item, "off")).toBeUndefined();
+      expect(resolveIconAnimation(undefined, item, st("off"))).toBeUndefined();
     });
 
     it("a cross-entity rule's animation applies too, via matchStateRuleFor", () => {
@@ -1555,8 +1566,27 @@ describe("resolveIconAnimation (issue #48)", () => {
       };
       // The item's own reading ("on") never appears in the rule; only the
       // named entity's state ("on") does.
-      expect(resolveIconAnimation(hass, item, "on")).toBe("spin");
-      expect(resolveIconAnimation(undefined, item, "on")).not.toBe("spin");
+      expect(resolveIconAnimation(hass, item, st("on"))).toBe("spin");
+      expect(resolveIconAnimation(undefined, item, st("on"))).not.toBe("spin");
+    });
+
+    // The bug the coordinator flagged: colour/icon are judged on
+    // itemRawValue (the chosen `attribute` when set), but animation used to
+    // be judged on the plain state — so a rule keyed on an attribute's value
+    // could visibly recolour an item while never animating it. Both must now
+    // come off the same reading.
+    it("judges the rule on the same reading colour/icon use — the attribute, when set", () => {
+      const item = {
+        entity: "climate.hall",
+        attribute: "temperature",
+        stateColor: [{ above: 25, color: "red", animation: "pulse" as const }],
+      };
+      // The entity's own `state` ("heat") never crosses 25 and isn't even
+      // numeric — only the `temperature` attribute does.
+      const reading = st("heat", { temperature: 30 });
+      const color = matchStateRuleFor(undefined, item.stateColor, itemRawValue(item, reading))?.color;
+      expect(color).toBe("red");
+      expect(resolveIconAnimation(undefined, item, reading)).toBe("pulse");
     });
   });
 });
@@ -1572,7 +1602,7 @@ describe("domainIconAnimation (issue #127)", () => {
 
   it("is the same table resolveIconAnimation applies, so the two cannot drift", () => {
     // Active fan, nothing configured → auto → spin, both ways round.
-    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, "on")).toBe(
+    expect(resolveIconAnimation(undefined, { entity: "fan.ceiling" }, { state: "on", attributes: {} })).toBe(
       domainIconAnimation("fan.ceiling"),
     );
   });

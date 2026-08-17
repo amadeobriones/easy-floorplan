@@ -428,7 +428,7 @@ export class FloorplanCard extends LitElement {
     const anim = resolveIconAnimation(
       this.hass,
       item,
-      item.entity ? this.hass?.states[item.entity]?.state : undefined,
+      item.entity ? this.hass?.states[item.entity] : undefined,
     );
     // "Show the reading, not a picture" (issue #106). Same badge — size, angle,
     // state colour, ripple stacking all unchanged — with the glyph swapped for

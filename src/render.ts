@@ -1338,7 +1338,9 @@ export function domainIconAnimation(entity: string | undefined): "spin" | "pulse
  * unavailable) entity — including when the config forces "spin"/"pulse", or
  * a matched rule does: a spinning fan icon is a claim that the fan is
  * running, so it obeys the same fail-closed rule as the active highlight
- * ({@link entityIsActive}) no matter which of the three named it.
+ * ({@link entityIsActive}) no matter which of the three named it. The gate
+ * always reads `st?.state` — an hvac *mode* is what decides active, not
+ * whatever attribute the rule below is judged on.
  *
  * A matching state rule's own `animation` (a fork extension) beats the
  * item's blanket `iconAnimation` — the same reasoning `icon` already uses
@@ -1347,16 +1349,25 @@ export function domainIconAnimation(entity: string | undefined): "spin" | "pulse
  * applies regardless of state. A rule with no `animation` of its own falls
  * through to `iconAnimation` untouched, so a config using no rule-level
  * `animation:` resolves exactly as before.
+ *
+ * Takes the state object rather than a bare state string — matching
+ * {@link resolveItemIcon}'s shape, the function this one is most often read
+ * beside — so the rule is judged on {@link itemRawValue}: the chosen
+ * `attribute` when the item has one, exactly like colour and icon already
+ * are. Judging it on the plain state instead would let a rule visibly
+ * colour an item by its `attribute` while never animating it, or vice versa
+ * — the same "same rule, different reading" trap #106 already fixed for
+ * colour vs. icon.
  */
 export function resolveIconAnimation(
   hass: RenderHass | undefined,
-  item: { entity?: string; iconAnimation?: IconAnimation; stateColor?: StateColorRule[] },
-  state: string | undefined,
+  item: { entity?: string; iconAnimation?: IconAnimation; attribute?: string; stateColor?: StateColorRule[] },
+  st: { state: string; attributes: Record<string, unknown> } | undefined,
 ): "spin" | "pulse" | undefined {
-  const ruleAnim = matchStateRuleFor(hass, item.stateColor, state)?.animation;
+  const ruleAnim = matchStateRuleFor(hass, item.stateColor, itemRawValue(item, st))?.animation;
   const mode = ruleAnim ?? item.iconAnimation ?? "auto";
   if (mode === "none") return undefined;
-  if (!entityIsActive(item.entity, state)) return undefined;
+  if (!entityIsActive(item.entity, st?.state)) return undefined;
   if (mode === "spin" || mode === "pulse") return mode;
   return domainIconAnimation(item.entity);
 }
