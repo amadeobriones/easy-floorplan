@@ -30,6 +30,7 @@ import {
 } from "./symbols";
 import { isTypingTarget, pathTags } from "./editor-keys";
 import { zoomAnchoredScroll } from "./editor-zoom";
+import { parseAndValidate } from "./validate";
 import {
   DEFAULT_CUSTOM_PERCENT,
   DEFAULT_GRID,
@@ -285,6 +286,14 @@ export class FloorplanCardEditor extends LitElement {
   /** Paste-a-symbol box in the Project panel, and its last validation error. */
   @state() private _symbolDraft = "";
   @state() private _symbolError = "";
+  /**
+   * Paste-a-config box in the Project panel (sibling of the paste-a-symbol
+   * box above), and its last validation error. Unlike a symbol paste, which
+   * merges into `config.symbols`, a config paste replaces the whole config
+   * — see `_importConfig`.
+   */
+  @state() private _importDraft = "";
+  @state() private _importError = "";
   /** Project section expanded? Collapsed by default — page settings are touched rarely. */
   @state() private _projectOpen = false;
   /**
@@ -3825,6 +3834,7 @@ export class FloorplanCardEditor extends LitElement {
           this._patchConfig(patch as Partial<FloorplanCardConfig>)
         )}
         ${this._renderSymbolsPanel()}
+        ${this._renderImportPanel()}
       </div>
     `;
   }
@@ -3919,6 +3929,63 @@ export class FloorplanCardEditor extends LitElement {
     // leaves the config as it was rather than carrying an empty block forever.
     this._patchConfig({ symbols: Object.keys(rest).length ? rest : undefined });
   }
+
+  /**
+   * Paste a whole config into this plan — the paste-a-symbol box's sibling in
+   * the Project panel. Same shape: a draft/error state pair, the error
+   * cleared on every keystroke so a stale message under a since-fixed input
+   * can't linger, `?disabled` on the submit button while the draft is blank.
+   *
+   * One real difference from that box: `_addSymbol` *merges* a parsed symbol
+   * into `config.symbols`, but a pasted config *replaces* `_config`
+   * entirely — there is no sensible way to "merge" two whole plans. That is
+   * destructive in a way adding a symbol never is, so `_importConfig` commits
+   * through `_commit` (which snapshots the current config for undo) rather
+   * than `_patchConfig`, and the button leans on the same undo stack every
+   * other discrete edit in this editor already relies on — including
+   * `_deleteFloor`, an equally irreversible-without-undo action that also
+   * has no extra confirmation dialog. A survivable mistake beats a modal
+   * nobody reads.
+   */
+  private _renderImportPanel(): TemplateResult {
+    return html`
+      <div class="row col symbols-panel">
+        <label>Import config</label>
+        <textarea
+          class="symbol-input"
+          rows="4"
+          spellcheck="false"
+          placeholder="Paste a floorplan-card YAML or JSON config here"
+          .value=${this._importDraft}
+          @input=${(e: Event) => {
+            this._importDraft = (e.target as HTMLTextAreaElement).value;
+            this._importError = "";
+          }}
+        ></textarea>
+        ${this._importError ? html`<div class="symbol-error">${this._importError}</div>` : nothing}
+        <div class="symbol-actions">
+          <button class="danger" ?disabled=${!this._importDraft.trim()} @click=${this._importConfig}>
+            Replace config
+          </button>
+          <span class="hint">Replaces the whole plan — Ctrl/Cmd+Z (or the Undo button) to get it back</span>
+        </div>
+      </div>
+    `;
+  }
+
+  private _importConfig = (): void => {
+    const result = parseAndValidate(this._importDraft);
+    if (!result.ok) {
+      this._importError =
+        result.errors.length > 1
+          ? `${result.errors[0]} (+${result.errors.length - 1} more)`
+          : (result.errors[0] ?? "Not a usable config.");
+      return;
+    }
+    this._commit(result.config);
+    this._importDraft = "";
+    this._importError = "";
+  };
 
   /**
    * Editor fields for the currently-selected element, rendered in the Element

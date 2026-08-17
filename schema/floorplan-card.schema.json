@@ -1,0 +1,1086 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+        "ActionConfig": {
+            "additionalProperties": {},
+            "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched.",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "confirmation": {
+                    "anyOf": [
+                        {
+                            "properties": {
+                                "text": {
+                                    "type": "string"
+                                }
+                            },
+                            "type": "object"
+                        },
+                        {
+                            "type": "boolean"
+                        }
+                    ]
+                },
+                "data": {
+                    "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+                },
+                "entity": {
+                    "type": "string"
+                },
+                "navigation_path": {
+                    "type": "string"
+                },
+                "perform_action": {
+                    "type": "string"
+                },
+                "service": {
+                    "type": "string"
+                },
+                "service_data": {
+                    "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+                },
+                "target": {
+                    "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+                },
+                "url_path": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "action"
+            ],
+            "type": "object"
+        },
+        "Area": {
+            "description": "A named room polygon, drawn point-by-point in the editor and closed by\nclicking back on the starting vertex. Distinct from a {@link Floor} (a\nwhole level/story) the same way Home Assistant's own \"area\" (room) sits\ninside a \"floor\" — see {@link Area.haArea}.",
+            "properties": {
+                "activeColor": {
+                    "description": "Fill color while `entity` is active. Used when no {@link stateColor} rule matches.",
+                    "type": "string"
+                },
+                "activeOpacity": {
+                    "description": "Fill opacity while `entity` resolves a color, 0-1. Lets a room lift out of\nthe plan while it is live without permanently darkening it when it is not.\nFalls back to {@link opacity}.",
+                    "type": "number"
+                },
+                "borderColor": {
+                    "description": "Static outline color for the polygon. No outline is drawn by default, so\nexisting plans render unchanged.",
+                    "type": "string"
+                },
+                "borderWidth": {
+                    "description": "Outline width in canvas units. Defaults to {@link DEFAULT_AREA_BORDER_WIDTH}.",
+                    "type": "number"
+                },
+                "color": {
+                    "description": "Fill color. Falls back to the theme primary color.",
+                    "type": "string"
+                },
+                "entity": {
+                    "description": "Optional entity that makes the room itself live (issue #6) — a presence\nsensor that lights the room while it is occupied, an air quality sensor\nthat reddens it when readings go bad. Drives {@link stateColor} and\n{@link activeColor}; an unbound area is still just a static polygon.",
+                    "type": "string"
+                },
+                "filterEntities": {
+                    "description": "With `haArea` linked, scope the entity picker (for devices placed inside\nthis polygon) to that HA area's entities. Default true. Has no effect\nwithout a linked `haArea`.",
+                    "type": "boolean"
+                },
+                "haArea": {
+                    "description": "Optional link to a Home Assistant area (its registry `area_id`). Selecting\none names this Area after it (same convention as {@link Floor.haFloor}).\nWhether it also scopes the entity picker is controlled by\n{@link filterEntities}.",
+                    "type": "string"
+                },
+                "highlight": {
+                    "description": "Where a resolved live color paints: the `fill` (default, and the only\nbehaviour before this option existed), the `border`, or `both`. Use\n`border` for a room that outlines itself while occupied without tinting\neverything inside it — which reads better on a busy plan.",
+                    "enum": [
+                        "border",
+                        "both",
+                        "fill"
+                    ],
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "labelSize": {
+                    "description": "Name label font size. Px under `overlayScale: fixed`, canvas units under\n`plan`. Default {@link DEFAULT_AREA_LABEL_SIZE}. A room name had no size\ncontrol at all before this, which left \"hide it\" as the only answer to a\nlabel wider than its room.",
+                    "type": "number"
+                },
+                "name": {
+                    "description": "Display name. Mirrors the linked HA area's name when `haArea` is set.",
+                    "type": "string"
+                },
+                "opacity": {
+                    "description": "Fill opacity, 0-1. Default {@link DEFAULT_AREA_OPACITY}.",
+                    "type": "number"
+                },
+                "points": {
+                    "description": "Vertices in drawing order, virtual canvas units. Implicitly closed (last -> first).",
+                    "items": {
+                        "$ref": "#/definitions/AreaPoint"
+                    },
+                    "type": "array"
+                },
+                "showName": {
+                    "description": "Show the name label on the plan, centered on the polygon. Default true.",
+                    "type": "boolean"
+                },
+                "stateColor": {
+                    "description": "Threshold/state colors for the fill, in the same shape as\n{@link FloorItem.stateColor}. Evaluated against `entity`'s state; takes\nprecedence over {@link activeColor} and {@link color}.",
+                    "items": {
+                        "$ref": "#/definitions/StateColorRule"
+                    },
+                    "type": "array"
+                },
+                "tempEntity": {
+                    "description": "Temperature-class entity (e.g. a `sensor` with `device_class: temperature`)\nthat drives this area's thermal-layer shading. Unset = the area is not\nshaded, even when the feature is on. Distinct from {@link Area.entity},\nwhich drives stateColor/activeColor for the fill.",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "id",
+                "points"
+            ],
+            "type": "object"
+        },
+        "AreaPoint": {
+            "description": "A vertex of an {@link Area} polygon, in virtual canvas units.",
+            "properties": {
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "AwarenessKind": {
+            "enum": [
+                "motion",
+                "safety"
+            ],
+            "type": "string"
+        },
+        "AwarenessMarker": {
+            "description": "A placement point for the awareness layer: a motion marker pings a ripple\nwhere its sensor fires; a safety marker (leak, smoke, door left open) blinks\nin an alert palette when its sensor trips. `kind` selects which visual and\nwhich trip rule apply — see isMarkerTripped in awareness.ts.",
+            "properties": {
+                "entity": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "$ref": "#/definitions/AwarenessKind"
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "entity",
+                "id",
+                "kind",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "FeaturesConfig": {
+            "properties": {
+                "autoPopulateArea": {
+                    "description": "Editor: drop an HA area's entities onto the plan.",
+                    "type": "boolean"
+                },
+                "awarenessLayer": {
+                    "description": "Motion pings and safety alerts.",
+                    "type": "boolean"
+                },
+                "energyLayer": {
+                    "description": "Colour devices by live power draw.",
+                    "type": "boolean"
+                },
+                "radialControls": {
+                    "description": "Inline brightness/colour/thermostat on long-press.",
+                    "type": "boolean"
+                },
+                "thermalLayer": {
+                    "description": "Shade areas warm/cool by temperature.",
+                    "type": "boolean"
+                }
+            },
+            "type": "object"
+        },
+        "Floor": {
+            "description": "A single floor/level. Each floor owns its own set of elements. The canvas\nsize, grid and background are shared across floors (config-level).",
+            "properties": {
+                "areas": {
+                    "items": {
+                        "$ref": "#/definitions/Area"
+                    },
+                    "type": "array"
+                },
+                "awareness": {
+                    "description": "Awareness-layer markers on this floor. Optional: older configs have none.",
+                    "items": {
+                        "$ref": "#/definitions/AwarenessMarker"
+                    },
+                    "type": "array"
+                },
+                "color": {
+                    "description": "Accent color for this floor's switcher button while active (issue #67).\nPasses through the style-injection allowlist (#64). Falls back to the\ntheme primary color.",
+                    "type": "string"
+                },
+                "furniture": {
+                    "items": {
+                        "$ref": "#/definitions/Furniture"
+                    },
+                    "type": "array"
+                },
+                "haFloor": {
+                    "description": "Optional link to a Home Assistant floor (its registry `floor_id`).\nSelecting one in the editor names this floor after it; the id is kept so\nfuture features (e.g. area filtering, per-floor entity defaults) can use\nthe association. Purely additive — nothing renders differently today.",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "image": {
+                    "description": "Optional background image URL (e.g. `/local/floorplan.png` or an external\nURL) drawn behind the elements — handy for tracing over a real floor plan.",
+                    "type": "string"
+                },
+                "imageFit": {
+                    "description": "How the background image maps onto the virtual canvas (issue #86).\n\nThe canvas width/height are config-level but `image` is per-floor, so a\nmulti-floor plan whose scans differ in resolution cannot pick one canvas\nratio that suits them all — at least one floor gets squashed. This is\nper-floor precisely so each scan can choose for itself.\n\n- **`stretch`** (default) — fill the canvas, distorting if the ratios\n  disagree. Kept as the default because existing plans were traced over a\n  stretched image; changing it under them would shift every wall.\n- **`contain`** — scale to fit, preserving the image's own aspect ratio.\n  Letterboxes: the canvas may show through on two sides.\n- **`cover`** — fill the canvas preserving aspect ratio, cropping the\n  overflow.",
+                    "enum": [
+                        "contain",
+                        "cover",
+                        "stretch"
+                    ],
+                    "type": "string"
+                },
+                "imageOpacity": {
+                    "description": "Background image opacity, 0–1. Default 1.",
+                    "type": "number"
+                },
+                "items": {
+                    "items": {
+                        "$ref": "#/definitions/FloorItem"
+                    },
+                    "type": "array"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "openings": {
+                    "items": {
+                        "$ref": "#/definitions/Opening"
+                    },
+                    "type": "array"
+                },
+                "short": {
+                    "description": "Short label for the card's floor-switcher button (issue #67), e.g. \"GF\" —\nthe full `name` stays as the tooltip. Falls back to `name`.",
+                    "type": "string"
+                },
+                "texts": {
+                    "items": {
+                        "$ref": "#/definitions/FloorText"
+                    },
+                    "type": "array"
+                },
+                "trackers": {
+                    "items": {
+                        "$ref": "#/definitions/Tracker"
+                    },
+                    "type": "array"
+                },
+                "walls": {
+                    "items": {
+                        "$ref": "#/definitions/Wall"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "areas",
+                "furniture",
+                "id",
+                "items",
+                "name",
+                "openings",
+                "texts",
+                "trackers",
+                "walls"
+            ],
+            "type": "object"
+        },
+        "FloorItem": {
+            "description": "An entity icon placed on the plan.",
+            "properties": {
+                "activeColor": {
+                    "description": "Badge color while the entity is active (issue #79). Falls back to the\ntheme's active color — the yellow every device shares by default, which\nmakes lights, covers and switches hard to tell apart at a glance.\nSame meaning as {@link Opening.activeColor}.",
+                    "type": "string"
+                },
+                "angle": {
+                    "description": "Icon rotation in degrees. Default 0.",
+                    "type": "number"
+                },
+                "attribute": {
+                    "description": "Show this attribute of `entity` instead of its state (issue #70) — e.g. a\nclimate's `current_temperature` rather than \"heat\". Formatted through\nHA's own attribute formatter when available.",
+                    "type": "string"
+                },
+                "badgeContent": {
+                    "description": "What the badge holds (issue #106):\n\n- `\"icon\"` (default) — the glyph, as always;\n- `\"value\"` — the device's reading, rounded and compact, *inside* the\n  badge: a thermostat reads `21°` in the same circle `stateColor` already\n  paints red while it heats, instead of a text line hanging underneath.\n  Which reading is worked out per domain by {@link badgeValue}; when\n  nothing numeric is available the badge falls back to its icon, so this\n  can never leave an empty circle;\n- `\"none\"` — no badge at all, label only (the old `showIcon: false`).",
+                    "enum": [
+                        "icon",
+                        "none",
+                        "value"
+                    ],
+                    "type": "string"
+                },
+                "badgeEntity": {
+                    "description": "Which of this device's own entities the badge reads while\n`badgeContent: \"value\"` (issue #136) — the main `entity`, or\n{@link secondaryEntity}.\n\nAbsent means \"work it out\", which is what {@link badgeValue} has always\ndone: the first candidate with a number wins, so a switch that reads \"on\"\nalready falls through to its power sensor. That guess is usually right,\nbut it is only a guess, and there was no way to overrule it when the main\nentity happens to be numeric too.\n\nSet, it is the *only* entity read. No falling back to the other one:\nhaving asked for the power sensor, being shown the switch instead would\nbe worse than being shown the icon — which is what a device with no\nnumber to display falls back to anyway.",
+                    "enum": [
+                        "primary",
+                        "secondary"
+                    ],
+                    "type": "string"
+                },
+                "display": {
+                    "description": "How the device is drawn. Default \"badge\".\n\nThe ripple modes render on any entity. The editor only *offers* them on a\npresence device (issue #127) — a ring says \"someone is there\" — so a ring\non anything else is a YAML-only choice.",
+                    "enum": [
+                        "badge",
+                        "iconRipple",
+                        "ripple"
+                    ],
+                    "type": "string"
+                },
+                "double_tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
+                "entity": {
+                    "type": "string"
+                },
+                "glow": {
+                    "description": "Cast a pool of light onto the plan from this device's position (issue #6).\n\nThe room is not tinted as a whole — the light falls where the device sits,\nso several lights in one room each cast their own pool and the pools mix\nwhere they overlap. That handles an open-plan room, or one lamp warm and\nanother cool, which a single room-wide fill cannot express.\n\nThe device's own `x`/`y` are the position, so a light icon already placed\non the plan needs nothing but this flag.",
+                    "type": "boolean"
+                },
+                "glowColor": {
+                    "description": "Color for a light that cannot report one — a brightness-only or on/off\nbulb. A color-capable light always paints its own `rgb_color` instead.\nDefaults to {@link DEFAULT_GLOW_COLOR}, a warm white.",
+                    "type": "string"
+                },
+                "glowRadius": {
+                    "description": "Radius of the cast pool in canvas units. Default {@link DEFAULT_GLOW_RADIUS}.",
+                    "type": "number"
+                },
+                "hideWhenInactive": {
+                    "description": "Hide this device on the live card while its entity is inactive (issue\n#55), so a busy room only shows what is actually doing something. The\neditor always draws it — dimmed — or it could never be selected again.\n\"Active\" is the same domain-aware test the badge highlight uses\n({@link entityIsActive}), so a lock reads unlocked, a vacuum cleaning.",
+                    "type": "boolean"
+                },
+                "hold_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
+                "icon": {
+                    "description": "Optional override icon (mdi:...). Falls back to the entity's icon.",
+                    "type": "string"
+                },
+                "iconAnimation": {
+                    "description": "Animate the icon while the entity is active (issue #48). \"auto\" (the\ndefault) applies HA-like defaults per domain — a running fan spins; a\nmedia player or vacuum pulses while active (for a media player that\nmeans `playing` or plain `on`, matching the badge highlight);\n\"spin\"/\"pulse\" force that animation (still only while active); \"none\"\ndisables it.\n\n\"auto\" has no counterpart in the editor's menu (issue #127): it shows the\nanimation auto resolves to for this entity instead of the word, and writes\nthat value out the moment the badge dropdown is touched. Editing anything\nelse leaves the key alone, so a config keeps its \"auto\" — and its meaning —\nuntil someone actually decides about the animation.",
+                    "enum": [
+                        "auto",
+                        "none",
+                        "pulse",
+                        "spin"
+                    ],
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "$ref": "#/definitions/ItemKind"
+                },
+                "labelSize": {
+                    "description": "Label line font size in pixels (issue #59). Default 12.",
+                    "type": "number"
+                },
+                "name": {
+                    "description": "Optional label override. Falls back to the entity's friendly name.",
+                    "type": "string"
+                },
+                "powerEntity": {
+                    "description": "A power/energy sensor (watts) whose live value colours this item in the energy layer.",
+                    "type": "string"
+                },
+                "rippleColor": {
+                    "description": "Ripple ring color (CSS/hex). Falls back to `activeColor`, then the primary color.",
+                    "type": "string"
+                },
+                "rippleSize": {
+                    "description": "Max ripple ring diameter in pixels. Default 80.",
+                    "type": "number"
+                },
+                "secondaryAttribute": {
+                    "description": "Attribute for the second reading. Applies to `secondaryEntity` when set,\nelse to `entity` — so one climate device can show\n`current_temperature · current_humidity` without a second entity.",
+                    "type": "string"
+                },
+                "secondaryEntity": {
+                    "description": "Optional second entity (e.g. a humidity sensor paired with a temperature\nentity). When set and the state is shown, both values are displayed in the\nsame element. The primary `entity` drives on/off state and click actions.",
+                    "type": "string"
+                },
+                "showIcon": {
+                    "type": "boolean"
+                },
+                "showName": {
+                    "description": "Show the device's name in the label line (issue #61) — the `name`\noverride, else the entity's friendly name. Combines with `showState` as\n\"Name · state\". Default false.",
+                    "type": "boolean"
+                },
+                "showState": {
+                    "description": "Show the entity state next to the icon.",
+                    "type": "boolean"
+                },
+                "size": {
+                    "description": "Badge diameter in pixels. Default 34.",
+                    "type": "number"
+                },
+                "stateColor": {
+                    "description": "Threshold colors for the label line (issue #68), highest matching `above`\nwins; an entry without `above` is the default. Evaluated against the\ndisplayed value (the attribute when `attribute` is set, else the state):\n\n```yaml\nstateColor:\n  - above: 26\n    color: red\n  - above: 24\n    color: orange\n  - color: white\n```\n\nRules may also match an exact state instead of a threshold, for entities\nwhose value is not a number:\n\n```yaml\nstateColor:\n  - state: open\n    color: red\n  - color: green\n```\n\nColors pass through the style-injection allowlist (#64) at render time.",
+                    "items": {
+                        "$ref": "#/definitions/StateColorRule"
+                    },
+                    "type": "array"
+                },
+                "tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "Lovelace actions. Defaults: tap = toggle (controllable domains) or more-info; hold/double = none."
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "entity",
+                "id",
+                "kind",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "FloorText": {
+            "description": "A free text label placed on the plan.",
+            "properties": {
+                "angle": {
+                    "description": "Rotation in degrees. Default 0.",
+                    "type": "number"
+                },
+                "color": {
+                    "description": "Text color (CSS color / hex). Falls back to the theme text color.",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "size": {
+                    "description": "Font size in pixels. Default 16.",
+                    "type": "number"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "id",
+                "text",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "Furniture": {
+            "description": "A gray furniture/fixture diagram placed on the plan.",
+            "properties": {
+                "activeColor": {
+                    "description": "Color while `entity` is active. Used when no {@link stateColor} rule matches.",
+                    "type": "string"
+                },
+                "angle": {
+                    "description": "Rotation in degrees. Default 0.",
+                    "type": "number"
+                },
+                "color": {
+                    "description": "Stroke/fill color. Defaults to gray so it reads differently from walls.",
+                    "type": "string"
+                },
+                "entity": {
+                    "description": "Optional entity that makes the drawing live (issue #82) — a soil sensor on\na plant, a water temperature sensor on a fish tank, a contact sensor on a\ncabinet. Drives {@link stateColor} and {@link activeColor}; furniture has\nno click action, so an unbound piece is still just a gray diagram.",
+                    "type": "string"
+                },
+                "h": {
+                    "type": "number"
+                },
+                "hand": {
+                    "description": "L-shaped sectional only: which side the chaise extends on. Default `right`.",
+                    "enum": [
+                        "left",
+                        "right"
+                    ],
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "stateColor": {
+                    "description": "Threshold/state colors for the drawing, in the same shape as\n{@link FloorItem.stateColor}. Evaluated against `entity`'s state; takes\nprecedence over {@link activeColor} and {@link color}.",
+                    "items": {
+                        "$ref": "#/definitions/StateColorRule"
+                    },
+                    "type": "array"
+                },
+                "type": {
+                    "anyOf": [
+                        {
+                            "allOf": [
+                                {
+                                    "properties": {},
+                                    "type": "object"
+                                },
+                                {
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        {
+                            "enum": [
+                                "airHandler",
+                                "bathtub",
+                                "bed",
+                                "chair",
+                                "desk",
+                                "dishwasher",
+                                "dryer",
+                                "fishTank",
+                                "fridge",
+                                "hotTub",
+                                "piano",
+                                "plant",
+                                "roundTable",
+                                "rug",
+                                "sectional",
+                                "sink",
+                                "sofa",
+                                "stairs",
+                                "stove",
+                                "table",
+                                "toilet",
+                                "tv",
+                                "vanity",
+                                "wardrobe",
+                                "washer",
+                                "waterHeater"
+                            ],
+                            "type": "string"
+                        }
+                    ],
+                    "description": "Which symbol to draw — a built-in {@link FurnitureType}, a symbol\ncontributed to `furniture/`, or one this config defines in\n{@link FloorplanCardConfig.symbols}. An id nothing answers to draws the\nplain box, so a missing symbol is a visible placeholder rather than a hole."
+                },
+                "w": {
+                    "description": "Width / height in virtual units.",
+                    "type": "number"
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "h",
+                "id",
+                "type",
+                "w",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "ItemKind": {
+            "enum": [
+                "binary_sensor",
+                "camera",
+                "climate",
+                "cover",
+                "fan",
+                "generic",
+                "humidifier",
+                "light",
+                "lock",
+                "media_player",
+                "sensor",
+                "switch",
+                "vacuum"
+            ],
+            "type": "string"
+        },
+        "Opening": {
+            "description": "A door or window. Positioned by its center point and rotation so it can be\ndropped onto (and aligned with) a wall, but it is stored independently.",
+            "properties": {
+                "activeColor": {
+                    "description": "Color of the leaf/sash and swing arc while actively open. Falls back to the primary color.",
+                    "type": "string"
+                },
+                "angle": {
+                    "description": "Rotation in degrees, 0 = horizontal.",
+                    "type": "number"
+                },
+                "double_tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
+                "entity": {
+                    "description": "Optional entity (e.g. a contact `binary_sensor` or a `cover`) whose state\ndrives whether the opening is drawn open or closed. When unset, doors are\ndrawn open (swing symbol) and windows closed, matching a static floor plan.",
+                    "type": "string"
+                },
+                "flipH": {
+                    "description": "Mirror the symbol left↔right in the opening's local frame. For a swing door\nthis moves the hinge to the other jamb; for a slider it reverses the slide\ndirection. Absent = the default orientation (hinge/anchor at the left jamb).",
+                    "type": "boolean"
+                },
+                "flipV": {
+                    "description": "Mirror the symbol across the wall line, so the door opens into the room on\nthe other side. Absent = the default (swings toward the −y / \"near\" side).",
+                    "type": "boolean"
+                },
+                "hold_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
+                "id": {
+                    "type": "string"
+                },
+                "invert": {
+                    "description": "Flip the open/closed interpretation of `entity` (for inverted sensors).",
+                    "type": "boolean"
+                },
+                "length": {
+                    "description": "Length along the wall, in virtual units.",
+                    "type": "number"
+                },
+                "motion": {
+                    "description": "How the opening moves. `swing` (default) is a hinged door / casement window;\n`slide` is a sliding door / sliding window whose panel(s) travel along the\nwall (see {@link sliderStyle}); `roll` is a roll-up cover — garage door,\nroller shutter — whose slatted curtain leaves the floor plane (issue #45),\ndrawn thinning toward the track line as it opens.",
+                    "enum": [
+                        "roll",
+                        "slide",
+                        "swing"
+                    ],
+                    "type": "string"
+                },
+                "sash": {
+                    "description": "Swing windows only: how many sashes. `double` (the default, today's look)\ndraws two casement leaves meeting in the middle; `single` draws one sash\nhinged at a jamb (issue #73) — `flipH` picks which jamb. Ignored for\ndoors and for sliding / rolling openings.",
+                    "enum": [
+                        "double",
+                        "single"
+                    ],
+                    "type": "string"
+                },
+                "secondaryEntity": {
+                    "description": "Two-panel sliders only: a second contact / `cover` driving the **other**\nmoving panel (issue #145), for a two-panel door with a sensor on each leaf.\n`entity` keeps the first panel — the one at the −x jamb in the opening's own\nframe, so `flipH` swaps which panel each sensor draws, exactly as it mirrors\neverything else. Unset (the default) leaves both panels on `entity`, which\nis what a single-sensor slider has always drawn. `invert` covers both.",
+                    "type": "string"
+                },
+                "showShutterIcon": {
+                    "description": "Draw the shutter's icon beside the opening (default true, whenever both\nentities are bound). It is what makes the second entity visible at all —\nand a control of its own, since tapping it opens the shutter — but on a\ndense plan, or one where every window has a shutter, it is a lot of\nicons. Turning it off leaves the gestures untouched.",
+                    "type": "boolean"
+                },
+                "shutterActiveColor": {
+                    "description": "Colour of the shutter while it is (partly) open. Falls back to\n{@link activeColor}, then the skin accent — so a plan that only wants one\naccent still sets one, and a plan that wants the shutter to read\nseparately from the sash it covers can say so.",
+                    "type": "string"
+                },
+                "shutterEntity": {
+                    "description": "An external shutter sharing this opening's wall gap (issue #74): a\n`cover` (roller shutter / tapparella) or a `binary_sensor` contact on a\nhinged shutter (persiana). `entity` keeps driving the opening itself, so\nan open window behind a closed shutter renders both truthfully.",
+                    "type": "string"
+                },
+                "shutterFlipV": {
+                    "description": "Hinged shutters only: put the panels on the sash's **own** side of the\nwall instead of the far side (the default). Shutters live outside, and\nwhich side of a wall \"outside\" is depends on the room — a window drawn\nwith `flipV` opens the other way, and its shutters follow it.\n\nIgnored by the roll curtain, which is drawn symmetrically about the wall\nline and so looks identical either way.",
+                    "type": "boolean"
+                },
+                "shutterIcon": {
+                    "description": "Override that icon. Absent, it is the shutter entity's own — the registry\noverride, then the icon on the state, then Home Assistant's\ndomain/device-class default, which is a **pair**, so the glyph itself\ncarries open/closed. An override is a single glyph and gives that up;\ncolour still reports the state.",
+                    "type": "string"
+                },
+                "shutterInvert": {
+                    "description": "Flip the open/closed interpretation of {@link shutterEntity}, exactly as\n{@link invert} does for `entity`. Not the same switch: a reed contact on a\nhinged shutter commonly reports `on` when the panels are **shut** (the\nmagnet only meets its contact when they are folded together), while the\nwindow behind it reports the other way round. One flag could not describe\nboth.",
+                    "type": "boolean"
+                },
+                "shutterStyle": {
+                    "description": "How that shutter is drawn (issue #74):\n- `roll` — a slatted curtain that rolls up out of the floor plane.\n- `swing` — louvered panels hinged at the jambs, **outside** the wall,\n  swinging outward (the shutters you fold back against the façade).\n\nDefaults from the bound entity: a `binary_sensor` can only say\nopen/closed, which is what a hinged shutter reports, so it defaults to\n`swing`; a position-carrying `cover` defaults to `roll`. Set explicitly\nto override. See {@link shutterStyleOf}.",
+                    "enum": [
+                        "roll",
+                        "swing"
+                    ],
+                    "type": "string"
+                },
+                "sliderStyle": {
+                    "description": "Sliding openings only (`motion: \"slide\"`): how the panels are arranged.\n- `single` (default) — one panel slides aside into the wall.\n- `bypass` — two panels on parallel tracks; one slides behind the other\n  (patio-door style).\n- `biparting` — two panels meet in the middle and part, each recessing into\n  the wall on its own side (a pocket door / galandage).\n- `biparting-bypass` — the same two panels, but they stack over a fixed\n  panel at each jamb instead of vanishing into the wall (issue #145), so\n  nothing leaves the opening and at most its middle half ever clears. The\n  common patio / bay slider.\n- `converging` — two moving panels and nothing else (issue #145): they\n  travel *toward* each other and stack in the middle, clearing a quarter of\n  the opening at each jamb. The two-operable-leaf slider, and the mirror\n  image of `biparting-bypass` — where that one clears the middle, this\n  clears the ends.\nIgnored for swinging openings.",
+                    "enum": [
+                        "biparting",
+                        "biparting-bypass",
+                        "bypass",
+                        "converging",
+                        "single"
+                    ],
+                    "type": "string"
+                },
+                "tapTarget": {
+                    "description": "With both entities bound, which one the gestures lead with — the\nwindow/door itself (the default), or the shutter. The other one moves to\nhold. Meaningless with only one bound, since there is nothing to choose\nbetween.\n\nThe default is the opening because a tap is the gesture people make by\naccident and the shutter is real hardware that takes seconds to travel\n(issue #47). Naming the shutter here is the opposite of an accident, so\nthe choice is honoured — it opens the shutter's dialog rather than driving\nthe motor. Moving it on a tap is a further step, and stays with\n{@link tap_action}.",
+                    "enum": [
+                        "opening",
+                        "shutter"
+                    ],
+                    "type": "string"
+                },
+                "tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "Lovelace actions for the opening (issue #74 follow-up). Same shape as\n{@link FloorItem.tap_action}; an action's own `entity` picks which of\n`entity` / `shutterEntity` it acts on. Defaults: tap opens/toggles the\nprimary entity, hold shows more-info for the shutter when both are bound,\ndouble-tap does nothing. See {@link openingActionForGesture}."
+                },
+                "type": {
+                    "$ref": "#/definitions/OpeningType",
+                    "description": "The kind of opening: a `door` (single leaf) or a `window` (two leaves / glass)."
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "angle",
+                "id",
+                "length",
+                "type",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "OpeningType": {
+            "enum": [
+                "door",
+                "window"
+            ],
+            "type": "string"
+        },
+        "Record<string,unknown>": {
+            "type": "object"
+        },
+        "StateColorRule": {
+            "description": "One colour rule for {@link FloorItem.stateColor} / {@link Furniture.stateColor}.\n\nA rule matches either a numeric threshold (`above`) or an exact state\n(`state`); a rule with neither is the default. `state` covers non-numeric\nentities — a cover reading \"open\", a media player \"playing\" (issue #79) —\nwhile `above` covers readings like temperature or soil moisture (#68, #82).",
+            "properties": {
+                "above": {
+                    "description": "Applies when the numeric value is strictly greater.",
+                    "type": "number"
+                },
+                "color": {
+                    "type": "string"
+                },
+                "icon": {
+                    "description": "Icon to show while this rule matches (issue #106) — \"blinds open\" and\n\"blinds closed\" as two glyphs, not just two colours. Optional: a rule\nwithout one only changes the colour, exactly as before.\n\nOnly {@link FloorItem} reads this; furniture and areas share this rule\nshape but draw polygons, so an `icon` on their rules is ignored.",
+                    "type": "string"
+                },
+                "state": {
+                    "description": "Applies when the value equals this exactly (case-insensitive).",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "color"
+            ],
+            "type": "object"
+        },
+        "Tracker": {
+            "description": "A live position tracker driven by 1 or 2 distance sensors aimed along\northogonal axes. The user draws a rectangular tracked area on the floor\nplan and binds an HA distance entity to each axis; the card linearly\nmaps each sensor's `[min, max]` reading to the corresponding edge-to-edge\nspan of the rectangle.\n\nWith both sensors configured the card animates a pulsating triangle with\nripple rings at the resolved (x, y) inside the zone. With only one\nsensor configured it animates a faint pulsating line spanning the\nunknown axis (we know the target sits *somewhere* on that line).\n\nThe zone rectangle is visible only in the editor; the live card renders\nonly the tracked-object animation.",
+            "properties": {
+                "angle": {
+                    "description": "Rotation in degrees. Default 0.",
+                    "type": "number"
+                },
+                "color": {
+                    "description": "Marker / ripple color (CSS / hex). Falls back to the primary color.",
+                    "type": "string"
+                },
+                "dotSize": {
+                    "description": "Marker diameter in pixels. Default 14.",
+                    "type": "number"
+                },
+                "h": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "w": {
+                    "description": "Size in virtual units.",
+                    "type": "number"
+                },
+                "x": {
+                    "description": "Top-left in virtual units.",
+                    "type": "number"
+                },
+                "xSensor": {
+                    "$ref": "#/definitions/TrackerSensor",
+                    "description": "Distance sensor mapped to the X axis (rectangle's horizontal span)."
+                },
+                "y": {
+                    "type": "number"
+                },
+                "ySensor": {
+                    "$ref": "#/definitions/TrackerSensor",
+                    "description": "Distance sensor mapped to the Y axis (rectangle's vertical span)."
+                }
+            },
+            "required": [
+                "h",
+                "id",
+                "w",
+                "x",
+                "y"
+            ],
+            "type": "object"
+        },
+        "TrackerPresence": {
+            "description": "A presence / occupancy gate bound to a tracker sensor. `entity` is read as\na binary on/off state (with `invert` to flip inverted-logic sensors). When\nthe entity is `unavailable` / `unknown` we treat it as \"not detected\" —\nbetter to hide a possibly-stale marker than to leave it showing during a\nsensor outage.",
+            "properties": {
+                "entity": {
+                    "type": "string"
+                },
+                "invert": {
+                    "description": "Treat \"off\" / \"clear\" as detected (for inverted-logic sensors).",
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "entity"
+            ],
+            "type": "object"
+        },
+        "TrackerSensor": {
+            "description": "A single distance sensor mapping. `[min, max]` reading values map\nlinearly to the edge-to-edge span of the tracker rectangle along the\nsensor's axis. `invert: true` flips the mapping (max → min edge).\n\nOptionally a `presence` entity gates the marker: when any configured\npresence on the tracker reports \"not detected\" the animation is hidden\nentirely (the zone outline still shows in the editor). This handles the\ncommon case where a radar / mmWave device exposes both `sensor.*_distance`\nand `binary_sensor.*_occupancy` as siblings — gating on the latter\nsuppresses ghost markers when the room is empty.",
+            "properties": {
+                "entity": {
+                    "type": "string"
+                },
+                "invert": {
+                    "description": "Flip the mapping so that `max` corresponds to the near edge.",
+                    "type": "boolean"
+                },
+                "max": {
+                    "description": "Sensor reading when the target is at the \"far\" edge.",
+                    "type": "number"
+                },
+                "min": {
+                    "description": "Sensor reading when the target is at the \"near\" edge.",
+                    "type": "number"
+                },
+                "presence": {
+                    "$ref": "#/definitions/TrackerPresence",
+                    "description": "Optional binary entity (`binary_sensor.*`, `input_boolean`, etc.) whose\n\"not detected\" state hides the marker animation. When unset, the marker\nis never gated by presence — only by whether a distance reading is\navailable."
+                }
+            },
+            "required": [
+                "entity",
+                "max",
+                "min"
+            ],
+            "type": "object"
+        },
+        "Wall": {
+            "description": "A straight wall segment in virtual coordinate space.",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "thickness": {
+                    "description": "Stroke width in virtual units. Defaults to {@link WALL_THICKNESS}\n(render.ts) when unset, and clamped there (`wallThickness`) to at most\n`MAX_SKIN_WALL_WIDTH` (skins.ts): the doorway mask that cuts this wall's\nown doors and windows is sized off the shared `WALL_THICKNESS` constant,\nnot per-wall, so a wall drawn wider than that ceiling would not be fully\ncleared by its own opening. Raise the ceiling only alongside that mask.",
+                    "type": "number"
+                },
+                "x1": {
+                    "type": "number"
+                },
+                "x2": {
+                    "type": "number"
+                },
+                "y1": {
+                    "type": "number"
+                },
+                "y2": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "id",
+                "x1",
+                "x2",
+                "y1",
+                "y2"
+            ],
+            "type": "object"
+        }
+    },
+    "properties": {
+        "areas": {
+            "items": {
+                "$ref": "#/definitions/Area"
+            },
+            "type": "array"
+        },
+        "background": {
+            "description": "Canvas background color (CSS / hex). Falls back to the skin's paper, then the card background.",
+            "type": "string"
+        },
+        "defaultFloor": {
+            "description": "Id of the floor shown first. Falls back to the first floor.",
+            "type": "string"
+        },
+        "features": {
+            "$ref": "#/definitions/FeaturesConfig",
+            "description": "Opt-in live layers and editor conveniences. See {@link FeaturesConfig}."
+        },
+        "floors": {
+            "description": "Multi-floor data. When present and non-empty this is the source of truth.\nWhen absent, the legacy flat arrays below describe a single implicit floor\n(kept for backward compatibility with hand-written configs).",
+            "items": {
+                "$ref": "#/definitions/Floor"
+            },
+            "type": "array"
+        },
+        "furniture": {
+            "items": {
+                "$ref": "#/definitions/Furniture"
+            },
+            "type": "array"
+        },
+        "grid": {
+            "description": "Visible editor grid spacing in virtual units (purely a visual guide).",
+            "type": "number"
+        },
+        "height": {
+            "type": "number"
+        },
+        "index": {
+            "type": "number"
+        },
+        "items": {
+            "items": {
+                "$ref": "#/definitions/FloorItem"
+            },
+            "type": "array"
+        },
+        "openings": {
+            "items": {
+                "$ref": "#/definitions/Opening"
+            },
+            "type": "array"
+        },
+        "overlayScale": {
+            "description": "How the HTML overlay (badges, labels, room names, text) is sized.\n\n- **`fixed`** (default) — screen pixels, whatever size the card renders at.\n- **`plan`** — canvas units, so the overlay scales with the drawing exactly\n  as the SVG does.\n\n`fixed` is the historic behaviour and is right when the card renders at\nroughly its canvas size. It falls apart below that: a plan drawn at 980\nwide and rendered 510 wide draws every wall at half size while a 14px room\nname stays 14px, so labels collide with the badges and each other. `plan`\nmakes the two layers shrink together. Default stays `fixed` so no existing\ncard changes appearance on upgrade.",
+            "enum": [
+                "fixed",
+                "plan"
+            ],
+            "type": "string"
+        },
+        "pressEffect": {
+            "description": "What a device does when you press it (issue #134). Tapping used to change\nnothing on screen until the entity itself came back — which on a cover or\na slow bulb is long enough to wonder whether the tap registered at all.\n\nPlan-wide rather than per-device: it is a property of how the dashboard\nfeels, not of any one lamp, and a plan where half the devices answer\ndifferently would read as broken. Default {@link DEFAULT_PRESS_EFFECT}.\n\nApplies only to devices that actually *do* something — see\n{@link itemIsInteractive}. Feedback promising an action that never comes is\nworse than none.",
+            "enum": [
+                "flash",
+                "none",
+                "ripple",
+                "scale"
+            ],
+            "type": "string"
+        },
+        "rotation": {
+            "description": "Rotate the *displayed* card in 90° steps (issue #33), e.g. to show a\nlandscape plan on a portrait wall tablet. Coordinates stay unrotated —\nthe editor always shows the plan as drawn. Values other than\n0/90/180/270 are normalized (see normalizePlanRotation).",
+            "type": "number"
+        },
+        "showDeadSpaces": {
+            "description": "Hatch the plan's dead spaces (issue #88): every region the walls close off\ncompletely that no door or window opens onto — the void behind a boxed-in\nstairwell, a service shaft, the pocket left between two rooms.\n\nThere is nothing to place and nothing stored: the regions are derived from\nthe walls and openings on every render (see `src/dead-space.ts`), so\ncutting a doorway into a shaft stops it being dead the moment the door is\nplaced, and moving a wall moves the hatching with it.\n\nOff by default, and not because the detection is in doubt. A plan that\nmarks its doorways as plain gaps in the wall rather than with door symbols\nis a perfectly ordinary plan, and it is *also*, read literally, a house\nwith no way in — turning this on by default would hatch such a plan end to\nend on upgrade. Whether the walls tell the whole story is the author's call\nto make, so it is theirs to switch on.",
+            "type": "boolean"
+        },
+        "skin": {
+            "description": "Built-in skin id (issue #122), e.g. `odnetnin`, `pastel`, `tron`. Restyles\nthe whole plan at once — paper, walls, badges, accents — by supplying the\nfallbacks every element already reads.\n\nUnset (or an id we don't ship) means the default look, which follows the\nHome Assistant theme exactly as it always has. A skin only ever supplies\nfallbacks, so any colour set on an element itself still wins. See\n`src/skins.ts`.",
+            "type": "string"
+        },
+        "snap": {
+            "description": "Placement snap step in virtual (canvas) units. Tri-state:\n- **unset** — placement/drag/nudge snap to the visible `grid` (the default).\n- **`0`** — free placement (no snapping anywhere).\n- **`> 0`** — snap to this custom step (absolute units).\n\nThe editor presents a custom step as a percentage of the grid (e.g. `50` %\nof a `20` grid is stored here as `10`), but the stored value is always\nabsolute. Resolve with {@link resolveSnap}.",
+            "type": "number"
+        },
+        "sunBrightnessMax": {
+            "description": "Plan brightness in full daylight, 0-1. Default {@link DEFAULT_SUN_MAX}.",
+            "type": "number"
+        },
+        "sunBrightnessMin": {
+            "description": "Plan brightness once the sun is fully down, 0-1. Default\n{@link DEFAULT_SUN_MIN}. Not 0: a plan you cannot read at night is worse\nthan one that is merely dim.",
+            "type": "number"
+        },
+        "sunDimming": {
+            "description": "Follow the real sun (issue #113): dim the plan through dusk and brighten\nit through dawn, tracking the **Home Assistant instance's** own sunrise\nand sunset rather than the viewer's browser.\n\nDriven by `sun.sun`'s `elevation` attribute, which Home Assistant already\ncomputes continuously from the instance's latitude, longitude and clock.\nThat is the whole reason not to read timestamps and interpolate: elevation\nis the smooth signal, it comes from the server, and a phone in another\ntimezone showing the same dashboard sees the same picture.",
+            "type": "boolean"
+        },
+        "symbols": {
+            "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E",
+            "description": "Symbols this plan defines for itself (issue #90), keyed by id and merged\nover the shipped `furniture/` library — so you can draw a piece nobody has\ncontributed yet, use it today, and PR it later if it turns out to be\ngenerally useful.\n\nDeliberately typed loose: the values are untrusted geometry that\n`normalizeSymbol` validates on the way in, and a symbol that fails\nvalidation costs you that one glyph rather than the card. There is no\nmarkup here to sanitise — see `symbols.ts`."
+        },
+        "texts": {
+            "items": {
+                "$ref": "#/definitions/FloorText"
+            },
+            "type": "array"
+        },
+        "title": {
+            "type": "string"
+        },
+        "trackers": {
+            "items": {
+                "$ref": "#/definitions/Tracker"
+            },
+            "type": "array"
+        },
+        "type": {
+            "type": "string"
+        },
+        "view_index": {
+            "type": "number"
+        },
+        "walls": {
+            "items": {
+                "$ref": "#/definitions/Wall"
+            },
+            "type": "array"
+        },
+        "width": {
+            "description": "Virtual canvas size; the SVG viewBox uses these. Drawing is resolution-independent.",
+            "type": "number"
+        }
+    },
+    "required": [
+        "height",
+        "type",
+        "width"
+    ],
+    "type": "object"
+}
+
