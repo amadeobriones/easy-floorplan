@@ -1,5 +1,50 @@
 # Upstream sync log
 
+## v1.5.4.ab001 — merged upstream v1.5.4
+
+Upstream released `v1.5.4`, 48 commits ahead of the `v1.4.1` base this fork was rebuilt on. This
+release merges that work in rather than rebuilding again.
+
+### Why a merge was possible this time
+
+The previous release rebuilt the fork because a trial merge produced 16 conflicting files including
+whole-file add/add collisions. That reflected how large the fork's delta had grown, not something
+permanent: after the rebuild the delta is roughly 1,030 lines across five shared files, and a trial
+merge against `v1.5.4` produced 10 conflicts with no add/add collisions. None of them touched the
+fork's own modules — the conflicts were confined to the five shared files the fork hooks into, plus
+their tests and packaging. Merging keeps a single continuous history.
+
+Nothing was dropped: none of the fork's four features were re-implemented upstream in this range.
+
+### What upstream brings
+
+- **Sunlight**, substantially reworked: radial falloff and a penumbra, per-opening gradients, a
+  bounded reach on a slider, and fixes where the falloff was never drawn and where turning shade off
+  removed the softness.
+- **Stairs are clickable** to change floor.
+- **Editor**: the plan can be applied to the dashboard without closing the editor, and every element
+  panel's fields are now organised into collapsible groups that start collapsed.
+- **Openings read locks**, rooms answer tap/hold/double-tap actions, and a lock jam no longer reads
+  as an open door.
+- Ripple from vibration sensors; entities can be bound to a device without being printed on its
+  label; the overlay-scale default applies to new configs only.
+
+### How the fork adapted
+
+- `render.ts`: upstream replaced the single `secondaryEntity` watch with a generalised
+  `itemReadings()` loop that subsumes it. The fork's separate watch on a state rule's own `entity`
+  is kept alongside it — both are needed, or a label updates only when something else on the plan
+  happens to change.
+- `editor.ts`: the fork's two per-element layer bindings were moved into upstream's new groups. A
+  device's power sensor and a room's temperature sensor are both readings, so both now sit under
+  "What it reads" alongside the element's own entity.
+- Tests: collapsed groups render no content at all, so fork DOM tests that assert on a grouped field
+  now open the group first. Without that, a field being absent from the DOM is indistinguishable
+  from the feature not offering it.
+- `js-yaml` remains a runtime dependency of the fork. Upstream carries it as a devDependency because
+  it does not ship it; the fork's `validate.ts` imports it into the bundle.
+
+
 ## v1.4.1.ab001 — rebuilt on upstream v1.4.1
 
 This fork was previously based on upstream `0.7.4`. Upstream then released `v1.4.1`, 56 commits
@@ -77,6 +122,7 @@ Always-on additions:
 | `v0.7.109` (previous fork release) | 355,204 |
 | upstream `v1.4.1`, no fork code | 362,113 |
 | `v1.4.1.ab001` | 455974 |
+| `v1.5.4.ab001` | 519203 |
 
 The increase over the previous fork release is driven by upstream's own growth between `0.7.4` and
 `v1.4.1` — skins, dead-space hatching, user-definable symbols, light pools, sun dimming, areas and
