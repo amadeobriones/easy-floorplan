@@ -1,5 +1,22 @@
 # Upstream sync log
 
+## v1.5.4.ab002 — climate layer: Fahrenheit readings
+
+No upstream change; a fork fix on top of `v1.5.4.ab001`.
+
+The climate layer maps a room's temperature onto a Celsius range (16 / 21 / 27) and read the
+entity's state at face value. A Fahrenheit reading is therefore always past the maximum, and the
+gradient clamps — so in a Fahrenheit home *every* shaded room painted the identical hot red. The
+layer looked broken rather than miscalibrated, and there is no range setting to compensate with.
+
+Home Assistant publishes the unit on the entity, so it is now read: a `°F` reading is converted to
+Celsius before it is mapped. `°C`, kelvin, and a bare number from a template sensor are unchanged —
+all still taken as Celsius, which is what the layer assumed from the start.
+
+Found while binding real per-room sensors: all four ambient sensors in the test home report `°F`,
+and all four would have rendered the same colour.
+
+
 ## v1.5.4.ab001 — merged upstream v1.5.4
 
 Upstream released `v1.5.4`, 48 commits ahead of the `v1.4.1` base this fork was rebuilt on. This
