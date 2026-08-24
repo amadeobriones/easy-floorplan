@@ -30,6 +30,13 @@ jobs:
         uses: hacs/action@main
         with:
           category: plugin
+          # Fork-local: this fork is installed as a custom HACS repository, not
+          # submitted to the default store, and it deliberately keeps GitHub
+          # Issues closed — upstream is where bugs in the shared code belong.
+          # Without this the job fails forever on a setting we have chosen, and
+          # a permanently red check is one nobody reads. Every other HACS check
+          # still runs, including hacs.json, images and the plugin structure.
+          ignore: issues
 
   build:
     runs-on: ubuntu-latest
