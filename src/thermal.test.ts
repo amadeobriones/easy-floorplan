@@ -9,7 +9,12 @@ import {
 import type { Area, Floor, RenderHass, FloorplanCardConfig } from "./types";
 import { LIVE_LAYERS, enabledLayers, layerWatchedEntities } from "./layers";
 
-function fakeHass(states: Record<string, { state: string }>): RenderHass {
+/** The neutral mid-range colour, as tempColor emits it. */
+const NEUTRAL_RGB_CSS = "176, 190, 197";
+
+function fakeHass(
+  states: Record<string, { state: string; attributes?: Record<string, unknown> }>
+): RenderHass {
   return { states, formatEntityState: (s: { state: string }) => s.state } as unknown as RenderHass;
 }
 
@@ -171,5 +176,44 @@ describe("thermalLayer registration", () => {
     const on = { ...cfg, features: { thermalLayer: true } };
     expect(enabledLayers(on).some((l) => l.id === "thermalLayer")).toBe(true);
     expect(layerWatchedEntities(on).has("sensor.living_temp")).toBe(true);
+  });
+});
+
+describe("THERMAL_LAYER — Fahrenheit readings (the layer's scale is Celsius)", () => {
+  const room = (tempEntity: string): Area => ({
+    id: "r",
+    points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }],
+    tempEntity,
+  });
+  const paint = (state: string, unit?: string) => {
+    const hass = fakeHass({
+      "sensor.t": { state, ...(unit ? { attributes: { unit_of_measurement: unit } } : {}) },
+    });
+    return JSON.stringify(
+      THERMAL_LAYER.render({ floor: fakeFloor([room("sensor.t")]), hass, config: {} as FloorplanCardConfig })
+    );
+  };
+
+  it("converts °F to °C rather than reading the number as Celsius", () => {
+    // 69.8°F is exactly the 21°C comfort midpoint, so it must paint the neutral
+    // grey. Read as "69.8 Celsius" it would clamp to the 27 maximum and come out
+    // fully red -- which is what every Fahrenheit household saw before.
+    expect(paint("69.8", "°F")).toContain(`rgb(${NEUTRAL_RGB_CSS})`);
+  });
+
+  it("does not paint every warm-ish °F room the same red", () => {
+    // 72.7 / 77.2 / 80.0 are three real readings from one home. As Celsius all
+    // three clamp to max and are indistinguishable; as Fahrenheit they are
+    // 22.6 / 25.1 / 26.7 and must differ.
+    const seen = new Set([paint("72.7", "°F"), paint("77.2", "°F"), paint("80.0", "°F")]);
+    expect(seen.size).toBe(3);
+  });
+
+  it("still treats a °C reading as Celsius", () => {
+    expect(paint("21", "°C")).toContain(`rgb(${NEUTRAL_RGB_CSS})`);
+  });
+
+  it("treats a reading with no unit as Celsius, as before", () => {
+    expect(paint("21")).toContain(`rgb(${NEUTRAL_RGB_CSS})`);
   });
 });

@@ -81,11 +81,26 @@ export function renderThermalOverlay(
  * (see the `numeric` guard inside matchStateRuleWith in src/render.ts, which
  * likewise refuses to match a threshold rule against a non-numeric reading)
  * rather than reading an outage as 0. */
+/**
+ * A room's temperature **in Celsius**, which is the only scale this layer's
+ * range speaks ({@link DEFAULT_THERMAL_RANGE} is 16/21/27).
+ *
+ * The unit matters because the gradient clamps: a Fahrenheit reading taken at
+ * face value is always past the 27 maximum, so every room in a Fahrenheit home
+ * painted the same flat red and the layer looked broken rather than wrong. HA
+ * gives the unit on the entity, so read it instead of assuming the house is
+ * metric.
+ */
 function numericReading(hass: RenderHass | undefined, entityId: string): number | undefined {
-  const state = hass?.states[entityId]?.state;
-  if (state === undefined) return undefined;
-  const n = Number(state);
-  return Number.isFinite(n) ? n : undefined;
+  const entity = hass?.states[entityId];
+  if (entity?.state === undefined) return undefined;
+  const n = Number(entity.state);
+  if (!Number.isFinite(n)) return undefined;
+  const unit = (entity as { attributes?: Record<string, unknown> }).attributes?.unit_of_measurement;
+  // Only °F is converted. Anything else -- °C, K, a bare number from a template
+  // sensor -- is taken as Celsius, which is what this layer assumed all along.
+  if (typeof unit === "string" && /^\s*°?\s*F\s*$/i.test(unit)) return ((n - 32) * 5) / 9;
+  return n;
 }
 
 /**
