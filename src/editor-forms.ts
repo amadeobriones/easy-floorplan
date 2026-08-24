@@ -7,7 +7,6 @@
  */
 import type {
   Area,
-  BadgeEntity,
   Floor,
   FloorItem,
   FloorText,
@@ -38,24 +37,32 @@ import {
   DEFAULT_SUN_MIN,
   DEFAULT_SUN_MAX,
   DEFAULT_PRESS_EFFECT,
+  DEFAULT_OFFLINE_STYLE,
 } from "./types";
 import {
   DEFAULT_LABEL_SIZE,
   WALL_THICKNESS,
   badgeContentOf,
   domainIconAnimation,
-  isPresenceEntity,
+  isRippleEntity,
   normalizeOverlayScale,
   normalizePlanRotation,
   openingActionForGesture,
   openingMotion,
-  openingHasTwoPanels,
-  sliderStyleHasTwoPanels,
+  openingHasTwoLeaves,
+  sliderStyleHasTwoLeaves,
   pressEffectOf,
+  labelPositionOf,
+  itemReadings,
+  badgeEntityIndex,
+  offlineStyleOf,
   sliderStyleOf,
   shutterStyleOf,
+  DEFAULT_SUN_BEARING,
+  SUN_REACH,
   openingSash,
   defaultSash,
+  openingIsGlazed,
 } from "./render";
 import { defaultItemAction } from "./actions";
 import { DEFAULT_SKIN, SKINS, findSkin, MAX_SKIN_WALL_WIDTH } from "./skins";
@@ -141,6 +148,48 @@ export interface FormSpec {
 
 const identity = (patch: Record<string, unknown>) => patch;
 
+/**
+ * What an opening's leaf can be bound to.
+ *
+ * `lock` joined with issue #176: a door with a smart lock and no contact
+ * sensor knows perfectly well whether it is shut, and `locked` / `unlocked` is
+ * the domain's way of saying so. See `resolveOpeningOpen`, which reads those
+ * states through the same domain table the badges use.
+ *
+ * The shutter's picker is deliberately *not* this list — a shutter is a cover
+ * or a reed contact, and a lock on one would not mean anything.
+ */
+const OPENING_ENTITY_DOMAINS = ["binary_sensor", "cover", "lock"] as const;
+
+/**
+ * The named fields of `spec`, in the order given, sharing its data and its
+ * `toPatch` — one group of a panel that is otherwise one form.
+ *
+ * The device panel was split into real per-group specs because its groups
+ * interleave with hand-rolled rows and each group's patch logic was separable.
+ * The other elements are not like that: an opening's `toPatch` is one chain of
+ * interdependent clears (drop the shutter, and its style, side, invert, badge
+ * and second contact go with it), and cutting that into six pieces to gain a
+ * heading would be trading a real invariant for a cosmetic one.
+ *
+ * So grouping them is presentation only. Every group renders the same `data`
+ * and the same `toPatch`; only the visible field list differs. `ha-form` reads
+ * just the keys in its own schema, and `diffFormValue` diffs against the slice,
+ * so a group cannot emit a key it does not show.
+ *
+ * A field named here that the spec did not produce is skipped — the forms are
+ * conditional, and a group asking for "shutterStyle" on an opening with no
+ * shutter should render nothing rather than crash. The reverse (a field the
+ * spec produced that no group names) would silently hide a control, which is
+ * why `everyFieldIsGrouped` in the tests exists.
+ */
+export function formSlice(spec: FormSpec, names: readonly string[]): FormSpec {
+  const fields = names
+    .map((n) => spec.fields.find((f) => f.name === n))
+    .filter((f): f is FormField => !!f);
+  return { fields, data: spec.data, toPatch: spec.toPatch };
+}
+
 const angleField = (): FormField => ({
   name: "angle",
   label: "Angle",
@@ -181,7 +230,7 @@ export function furnitureLabel(type: string, catalog: SymbolCatalog = BUILTIN_SY
 export function openingForm(o: Opening, featuresOf: (entityId: string) => number = () => 0): FormSpec {
   const motion = openingMotion(o);
   const style = sliderStyleOf(o);
-  const twoPanels = openingHasTwoPanels(o);
+  const twoLeaves = openingHasTwoLeaves(o);
   const fields: FormField[] = [
     { name: "type", label: "Type", selector: dropdown(opt("door", "Door"), opt("window", "Window")) },
     {
@@ -190,7 +239,10 @@ export function openingForm(o: Opening, featuresOf: (entityId: string) => number
       selector: dropdown(
         opt("swing", "Swing"),
         opt("slide", "Slide"),
-        opt("roll", "Roll up (garage / shutter)")
+        // Not "garage / shutter": an external shutter is the Shutter field
+        // below, a layer over any opening, and naming it here read as the
+        // place to set one up.
+        opt("roll", "Roll up (garage)")
       ),
     },
     { name: "length", label: "Length", required: true, selector: { number: { min: 1, mode: "box" } } },
@@ -211,6 +263,26 @@ export function openingForm(o: Opening, featuresOf: (entityId: string) => number
         : dropdown(opt("double", "Double (two leaves)"), opt("single", "Single sash")),
     });
   }
+  // Glass, for a door. A window never needs asking, and the only thing that
+  // reads it is the sunlight — a patio door left opaque keeps the sunniest
+  // side of a house dark.
+  if (o.type === "door") {
+    fields.push({
+      name: "glazed",
+      label: "Glazed",
+      helper: "Lets sunlight through even when shut — a patio or French door",
+      selector: { boolean: {} },
+    });
+  }
+  // The way out of "the plan draws it open, so the sun comes in" (issue #177).
+  // Offered on every opening rather than only the unbound ones: a sensor can
+  // say a door is open without the author wanting daylight through it.
+  fields.push({
+    name: "sunlight",
+    label: "Lets sunlight in",
+    helper: "Off makes it wall to the sun — for a solid door the plan draws open",
+    selector: { boolean: {} },
+  });
   // Hinge applies to anything with ONE hinged leaf. A double is hinged at both
   // jambs, so there is no side left to choose.
   if (motion === "swing" && openingSash(o) === "single") {
@@ -230,7 +302,7 @@ export function openingForm(o: Opening, featuresOf: (entityId: string) => number
   if (motion === "slide") {
     // A two-panel slider moves both ways at once, so there is no direction to
     // pick — `flipH` only swaps which panel each sensor drives (issue #145).
-    if (!twoPanels) {
+    if (!twoLeaves) {
       fields.push({
         name: "slide",
         label: "Slide",
@@ -252,20 +324,24 @@ export function openingForm(o: Opening, featuresOf: (entityId: string) => number
   fields.push({
     name: "entity",
     label: "Entity",
-    helper: twoPanels
-      ? "Drives the first panel; type and motion follow its device class"
-      : "Type and motion follow the entity's device class",
-    selector: { entity: { filter: [{ domain: ["binary_sensor", "cover"] }] } },
+    // Says locks are usable, because nothing else would: a lock is neither a
+    // contact nor a cover, and its states are `locked` / `unlocked` rather
+    // than anything that looks like open/closed (issue #176).
+    helper: twoLeaves
+      ? "Contact, cover or lock. Drives the first leaf; type and motion follow its device class"
+      : "Contact, cover or lock — a lock reads unlocked as open. Type and motion follow its device class",
+    selector: { entity: { filter: [{ domain: OPENING_ENTITY_DOMAINS }] } },
   });
-  // One sensor per leaf (issue #145). Only a two-panel style has a second
-  // moving panel to drive, and only once the first is bound — a slider whose
-  // *second* panel alone has a sensor would be more confusing than useful.
-  if (twoPanels && o.entity) {
+  // One sensor per leaf (issues #145, #159). Only a two-leaved opening has a
+  // second leaf to drive — a two-panel slider, or a hinged double — and only
+  // once the first is bound: an opening whose *second* leaf alone has a sensor
+  // would be more confusing than useful.
+  if (twoLeaves && o.entity) {
     fields.push({
       name: "secondaryEntity",
-      label: "Second panel",
-      helper: "Its own sensor for the other panel — leave empty to move both together",
-      selector: { entity: { filter: [{ domain: ["binary_sensor", "cover"] }] } },
+      label: "Second leaf",
+      helper: "Its own sensor for the other leaf — leave empty to move both together",
+      selector: { entity: { filter: [{ domain: OPENING_ENTITY_DOMAINS }] } },
     });
   }
   // Offered on doors too: French doors and patio doors get shutters as well.
@@ -295,13 +371,62 @@ export function openingForm(o: Opening, featuresOf: (entityId: string) => number
         selector: dropdown(opt("far", "Away from the sash"), opt("near", "Same side as the sash")),
       });
     }
+    // One contact per shutter panel (issue #159), on the same terms as the
+    // opening's own second leaf above: only a hinged pair *has* a second panel
+    // — a roll curtain is one piece — and only once the first is bound.
+    if (shutterStyleOf(o) === "swing") {
+      fields.push({
+        name: "shutterSecondaryEntity",
+        label: "Second shutter panel",
+        helper: "Its own contact for the other panel — leave empty to fold both together",
+        selector: { entity: { filter: [{ domain: ["binary_sensor", "cover"] }] } },
+      });
+    }
     // Its own switch, not the opening's: a reed contact on a hinged shutter
     // routinely reads `on` when the panels are shut, while the window behind
-    // it reads the other way round.
-    fields.push({ name: "shutterInvert", label: "Invert shutter", selector: { boolean: {} } });
+    // it reads the other way round. Both switches say which animation they
+    // invert, because with a shutter bound they sit one above the other and
+    // "Invert" / "Invert shutter" left you guessing which was which.
+    fields.push({
+      name: "shutterInvert",
+      label: "Invert shutter animation",
+      selector: { boolean: {} },
+    });
   }
-  if (o.entity) fields.push({ name: "invert", label: "Invert", selector: { boolean: {} } });
+  // Named after what it flips — the opening's own leaf, which is a door or a
+  // sash depending on what this is, the same way Leaves / Sashes above.
+  if (o.entity)
+    fields.push({
+      name: "invert",
+      label: o.type === "door" ? "Invert door animation" : "Invert window animation",
+      selector: { boolean: {} },
+    });
   fields.push(angleField());
+  // The opening's own badge (issue #154 follow-up). Offered for any bound
+  // opening, but sold on the case that needs it: a raised roll-up has nothing
+  // left on the plan but a coloured line.
+  if (o.entity) {
+    fields.push({
+      name: "showIcon",
+      label: "Show icon",
+      helper:
+        openingMotion(o) === "roll"
+          ? "A raised roll-up leaves only a line — this puts its state beside it, and opens its dialog when tapped"
+          : "Shows this opening's state beside it, and opens its dialog when tapped",
+      selector: { boolean: {} },
+    });
+    // Same bargain as the shutter's: only worth asking once the badge is
+    // drawn, and an override trades the entity's open/closed pair for one
+    // glyph, so it is not the default.
+    if (o.showIcon) {
+      fields.push({
+        name: "icon",
+        label: "Icon",
+        helper: "Overrides the entity's own icon, which changes with its state",
+        selector: { icon: {} },
+      });
+    }
+  }
   // With both bound, which one a press leads with. Only a real question when
   // there are two entities to choose between — and the reason it exists: the
   // shutter used to be reachable by hold alone, which is not discoverable and
@@ -383,12 +508,17 @@ export function openingForm(o: Opening, featuresOf: (entityId: string) => number
       sash: openingSash(o),
       entity: o.entity ?? "",
       secondaryEntity: o.secondaryEntity ?? "",
+      glazed: openingIsGlazed(o),
+      sunlight: o.sunlight ?? true,
       shutterEntity: o.shutterEntity ?? "",
+      shutterSecondaryEntity: o.shutterSecondaryEntity ?? "",
       shutterStyle: shutterStyleOf(o),
       shutterSide: o.shutterFlipV ? "near" : "far",
       shutterInvert: o.shutterInvert ?? false,
       showShutterIcon: o.showShutterIcon ?? true,
       shutterIcon: o.shutterIcon ?? "",
+      showIcon: o.showIcon ?? false,
+      icon: o.icon ?? "",
       tapTarget: o.tapTarget ?? "opening",
       invert: o.invert ?? false,
       angle: o.angle,
@@ -409,6 +539,9 @@ export function openingForm(o: Opening, featuresOf: (entityId: string) => number
             out.shutterFlipV = undefined;
             out.shutterInvert = undefined;
             out.shutterActiveColor = undefined;
+            // Including the other panel's contact (issue #159): a shutter that
+            // isn't there has no second panel.
+            out.shutterSecondaryEntity = undefined;
             // Nothing left to lead with, so the choice goes too — otherwise it
             // would silently point the tap at the next shutter bound here.
             out.tapTarget = undefined;
@@ -416,25 +549,65 @@ export function openingForm(o: Opening, featuresOf: (entityId: string) => number
             out.showShutterIcon = undefined;
             out.shutterIcon = undefined;
           }
+        } else if (k === "sunlight") {
+          // On is the default, so only "off" is worth writing down.
+          out.sunlight = v ? undefined : false;
+        } else if (k === "glazed") {
+          // A window is glass whatever this says, so only a door's answer is
+          // worth keeping — and only when it differs from its type's default.
+          out.glazed = o.type === "door" && v ? true : undefined;
+        } else if (k === "entity") {
+          out.entity = v;
+          // The badge and its glyph only mean something with an entity to
+          // badge, exactly as the shutter's pair above. Left behind, they
+          // would reappear on whatever gets bound here next.
+          if (!v) {
+            out.showIcon = undefined;
+            out.icon = undefined;
+          }
         } else if (k === "shutterSide") out.shutterFlipV = v === "near" || undefined;
         else if (k === "shutterInvert") out.shutterInvert = v || undefined;
         // The opening is the default, so it stays out of the YAML.
         else if (k === "tapTarget") out.tapTarget = v === "shutter" ? "shutter" : undefined;
         // Shown is the default: only "off" is worth writing down.
         else if (k === "showShutterIcon") out.showShutterIcon = v ? undefined : false;
+        // The opening's badge defaults the other way round, so only "on" is.
+        // Switching it off takes the glyph with it: kept, it would silently
+        // reapply the next time someone turned the badge back on.
+        else if (k === "showIcon") {
+          out.showIcon = v ? true : undefined;
+          if (!v) out.icon = undefined;
+        }
         else if (k === "motion") {
-          out.motion = v === "slide" || v === "roll" ? v : undefined;
+          const motion = v === "slide" || v === "roll" ? (v as "slide" | "roll") : undefined;
+          out.motion = motion;
           // sliderStyle only applies while sliding — drop it when switching
-          // away, and with it the second panel's sensor (issue #145).
-          if (v !== "slide") {
-            out.sliderStyle = undefined;
+          // away (issue #145).
+          if (v !== "slide") out.sliderStyle = undefined;
+          // The second leaf's sensor goes only if the opening this *becomes*
+          // has no second leaf. Asked of the result rather than of the motion,
+          // because since issue #159 a hinged double has one too: a two-sensor
+          // slider turned into a casement pair keeps both contacts.
+          if (!openingHasTwoLeaves({
+            ...o,
+            motion,
+            sliderStyle: v === "slide" ? o.sliderStyle : undefined,
+          } as Opening))
             out.secondaryEntity = undefined;
-          }
         } else if (k === "sash") {
           // The two types default the other way round — a window opens with
           // two sashes, a door with one leaf — so only the value that is *not*
           // this type's default is worth writing down.
           out.sash = v === defaultSash(o.type) ? undefined : v;
+          // Dropping to one leaf leaves nothing for the second sensor to
+          // drive (issue #159).
+          if (!openingHasTwoLeaves({ ...o, sash: v as "single" | "double" } as Opening))
+            out.secondaryEntity = undefined;
+        } else if (k === "shutterStyle") {
+          out.shutterStyle = v;
+          // Only a hinged pair has a second panel — a roll curtain is one
+          // piece — so switching to slats drops its contact (issue #159).
+          if (v !== "swing") out.shutterSecondaryEntity = undefined;
         }
         else if (k === "hinge" || k === "slide") out.flipH = v === "right" || undefined;
         else if (k === "opens") out.flipV = v === "other" || undefined;
@@ -442,7 +615,7 @@ export function openingForm(o: Opening, featuresOf: (entityId: string) => number
           out.sliderStyle = v === "single" ? undefined : v;
           // Only a two-panel style has a second moving panel to bind. Asked of
           // the style itself, so a style added later can't be forgotten here.
-          if (!sliderStyleHasTwoPanels(v as SliderStyle)) out.secondaryEntity = undefined;
+          if (!sliderStyleHasTwoLeaves(v as SliderStyle)) out.secondaryEntity = undefined;
         }
         else if (k === "invert") out.invert = v || undefined;
         else out[k] = v;
@@ -564,7 +737,7 @@ function badgeModePatch(mode: BadgeMode, ripple: boolean): Record<string, unknow
 
 /**
  * What the badge is reading *right now*, for the "Badge reads" row (issue
- * #136). Resolved off `hass` at the call site, like {@link itemForm}'s
+ * #136). Resolved off `hass` at the call site, like {@link itemEffectsForm}'s
  * `deviceClass`, because this file stays pure.
  *
  * `source` is load-bearing rather than cosmetic. A plug whose badge shows its
@@ -574,10 +747,12 @@ function badgeModePatch(mode: BadgeMode, ripple: boolean): Record<string, unknow
  * and drop the reading to an icon.
  */
 export interface BadgeSourceInfo {
-  source: BadgeEntity;
+  /** Where the badge's number is coming from right now. */
+  source: "primary" | number;
   /** Friendly names, falling back to the entity ids when hass has none. */
   primaryLabel?: string;
-  secondaryLabel?: string;
+  /** One per reading, positionally, so the dropdown can name each. */
+  readingLabels?: (string | undefined)[];
 }
 
 /**
@@ -629,55 +804,142 @@ export function stateColorRuleModePatch(
 }
 
 /**
- * `deviceClass` is the entity's HA device class, the one hass-derived fact the
- * device form needs: it is what separates a motion sensor from a door contact,
- * and so decides whether the ripple ring is offered at all (issue #127). The
- * editor reads it off `hass` at the call site, as it already does for openings.
- * `badgeSource` is the second such fact — see {@link BadgeSourceInfo}.
+ * The device's own entity and attribute — the first reading, and the one
+ * `showState` governs.
+ *
+ * Its own group so the editor can slot the repeatable "Other entities" rows
+ * *directly beneath it* (issue #180), which is where the old "Second entity" /
+ * "2nd attribute" pair used to sit. Everything a device reads is then in one
+ * place and in the order it appears on the label, rather than the second
+ * reading being a form field and the third onwards being a list further down.
  */
-export function itemForm(
-  it: FloorItem,
-  areaScope?: AreaEntityScope,
-  deviceClass?: string,
-  badgeSource?: BadgeSourceInfo
-): FormSpec {
-  const ripple = itemHasRipple(it);
-  const presence = isPresenceEntity(it.entity, deviceClass);
+export function itemEntityForm(it: FloorItem, areaScope?: AreaEntityScope): FormSpec {
+  return {
+    fields: [
+      {
+        name: "entity",
+        label: "Entity",
+        required: true,
+        helper: areaScopeHelper(areaScope),
+        selector: areaScopedEntity(areaScope, it.entity),
+      },
+      {
+        name: "attribute",
+        label: "Attribute",
+        helper: "Show this attribute instead of the state (e.g. current_temperature)",
+        selector: { attribute: { entity_id: it.entity } },
+      },
+    ],
+    data: { entity: it.entity ?? "", attribute: it.attribute ?? "" },
+    toPatch: identity,
+  };
+}
+
+// ---- the device panel, in groups (issue #180 follow-up) --------------------
+//
+// A section header rather than a doc comment: it describes the seven functions
+// below rather than any one of them, and the repo spells that with a banner.
+//
+// It had grown to two dozen controls in one flat run — Name between Attribute
+// and Badge shows, Show state eleven rows below the entity it describes — and
+// the order was the order things had been added in rather than any order you
+// would look for them in. So the panel is now seven groups, each rendered with
+// its own heading and rule by the editor, and each of these functions is one
+// of them.
+//
+// They are separate `FormSpec`s rather than one form with dividers because the
+// hand-rolled rows (the readings list, the icon, the colour pickers) have to
+// interleave with the `ha-form` fields, and `ha-form` renders one flat block.
+// Same reason {@link areaNameForm} and {@link areaForm} are two.
+//
+// Group order, and the reasoning:
+//
+// 1. **Identity** — Name, Show name. What the thing *is*, and it is the first
+//    question anyone answers.
+// 2. **What it reads** — Entity, Attribute, Show state, then the other
+//    entities. Show state sits with the entity whose state it shows.
+// 3. **Label** — position and size, offered only while a label renders.
+// 4. **Badge** — the circle: what it holds, which reading, its glyph and size.
+// 5. **Colour** — the active colour and the state rules that supersede it.
+// 6. **Effects** — ripple and cast light, each offered only where it means
+//    something.
+// 7. **Behaviour** — when it is drawn at all, and what a press does.
+//
+
+/** Group 1: what this device is called. */
+export function itemIdentityForm(it: FloorItem): FormSpec {
+  return {
+    fields: [
+      { name: "name", label: "Name", selector: { text: {} } },
+      {
+        name: "showName",
+        label: "Show name",
+        helper: "Adds the name to the label line",
+        selector: { boolean: {} },
+      },
+    ],
+    data: { name: it.name ?? "", showName: it.showName ?? false },
+    toPatch: identity,
+  };
+}
+
+/**
+ * Group 2, second half: whether the device's own state joins the label.
+ *
+ * Its own one-field spec so the editor can put it directly under the entity
+ * and attribute it describes, with the readings list below it — the whole of
+ * "what this device reads", in the order the label prints it.
+ */
+export function itemShowStateForm(it: FloorItem): FormSpec {
+  return {
+    fields: [
+      {
+        name: "showState",
+        label: "Show state",
+        helper: "Adds this entity's own state to the label line",
+        selector: { boolean: {} },
+      },
+    ],
+    data: { showState: it.showState ?? it.kind === "sensor" },
+    toPatch: identity,
+  };
+}
+
+/** Group 3: where the label sits and how big it is. */
+export function itemLabelForm(it: FloorItem): FormSpec {
+  return {
+    fields: [
+      {
+        name: "labelPosition",
+        label: "Label position",
+        helper: "Beside the badge instead of under it — a long reading then grows one way only",
+        selector: dropdown(opt("below", "Below"), opt("left", "Left"), opt("right", "Right")),
+      },
+      {
+        name: "labelSize",
+        label: "Label size",
+        selector: { number: { min: 8, max: 40, step: 1, mode: "slider", unit_of_measurement: "px" } },
+      },
+    ],
+    data: {
+      labelPosition: labelPositionOf(it),
+      labelSize: it.labelSize ?? DEFAULT_LABEL_SIZE,
+    },
+    // Below is the default, so it stays out of the YAML.
+    toPatch: (p) =>
+      "labelPosition" in p && p.labelPosition === "below" ? { ...p, labelPosition: undefined } : p,
+  };
+}
+
+/**
+ * Group 4: the badge — what it holds, which reading, and how big it is.
+ *
+ * `badgeSource` is a hass-derived fact resolved at the call site rather than
+ * here: what the badge is reading *right now*, so "Badge reads" can open on it
+ * instead of on a guess. See {@link BadgeSourceInfo}.
+ */
+export function itemBadgeForm(it: FloorItem, badgeSource?: BadgeSourceInfo): FormSpec {
   const fields: FormField[] = [
-    {
-      name: "entity",
-      label: "Entity",
-      required: true,
-      helper: areaScopeHelper(areaScope),
-      selector: areaScopedEntity(areaScope, it.entity),
-    },
-    {
-      name: "attribute",
-      label: "Attribute",
-      helper: "Show this attribute instead of the state (e.g. current_temperature)",
-      selector: { attribute: { entity_id: it.entity } },
-    },
-    {
-      name: "secondaryEntity",
-      label: "Second entity",
-      helper: areaScopeHelper(areaScope, "Shown next to the primary state"),
-      selector: areaScopedEntity(areaScope, it.secondaryEntity),
-    },
-    {
-      name: "secondaryAttribute",
-      label: "2nd attribute",
-      helper: "From the second entity, or this entity if none",
-      selector: { attribute: { entity_id: it.secondaryEntity || it.entity } },
-    },
-    // The icon is *not* here: it sits by the state rules that can override it
-    // (issue #127), rendered by the editor next to them.
-    { name: "name", label: "Name", selector: { text: {} } },
-    {
-      name: "size",
-      label: "Size",
-      selector: { number: { min: 16, max: 160, step: 2, mode: "slider", unit_of_measurement: "px" } },
-    },
-    angleField(),
     {
       name: "badgeMode",
       label: "Badge shows",
@@ -692,34 +954,102 @@ export function itemForm(
       ),
     },
   ];
-  // Which entity the value comes from (issue #136) — offered only where it is
-  // a real question: the badge has to be showing a value, and the device has
-  // to have a second entity to choose between. Most devices never see this.
+  // Which reading the value comes from (issue #136) — offered only where it is
+  // a real question: the badge has to be showing a value, and the device has to
+  // have more than one reading to choose between. Most devices never see this.
   //
   // The options name the entities rather than offering an "Automatic", the
-  // precedent from #127's dropdown above: "auto" is a fact about the config
-  // format, not about what the user is looking at.
-  if (badgeModeOf(it) === "value" && it.secondaryEntity) {
+  // precedent from #127's dropdown: "auto" is a fact about the config format,
+  // not about what the user is looking at. One option per reading, not just
+  // "the second one" — a plug showing power, link quality and battery can badge
+  // whichever it likes (issue #180).
+  const readings = itemReadings(it);
+  if (badgeModeOf(it) === "value" && readings.length) {
     fields.push({
       name: "badgeEntity",
       label: "Badge reads",
-      helper: "Which of this device's entities the badge shows",
+      helper: "Which of this device's readings the badge shows",
       selector: dropdown(
         opt("primary", badgeSource?.primaryLabel || it.entity || "Main entity"),
-        opt("secondary", badgeSource?.secondaryLabel || it.secondaryEntity)
+        ...readings.map((r, i) =>
+          opt(
+            String(i),
+            badgeSource?.readingLabels?.[i] ||
+              r.entity ||
+              (r.attribute ? `${it.entity || "this device"} · ${r.attribute}` : `Reading ${i + 1}`)
+          )
+        )
       ),
     });
   }
-  // A presence device can ring the spot it watches (issue #127) — the same
-  // shape of option as "Cast light" below, offered only where it means
-  // something. A ring on a thermostat says "someone is here", which is a lie.
-  if (presence) {
+  fields.push(
+    {
+      name: "size",
+      label: "Size",
+      selector: { number: { min: 16, max: 160, step: 2, mode: "slider", unit_of_measurement: "px" } },
+    },
+    angleField()
+  );
+  return {
+    fields,
+    data: {
+      badgeMode: badgeModeOf(it),
+      // The dropdown's values are strings, so the stored index (or the legacy
+      // "secondary") is spelled the same way here; toPatch turns it back into
+      // a number. Opens on what the badge is *actually* reading when nothing
+      // is chosen, which is the whole point of badgeSource (issue #136).
+      badgeEntity: String(badgeEntityIndex(it.badgeEntity) ?? badgeSource?.source ?? "primary"),
+      size: it.size ?? DEFAULT_ITEM_SIZE,
+      angle: it.angle ?? 0,
+    },
+    // "Badge shows" is the editor's spelling of three config keys (issue
+    // #127) — expand it back, carrying the ripple state off the item since
+    // that control lives in another group now.
+    toPatch: (p) => {
+      let out = p;
+      // The dropdown speaks strings; the config stores "primary" or an index.
+      // Written as a number so the legacy "secondary" spelling stops spreading
+      // to configs that never had it.
+      if ("badgeEntity" in out && typeof out.badgeEntity === "string" && out.badgeEntity !== "primary")
+        out = { ...out, badgeEntity: Number(out.badgeEntity) };
+      if (!("badgeMode" in out)) return out;
+      const { badgeMode, ...rest } = out;
+      return {
+        ...rest,
+        ...badgeModePatch((badgeMode as BadgeMode | undefined) ?? badgeModeOf(it), itemHasRipple(it)),
+      };
+    },
+  };
+}
+
+/**
+ * Group 6: the optional visual extras, each offered only where it means
+ * something — a ring on a thermostat says "something is happening here",
+ * which is a lie, and nothing but a light has a colour to cast.
+ *
+ * Returns `undefined` when this device qualifies for neither, so the editor
+ * can leave the whole group out rather than print an empty heading.
+ *
+ * `deviceClass` is the entity's HA device class, resolved off `hass` at the
+ * call site as the openings already do theirs: it is what separates a motion
+ * or vibration sensor from a door contact, and so decides whether the ring is
+ * offered at all (issues #127, #202).
+ */
+export function itemEffectsForm(it: FloorItem, deviceClass?: string): FormSpec | undefined {
+  const ripple = itemHasRipple(it);
+  const canRipple = isRippleEntity(it.entity, deviceClass);
+  const lights = it.kind === "light" || it.entity?.startsWith("light.");
+  if (!canRipple && !lights) return undefined;
+  const fields: FormField[] = [];
+  if (canRipple) {
     fields.push({
       name: "ripple",
       label: "Ripple",
-      // "Presence detected" rather than "the sensor is on": this is offered to
-      // a device_tracker and a person too, and neither of those is a sensor.
-      helper: "Draws a pulsing ring while presence is detected here",
+      // "Detected" rather than "the sensor is on": this is offered to a
+      // device_tracker and a person too, and neither of those is a sensor.
+      // It stays vague about *what* is detected because a vibration sensor
+      // rings for a knock, not for presence (issue #202).
+      helper: "Draws a pulsing ring while this device detects something",
       selector: { boolean: {} },
     });
     if (ripple) {
@@ -732,9 +1062,7 @@ export function itemForm(
       });
     }
   }
-  // A light can cast a pool of light onto the plan from where it sits (issue
-  // #6). Offered only for lights, since nothing else has a color to cast.
-  if (it.kind === "light" || it.entity?.startsWith("light.")) {
+  if (lights) {
     fields.push({
       name: "glow",
       label: "Cast light",
@@ -757,84 +1085,54 @@ export function itemForm(
       );
     }
   }
-  fields.push(
-    {
-      name: "hideWhenInactive",
-      label: "Only when active",
-      helper: "Hide on the card while the entity is off/idle (still editable here)",
-      selector: { boolean: {} },
-    },
-    { name: "showState", label: "Show state", selector: { boolean: {} } },
-    {
-      name: "showName",
-      label: "Show name",
-      helper: "Adds the device's name to the label line",
-      selector: { boolean: {} },
-    }
-  );
-  // Label size only matters while a label line renders.
-  if (it.showName || (it.showState ?? it.kind === "sensor")) {
-    fields.push({
-      name: "labelSize",
-      label: "Label size",
-      selector: { number: { min: 8, max: 40, step: 1, mode: "slider", unit_of_measurement: "px" } },
-    });
-  }
-  fields.push(
-    {
-      name: "tap_action",
-      label: "Tap action",
-      selector: { ui_action: { default_action: defaultItemAction(it.entity).action } },
-    },
-    { name: "hold_action", label: "Hold action", selector: { ui_action: { default_action: "none" } } },
-    {
-      name: "double_tap_action",
-      label: "Double-tap action",
-      selector: { ui_action: { default_action: "none" } },
-    }
-  );
   return {
     fields,
     data: {
-      entity: it.entity,
-      secondaryEntity: it.secondaryEntity ?? "",
-      attribute: it.attribute ?? "",
-      secondaryAttribute: it.secondaryAttribute ?? "",
-      name: it.name ?? "",
-      size: it.size ?? DEFAULT_ITEM_SIZE,
-      angle: it.angle ?? 0,
-      badgeMode: badgeModeOf(it),
-      // The stored choice, else the entity the badge is *actually* reading —
-      // never a bare "primary" default, which would contradict the canvas for
-      // every device relying on the fallback. See {@link BadgeSourceInfo}.
-      badgeEntity: it.badgeEntity ?? badgeSource?.source ?? "primary",
       ripple,
       rippleSize: it.rippleSize ?? DEFAULT_RIPPLE_SIZE,
       glow: it.glow ?? false,
       glowRadius: it.glowRadius ?? DEFAULT_GLOW_RADIUS,
       glowColor: it.glowColor ?? "",
+    },
+    // "Ripple" is the other half of #127's three-key spelling — same expansion
+    // as the badge group's, with the badge mode read off the item.
+    toPatch: (p) => {
+      if (!("ripple" in p)) return p;
+      const { ripple: ring, ...rest } = p;
+      return { ...rest, ...badgeModePatch(badgeModeOf(it), !!ring) };
+    },
+  };
+}
+
+/** Group 7: when the device is drawn at all, and what a press does. */
+export function itemBehaviourForm(it: FloorItem): FormSpec {
+  return {
+    fields: [
+      {
+        name: "hideWhenInactive",
+        label: "Only when active",
+        helper: "Hide on the card while the entity is off/idle (still editable here)",
+        selector: { boolean: {} },
+      },
+      {
+        name: "tap_action",
+        label: "Tap action",
+        selector: { ui_action: { default_action: defaultItemAction(it.entity).action } },
+      },
+      { name: "hold_action", label: "Hold action", selector: { ui_action: { default_action: "none" } } },
+      {
+        name: "double_tap_action",
+        label: "Double-tap action",
+        selector: { ui_action: { default_action: "none" } },
+      },
+    ],
+    data: {
       hideWhenInactive: it.hideWhenInactive ?? false,
-      showState: it.showState ?? false,
-      showName: it.showName ?? false,
-      labelSize: it.labelSize ?? DEFAULT_LABEL_SIZE,
       tap_action: it.tap_action,
       hold_action: it.hold_action,
       double_tap_action: it.double_tap_action,
     },
-    // "Badge shows" and "Ripple" are the editor's spelling of three config
-    // keys (issue #127) — expand them back. Either control alone is a complete
-    // statement about both, so the untouched one is read off the item.
-    toPatch: (patch) => {
-      if (!("badgeMode" in patch) && !("ripple" in patch)) return patch;
-      const { badgeMode, ripple: ring, ...rest } = patch;
-      return {
-        ...rest,
-        ...badgeModePatch(
-          (badgeMode as BadgeMode | undefined) ?? badgeModeOf(it),
-          ring === undefined ? ripple : !!ring
-        ),
-      };
-    },
+    toPatch: identity,
   };
 }
 
@@ -942,7 +1240,7 @@ export function textForm(t: FloorText): FormSpec {
 
 /**
  * `areaEntities` scopes the entity picker to a linked HA area, exactly as in
- * {@link itemForm} — a plant drawn inside the Living Room offers the Living
+ * {@link itemEntityForm} — a plant drawn inside the Living Room offers the Living
  * Room's sensors first.
  */
 export function furnitureForm(
@@ -989,6 +1287,16 @@ export function furnitureForm(
         helper: areaScopeHelper(areaScope, "Optional — lets the drawing change color with a sensor"),
         selector: areaScopedEntity(areaScope, f.entity),
       },
+      // Clicking it changes floor (issue #121). Offered on any piece rather
+      // than only on the built-in `stairs`, because a plan can draw its own
+      // staircase and a rule keyed on one symbol id would leave those out.
+      // Empty on everything by default, so it is a row and not a nag.
+      {
+        name: "goToFloor",
+        label: "Go to floor",
+        helper: "Clicking this piece changes floor — for a staircase",
+        selector: dropdown(opt("", "Nothing"), opt("up", "Up one floor"), opt("down", "Down one floor")),
+      },
     ],
     data: {
       type: f.type,
@@ -997,8 +1305,10 @@ export function furnitureForm(
       h: f.h,
       angle: f.angle ?? 0,
       entity: f.entity ?? "",
+      goToFloor: f.goToFloor ?? "",
     },
-    toPatch: identity,
+    // "" is the empty option, and means the piece is ordinary furniture.
+    toPatch: (p) => ("goToFloor" in p && !p.goToFloor ? { ...p, goToFloor: undefined } : p),
   };
 }
 
@@ -1117,6 +1427,22 @@ export function areaForm(a: Area): FormSpec {
             },
           ]
         : []),
+      // Actions on the room itself (issue #181). Tap already does something —
+      // it zooms — so its default is named here rather than left blank: the
+      // dropdown says "Zoom to room", which is what leaving it alone gives
+      // you, on the same principle as the opening's "Tap opens".
+      {
+        name: "tap_action",
+        label: "Tap action",
+        helper: "Replaces the zoom. Put an action on hold or double-tap to keep both",
+        selector: { ui_action: { default_action: "none" } },
+      },
+      { name: "hold_action", label: "Hold action", selector: { ui_action: { default_action: "none" } } },
+      {
+        name: "double_tap_action",
+        label: "Double-tap action",
+        selector: { ui_action: { default_action: "none" } },
+      },
     ],
     data: {
       showName: a.showName ?? true,
@@ -1125,6 +1451,9 @@ export function areaForm(a: Area): FormSpec {
       entity: a.entity ?? "",
       activeOpacity: a.activeOpacity ?? a.opacity ?? DEFAULT_AREA_OPACITY,
       highlight: a.highlight ?? "fill",
+      tap_action: a.tap_action,
+      hold_action: a.hold_action,
+      double_tap_action: a.double_tap_action,
     },
     // "fill" is the default, so keep it out of the YAML.
     toPatch: (p) => ("highlight" in p && p.highlight === "fill" ? { ...p, highlight: undefined } : p),
@@ -1263,22 +1592,58 @@ export function projectDisplayForm(c: FloorplanCardConfig): FormSpec {
       {
         name: "overlayScale",
         label: "Badge & label size",
-        helper: `Canvas units scale badges and labels with the drawing — use it when the card renders smaller than its ${c.width}-wide canvas`,
-        selector: dropdown(opt("fixed", "Fixed pixels"), opt("plan", "Canvas units")),
+        // Canvas units lead because they are what a plan wants and what a new
+        // plan is created with; fixed pixels are what an older plan is still
+        // laid out in, and the right answer for a card shown bigger than its
+        // canvas or a wall tablet that wants a px floor under its text.
+        helper: `Canvas units scale badges and labels with the drawing. Fixed pixels keep their size whatever width the card gets — suits a card rendered larger than its ${c.width}-wide canvas, or a wall tablet`,
+        selector: dropdown(opt("plan", "Canvas units"), opt("fixed", "Fixed pixels")),
+      },
+      {
+        name: "compactHeader",
+        label: "Compact header",
+        // Says what it costs as well as what it saves — the title lands on the
+        // drawing, and on a plan that fills the card that is a real trade.
+        helper:
+          "Draws the title inside the plan and the floor buttons in a row, instead of spending a header row on them",
+        selector: { boolean: {} },
+      },
+      {
+        name: "offlineStyle",
+        label: "Offline devices",
+        helper: "How a device is drawn when its entity is unavailable or missing",
+        selector: dropdown(
+          opt("dim", "Dimmed"),
+          opt("strike", "Dimmed and crossed out"),
+          opt("none", "No different")
+        ),
       },
     ],
     data: {
       rotation: String(normalizePlanRotation(c.rotation)),
       overlayScale: normalizeOverlayScale(c.overlayScale),
+      compactHeader: c.compactHeader ?? false,
+      offlineStyle: offlineStyleOf(c),
     },
     toPatch: (p) => {
       let out = p;
       if ("rotation" in out)
         // Stored as a number; 0 means "not rotated", so keep it out of the YAML.
         out = { ...out, rotation: out.rotation === "0" ? undefined : Number(out.rotation) };
-      // "fixed" is the default, so keep it out of the YAML too.
-      if ("overlayScale" in out && out.overlayScale === "fixed")
-        out = { ...out, overlayScale: undefined };
+      // Both values are written down, which is the one field here that breaks
+      // the "defaults stay out of the YAML" habit — deliberately. Omitting the
+      // default is what let 1.5.0 restyle every existing plan by changing its
+      // mind about what silence meant (issue #192): a plan that had *chosen*
+      // fixed pixels stored nothing, so it could not be told from one that had
+      // never been asked. Recording the answer makes a plan say how it renders,
+      // whatever any future default decides.
+      // As are the ordinary header and the dimmed offline device — every
+      // default here stays out of the YAML, so a config only ever records the
+      // choices someone actually made.
+      if ("compactHeader" in out && !out.compactHeader)
+        out = { ...out, compactHeader: undefined };
+      if ("offlineStyle" in out && out.offlineStyle === DEFAULT_OFFLINE_STYLE)
+        out = { ...out, offlineStyle: undefined };
       return out;
     },
   };
@@ -1385,6 +1750,111 @@ export function floorRotationForm(f: Floor): FormSpec {
   };
 }
 
+/**
+ * Sunlight: whether it comes in, from where, and what it looks like. Its own
+ * form, like the skin and the sun dimming, because it is a plan-wide drawing
+ * convention rather than a property of anything on the canvas.
+ */
+export function projectReliefForm(c: FloorplanCardConfig): FormSpec {
+  const fields: FormField[] = [
+    {
+      name: "sunlight",
+      label: "Let the sun in",
+      helper:
+        "Light through every window and open door; the rooms it never reaches go a shade darker",
+      selector: { boolean: {} },
+    },
+  ];
+  if (c.sunlight) {
+    fields.push(
+      {
+        name: "north",
+        label: "North",
+        helper: "Which way north points on this plan, so the sun angle describes the house",
+        selector: {
+          number: { min: 0, max: 359, step: 1, mode: "slider", unit_of_measurement: "°" },
+        },
+      },
+      {
+        name: "sunShade",
+        label: "Shade the rest",
+        helper: "Darkens everywhere the light does not reach. Off shows the patches alone",
+        selector: { boolean: {} },
+      },
+      {
+        name: "sunReach",
+        label: "Reach",
+        helper:
+          "How far a patch carries before it fades out, as a share of the plan's shorter side",
+        selector: {
+          number: { min: 0.05, max: 1, step: 0.01, mode: "slider" },
+        },
+      },
+      {
+        name: "sunFollows",
+        label: "Follow the real sun",
+        helper: "Swings through the day and goes out at night. Off keeps the light where you put it, always on",
+        selector: { boolean: {} },
+      }
+    );
+    // Only worth asking once the light is pinned; following the sun means the
+    // angle is not ours to choose.
+    if (typeof c.sunBearing === "number") {
+      fields.push({
+        name: "sunBearing",
+        label: "Sun from",
+        helper: "Compass bearing of the light: 0 = north, 90 = east, 180 = south",
+        selector: {
+          number: { min: 0, max: 359, step: 5, mode: "slider", unit_of_measurement: "°" },
+        },
+      });
+    }
+  }
+  return {
+    fields,
+    data: {
+      sunlight: c.sunlight ?? false,
+      sunShade: c.sunShade ?? true,
+      north: c.north ?? 0,
+      sunReach: c.sunReach ?? SUN_REACH,
+      sunFollows: typeof c.sunBearing !== "number",
+      sunBearing: c.sunBearing ?? DEFAULT_SUN_BEARING,
+    },
+    toPatch: (p) => {
+      const out = { ...p };
+      // Nothing left to aim or to paint, so all of it goes — every one of
+      // these keys is read only while the light is on, and left behind they
+      // would sit in the YAML meaning nothing and come back stale on
+      // re-enable. The colours are set by their own rows rather than by this
+      // form, which is exactly why they have to be named here: nothing else
+      // is watching this switch.
+      if ("sunlight" in out && !out.sunlight) {
+        return {
+          ...out,
+          sunlight: undefined,
+          north: undefined,
+          sunBearing: undefined,
+          sunReach: undefined,
+          sunShade: undefined,
+          sunlightColor: undefined,
+          sunShadeColor: undefined,
+        };
+      }
+      // "Follow the sun" is the *absence* of a stated bearing (issue #113's
+      // rule: the live reading wins only when nothing was decided).
+      if ("sunFollows" in out) {
+        out.sunBearing = out.sunFollows ? undefined : (c.sunBearing ?? DEFAULT_SUN_BEARING);
+        delete out.sunFollows;
+      }
+      // The defaults stay out of the YAML — shading is on unless declined.
+      if ("north" in out && !out.north) out.north = undefined;
+      // The default stays out of the YAML, like every other default here.
+      if ("sunReach" in out && out.sunReach === SUN_REACH) out.sunReach = undefined;
+      if ("sunShade" in out && out.sunShade) out.sunShade = undefined;
+      return out;
+    },
+  };
+}
 export function floorImageForm(f: Floor): FormSpec {
   const fields: FormField[] = [
     { name: "image", label: "Bg image", helper: "/local/floorplan.png or URL", selector: { text: {} } },

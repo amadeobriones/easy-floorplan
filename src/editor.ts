@@ -13,12 +13,14 @@ import type {
   FloorText,
   Furniture,
   ItemKind,
+  ItemReading,
   Tracker,
   TrackerSensor,
   Area,
   AreaPoint,
   HaAreaInfo,
   StateColorRule,
+  OverlayScale,
 } from "./types";
 import {
   normalizeSymbol,
@@ -35,6 +37,7 @@ import {
   DEFAULT_CUSTOM_PERCENT,
   DEFAULT_GRID,
   DEFAULT_ITEM_SIZE,
+  MIN_TOUCH_TARGET,
   DEFAULT_TEXT_SIZE,
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
@@ -66,10 +69,11 @@ import {
   editorGlowPaint,
   renderGlow,
   resolveOpeningAmount,
+  openingIsActive,
   wallsLightPassesThrough,
   openingClearFraction,
-  openingHasTwoPanels,
-  secondPanelOf,
+  openingHasTwoLeaves,
+  secondLeafOf,
   renderGlowMask,
   openingDefaultOpen,
   openingMotion,
@@ -79,8 +83,13 @@ import {
   shutterMarkIcon,
   shutterMarkPoint,
   shutterMarkNormal,
+  openingMarkIcon,
+  openingMarkPoint,
+  openingMarkNormal,
+  hasOpeningMark,
   SHUTTER_MARK_PIXEL_OFFSET,
   SHUTTER_MARK_SIZE,
+  SHUTTER_MARK_ICON_SIZE,
   hasShutterMark,
   openingFromDeviceClass,
   renderRipple,
@@ -97,7 +106,7 @@ import {
   entityIsActive,
   lightBadgePaint,
   itemRawValue,
-  isPresenceEntity,
+  isRippleEntity,
   badgeContentOf,
   editorItemLabel,
   badgeValue,
@@ -107,10 +116,15 @@ import {
   resolveIconAnimation,
   itemIconSize,
   itemLabelSize,
+  labelPositionOf,
+  itemReadings,
+  itemHasLabel,
   snapToWall,
   collectWatchedEntities,
   hassRenderInputsChanged,
   wallStrokeStyle,
+  normalizeOverlayScale,
+  overlayLength,
 } from "./render";
 import { deadSpacesCached } from "./dead-space";
 import { cssColor, cssColorOr, cssNumber, contrastText } from "./css-safe";
@@ -133,6 +147,7 @@ import {
   type Sel,
   type SelKind,
 } from "./editor-geometry";
+import { applyCardConfig } from "./editor-save";
 import type { AreaEntityScope } from "./editor-forms";
 import {
   furnitureChoices,
@@ -146,7 +161,14 @@ import {
   floorRotationForm,
   furnitureForm,
   isLiveField,
-  itemForm,
+  formSlice,
+  itemEntityForm,
+  itemIdentityForm,
+  itemShowStateForm,
+  itemLabelForm,
+  itemBadgeForm,
+  itemEffectsForm,
+  itemBehaviourForm,
   itemHasRipple,
   itemPowerForm,
   normalizeFormPatch,
@@ -157,6 +179,7 @@ import {
   projectPressForm,
   projectSkinForm,
   projectSunForm,
+  projectReliefForm,
   textForm,
   trackerForm,
   wallForm,
@@ -249,6 +272,8 @@ const WALL_SNAP = 35;
  */
 const PICK_EPS_PX = 8;
 const HISTORY_MAX = 60;
+/** How long Apply stays on "Saved" before returning to its idle label. */
+const APPLY_SAVED_MS = 2000;
 /** Angle (degrees) within which a drawn wall is snapped flat to horizontal/vertical. */
 const WALL_AXIS_SNAP_DEG = 10;
 
@@ -309,12 +334,38 @@ export class FloorplanCardEditor extends LitElement {
   /** Features section expanded? Collapsed by default, same rationale — these are opt-in flags most plans never touch. */
   @state() private _featuresOpen = false;
   /**
+   * Which config groups are expanded, by title (issue #205).
+   *
+   * Every group starts collapsed, so selecting a device shows its eight
+   * headings rather than two dozen controls, and the thing you came for is one
+   * click away instead of a scroll away.
+   *
+   * Keyed by title alone, deliberately: the titles are the panels' shared
+   * vocabulary — "Color" means the same thing on a room, a device and a
+   * shutter — so opening one and clicking through several elements keeps the
+   * section you are working in open, instead of re-collapsing on every
+   * selection. Not persisted: it is a view state, not config.
+   *
+   * Replaced rather than mutated on toggle — Lit compares by identity, and a
+   * mutated Set is the same object.
+   */
+  @state() private _openGroups: ReadonlySet<string> = new Set();
+  /**
    * Expanded (fullscreen) editing. HA renders the card config editor in a
    * narrow dialog (~480–560px), which is cramped for a visual canvas editor.
    * When true the `.editor` root is promoted to the top layer so the canvas
    * gets real room and the element/project sections dock beside it.
    */
   @state() private _fullscreen = false;
+  /**
+   * Apply (issue #198): "saving" while the dashboard write is in flight,
+   * "saved" for a moment after, so the click has a visible answer — the card
+   * that changed is on another tab, or behind the fullscreen workspace.
+   */
+  @state() private _applyState: "idle" | "saving" | "saved" = "idle";
+  /** Why the last Apply didn't go through, shown beside the button. */
+  @state() private _applyError = "";
+  private _applyResetTimer: ReturnType<typeof setTimeout> | null = null;
 
   @query(".editor") private _editorEl?: HTMLElement;
   @query("svg") private _svg?: SVGSVGElement;
@@ -379,6 +430,7 @@ export class FloorplanCardEditor extends LitElement {
     window.removeEventListener("keydown", this._onKeyDown, true);
     this.removeEventListener("keydown", this._onHostKeyDown);
     window.removeEventListener("focusin", this._onFocusIn);
+    if (this._applyResetTimer !== null) clearTimeout(this._applyResetTimer);
     this._resetPinch();
     super.disconnectedCallback();
   }
@@ -470,7 +522,13 @@ export class FloorplanCardEditor extends LitElement {
     void this._ensureHaComponents();
     // Upgrade the plain-input fallbacks in place whenever a component gets
     // defined later (by us or by another editor the user opened).
-    for (const tag of ["ha-form", "ha-entity-picker", "ha-icon-picker", "ha-combo-box"]) {
+    for (const tag of [
+      "ha-form",
+      "ha-entity-picker",
+      "ha-entity-attribute-picker",
+      "ha-icon-picker",
+      "ha-combo-box",
+    ]) {
       if (!customElements.get(tag)) {
         void customElements.whenDefined(tag).then(() => this.requestUpdate());
       }
@@ -1959,6 +2017,219 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   /**
+   * Which fields each element panel's groups hold, in order.
+   *
+   * Declared as data rather than inline at the render site so the whole shape
+   * of a panel can be read (and tested) in one place — every field a form
+   * produces has to appear in exactly one group, or it silently stops being
+   * editable.
+   *
+   * The criteria are the device panel's, applied to what each element actually
+   * has: what it *is* first, then what it *reads*, then how it *looks*, then
+   * what it *does*. Elements with only a couple of controls — a wall, a text —
+   * are left ungrouped: a heading over a single field is chrome, not structure.
+   */
+  private static readonly OPENING_GROUPS = [
+    // What it is, and how it is drawn.
+    ["Shape", ["type", "motion", "length", "sash", "hinge", "opens", "slide", "style", "angle"]],
+    // Which contacts drive it — the opening's own, before the shutter's.
+    ["What it reads", ["entity", "secondaryEntity", "invert"]],
+    // How it behaves toward the sun (issue #177), which is neither shape nor
+    // state but gets asked about as its own thing.
+    ["Sunlight", ["glazed", "sunlight"]],
+    // The shutter is a layer over the opening with its own entity, style,
+    // side, second contact, badge and colour — so it gets its own group
+    // rather than being scattered through the others.
+    ["Shutter", [
+      "shutterEntity",
+      "shutterStyle",
+      "shutterSide",
+      "shutterSecondaryEntity",
+      "shutterInvert",
+      "showShutterIcon",
+      "shutterIcon",
+    ]],
+    ["Badge", ["showIcon", "icon"]],
+    // No fields of its own — the opening's accent is a colour row, not an
+    // ha-form field. It is listed here so it lands in the same place in the
+    // order as every other panel's Color group, rather than after Behavior.
+    ["Color", []],
+    ["Behavior", ["tapTarget", "tap_action", "hold_action", "double_tap_action"]],
+  ] as const;
+
+  private static readonly FURNITURE_GROUPS = [
+    ["Shape", ["type", "hand", "w", "h", "angle"]],
+    ["What it reads", ["entity"]],
+    // What clicking it does — a staircase that changes floor (issue #121).
+    ["Behavior", ["goToFloor"]],
+  ] as const;
+
+  private static readonly TRACKER_GROUPS = [
+    ["Zone", ["w", "h", "x", "y", "angle"]],
+    ["Marker", ["dotSize"]],
+  ] as const;
+
+  /**
+   * One titled group of the element panel, with a rule above it.
+   *
+   * The device panel had grown to two dozen controls in one flat run, in the
+   * order they had been added rather than any order you would look for them
+   * in. Grouping them costs a heading and a hairline each; what it buys is
+   * that "where do I set the label position" has an answer you can guess.
+   *
+   * The heading is a disclosure button and the group starts collapsed (issue
+   * #205): headings you can skim beat controls you have to scroll past, and
+   * the panel now opens as a table of contents for the element. See
+   * `_openGroups` for why the open set is keyed by title.
+   *
+   * Collapsed means *not rendered*, not hidden — so a closed group's `ha-form`
+   * costs nothing, and reopening it rebuilds from `data` the same way a
+   * selection change does.
+   *
+   * Takes the content rather than a field list because a group is rarely all
+   * `ha-form` — the readings list, the icon row and the colour pickers are
+   * hand-rolled, and they belong *inside* the group whose subject they share.
+   */
+  private _renderGroup(title: string, ...content: unknown[]): TemplateResult {
+    const open = this._openGroups.has(title);
+    return html`
+      <div class="cfg-group ${open ? "open" : ""}">
+        <button
+          class="cfg-group-title"
+          type="button"
+          aria-expanded=${open}
+          @click=${() => this._toggleGroup(title)}
+        >
+          <ha-icon icon=${open ? "mdi:chevron-down" : "mdi:chevron-right"}></ha-icon>
+          <span>${title}</span>
+        </button>
+        ${open ? content : nothing}
+      </div>
+    `;
+  }
+
+  /** Open a collapsed config group, or collapse an open one. */
+  private _toggleGroup(title: string): void {
+    const next = new Set(this._openGroups);
+    if (!next.delete(title)) next.add(title);
+    this._openGroups = next;
+  }
+
+  /**
+   * A device's other entities (issue #180): every reading beyond its own
+   * state, added one at a time with "+ Add entity" rather than by putting four
+   * entity dropdowns on every device that will never use them.
+   *
+   * Plain rows rather than `ha-form` fields for the same reason the state
+   * rules are: the list is repeatable and `ha-form` has no selector for that.
+   *
+   * The attribute box is offered on every row, not only once an entity is
+   * picked, because a row with an attribute and *no* entity is a real and
+   * useful configuration — it reads that attribute off the device's own
+   * entity, which is how one climate shows four of its own numbers. It is HA's
+   * own attribute picker, so it lists what that entity actually has.
+   */
+  private _renderItemReadings(it: FloorItem): TemplateResult {
+    // The pool as the card sees it, legacy pair included — so a device
+    // configured before #180 shows its second entity here as the first row
+    // rather than as an invisible extra the editor cannot reach.
+    const list = itemReadings(it);
+    // Writing the list writes the *whole* pool into `readings` and clears the
+    // legacy keys, which is the migration: touch a device once and its config
+    // stops using the old spelling. Done here rather than as a config-wide
+    // upgrade so nothing rewrites a plan the user has not edited.
+    const commit = (next: ItemReading[]): void =>
+      this._updateItem(it.id, {
+        readings: next.length ? next : undefined,
+        secondaryEntity: undefined,
+        secondaryAttribute: undefined,
+        // `badgeEntity: "secondary"` meant index 0, which is where the legacy
+        // pair still is — restate it as the index so the old spelling does not
+        // outlive the keys it referred to.
+        ...(it.badgeEntity === "secondary" ? { badgeEntity: 0 } : {}),
+      });
+    const patch = (i: number, part: Partial<ItemReading>): void =>
+      commit(list.map((r, j) => (j === i ? { ...r, ...part } : r)));
+    return html`
+      <div class="row wide">
+        <label title="Further entities and attributes whose readings join this device's label line"
+          >Other entities</label
+        >
+      </div>
+      ${list.map(
+        (reading, i) => html`
+          <div class="row wide item-reading">
+            ${this._renderEntityPicker(
+              reading.entity ?? "",
+              (entity) => patch(i, { entity: entity || undefined }),
+              undefined,
+              // Scoped to the room the device sits in, exactly as its own
+              // entity picker is — an extra reading is as likely to come from
+              // the same room as the first one.
+              this._areaEntitiesAt(it.x, it.y)?.entities
+            )}
+            ${this._renderAttributePicker(
+              reading.entity || it.entity,
+              reading.attribute ?? "",
+              (attribute) => patch(i, { attribute: attribute || undefined }),
+              "Read this attribute instead of the state — with no entity beside it, from this device's own entity"
+            )}
+            <button
+              class="rule-remove"
+              aria-label="Remove entity"
+              title="Remove this entity"
+              @click=${() => commit(list.filter((_, j) => j !== i))}
+            >
+              <ha-icon icon="mdi:close"></ha-icon>
+            </button>
+          </div>
+          <!-- Under its own entity, because it is about that entity and not
+               about the device: an entity can be bound for the badge to read
+               and kept out of the label text. -->
+          <div class="row wide reading-show">
+            <!-- The input is *inside* its label rather than paired to it by
+                 id: the only id available here is the element's own, which
+                 comes from config and can be anything, so a generated "for"
+                 would be invalid or duplicated exactly when someone
+                 hand-writes their YAML. Wrapping needs no id, and clicking
+                 the words toggles the box either way. -->
+            <label>
+              <input
+                type="checkbox"
+                title="Off keeps this entity bound — the badge can still read it — without printing it in the label"
+                .checked=${reading.showState !== false}
+                @change=${(e: Event) =>
+                  patch(i, {
+                    // `true` is the default, so it stays out of the YAML.
+                    showState: (e.target as HTMLInputElement).checked ? undefined : false,
+                  })}
+              />
+              Show on label
+            </label>
+            <span class="hint"
+              >${reading.showState === false
+                ? "Bound but not printed — the badge can still read it."
+                : "Its value joins the label line."}</span
+            >
+          </div>
+        `
+      )}
+      <div class="row wide state-color-add">
+        <button @click=${() => commit([...list, {}])}>
+          <ha-icon icon="mdi:plus"></ha-icon>Add entity
+        </button>
+      </div>
+      ${list.length
+        ? html`<p class="hint rule-note">
+            These show whether or not the device's own "Show state" above is on
+            — that toggle is about the device's entity, not about these. Use
+            each row's own "Show on label" to keep one bound without printing it.
+          </p>`
+        : nothing}
+    `;
+  }
+
+  /**
    * The "Color by state" block (issues #68, #79, #82, and the fork's
    * `entity`/`state_not`/`below`/`animation`): a list of rules, each one a
    * condition and a colour, plus an "Add rule" button.
@@ -2624,6 +2895,11 @@ export class FloorplanCardEditor extends LitElement {
     const c = this._config;
     const floor = this._floor();
     const floors = c.floors ?? [];
+    // How the card will size this plan's badges and labels. The canvas honours
+    // it so the editor previews the drawing rather than a version of it with
+    // fixed-size furniture on top (issue #192): set a badge to 34 on a plan
+    // 1200 wide and the number you see here is the one the card renders.
+    const overlay = normalizeOverlayScale(c.overlayScale);
     // Which room, if any, is currently narrowing the selected element's
     // entity picker — animated on the canvas so the scoping is never a
     // mystery (see _scopingAreaId).
@@ -2645,9 +2921,9 @@ export class FloorplanCardEditor extends LitElement {
           return openingClearFraction(
             o,
             amt(o.entity),
-            o.secondaryEntity && openingHasTwoPanels(o)
+            o.secondaryEntity && openingHasTwoLeaves(o)
               ? resolveOpeningAmount(
-                  secondPanelOf(o),
+                  secondLeafOf(o),
                   this.hass?.states[o.secondaryEntity]
                 )
               : undefined
@@ -2714,6 +2990,30 @@ export class FloorplanCardEditor extends LitElement {
             <ha-icon icon=${this._fullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}></ha-icon>
             ${this._fullscreen ? "Exit" : "Expand"}
           </button>
+
+          <!-- Apply: save the plan to the dashboard and keep editing (issue
+               #198). HA's own Save closes the dialog, and the preview beside
+               the editor is too small to judge where an icon really lands, so
+               checking one nudge cost a save, a close, a look, then reopening
+               and re-expanding the editor. Next to Expand because that is
+               where the need bites hardest: the fullscreen workspace covers
+               HA's footer, Save included. -->
+          <button
+            class="apply-btn"
+            ?disabled=${this._applyState === "saving"}
+            title="Save to the dashboard without closing the editor — the card behind updates"
+            @click=${this._apply}
+          >
+            <ha-icon
+              icon=${this._applyState === "saved" ? "mdi:check" : "mdi:content-save-outline"}
+            ></ha-icon>
+            ${this._applyState === "saved"
+              ? "Saved"
+              : this._applyState === "saving"
+                ? "Saving…"
+                : "Apply"}
+          </button>
+          ${this._applyError ? html`<span class="apply-error">${this._applyError}</span>` : nothing}
 
           <!-- Labels: declutter a dense plan while editing (issue #52). -->
           <button
@@ -2918,8 +3218,15 @@ export class FloorplanCardEditor extends LitElement {
             : `aspect-ratio:${cssNumber(c.width, DEFAULT_WIDTH)} / ${cssNumber(c.height, DEFAULT_HEIGHT)};`}
           @wheel=${this._onCanvasWheel}
         >
-          <div class="stage" style="aspect-ratio: ${cssNumber(c.width, DEFAULT_WIDTH)} / ${cssNumber(
-            c.height, DEFAULT_HEIGHT)}; width:${this._zoom * 100}%;${skinStyle(c.skin)}">
+          <!-- The stage doubles as the card's .plan box for overlay sizing: same
+               container query, same --fp-u, so a badge measured in canvas units
+               previews here at the size a card of this width would draw it
+               (issue #192). The editor never rotates the plan, so the canvas
+               width is what 100cqw measures against. -->
+          <div class="stage ${overlay === "plan" ? "scale-plan" : ""}"
+               style="aspect-ratio: ${cssNumber(c.width, DEFAULT_WIDTH)} / ${cssNumber(
+            c.height, DEFAULT_HEIGHT)}; width:${this._zoom * 100}%;
+                   --fp-plan-w: ${cssNumber(c.width, DEFAULT_WIDTH)};${skinStyle(c.skin)}">
             <!-- Keyed on the skin, for the repaint reason documented on the
                  card's SVG (issue #122): a var() inside a presentation
                  attribute does not repaint when the custom property changes,
@@ -3060,11 +3367,14 @@ export class FloorplanCardEditor extends LitElement {
             </svg>`
             )}
             <div class="items">
-              ${floor.texts.map((t) => this._renderTextOverlay(t, c))}
+              ${floor.texts.map((t) => this._renderTextOverlay(t, c, overlay))}
               ${floor.openings
                 .filter((o) => hasShutterMark(o))
-                .map((o) => this._renderShutterMarkOverlay(o, c))}
-              ${floor.items.map((it) => this._renderItemOverlay(it, c))}
+                .map((o) => this._renderShutterMarkOverlay(o, c, overlay))}
+              ${floor.openings
+                .filter((o) => hasOpeningMark(o))
+                .map((o) => this._renderOpeningMarkOverlay(o, c, overlay))}
+              ${floor.items.map((it) => this._renderItemOverlay(it, c, overlay))}
             </div>
           </div>
         </div>
@@ -3313,6 +3623,49 @@ export class FloorplanCardEditor extends LitElement {
   }
 
   /**
+   * Attribute field for the hand-rolled rows, mirroring
+   * {@link _renderEntityPicker}: HA's own attribute dropdown when the frontend
+   * has registered it, a plain text input otherwise.
+   *
+   * The dropdown is the whole point — it lists the attributes the entity
+   * *actually has*, which is what `ha-form`'s `attribute` selector gives the
+   * device's own Attribute field. A repeatable row cannot go through `ha-form`,
+   * but that is no reason for it to be a worse control: typing `curent_temp`
+   * into a free-text box fails silently at render time, which is exactly the
+   * bug a picker cannot have.
+   *
+   * `entityId` is what the attributes are listed from — the row's own entity
+   * when it names one, else the device's, which is the same fallback the
+   * reading itself resolves through.
+   */
+  private _renderAttributePicker(
+    entityId: string | undefined,
+    value: string,
+    onChange: (attribute: string) => void,
+    title?: string
+  ): TemplateResult {
+    if (customElements.get("ha-entity-attribute-picker") && entityId) {
+      return html`<ha-entity-attribute-picker
+        class="reading-attr"
+        .hass=${this.hass}
+        .entityId=${entityId}
+        .value=${value}
+        allow-custom-value
+        title=${title ?? nothing}
+        @value-changed=${(e: CustomEvent) => onChange((e.detail.value as string) ?? "")}
+      ></ha-entity-attribute-picker>`;
+    }
+    return html`<input
+      type="text"
+      class="reading-attr"
+      placeholder="attribute"
+      title=${title ?? nothing}
+      .value=${value}
+      @change=${(e: Event) => onChange((e.target as HTMLInputElement).value)}
+    />`;
+  }
+
+  /**
    * Icon field for the hand-rolled rows (issue #106), mirroring
    * {@link _renderEntityPicker}: HA's searchable picker when the frontend has
    * registered it, a plain text input otherwise. Used by the state-rule list,
@@ -3358,6 +3711,36 @@ export class FloorplanCardEditor extends LitElement {
     this._addMenuOpen = false;
     this._addQuery = "";
   }
+
+  /**
+   * Save the card to the dashboard and stay in the editor (issue #198).
+   *
+   * The heavy lifting is in `editor-save.ts`; what belongs here is the wait
+   * before it. Our edits reach HA through `config-changed`, which the element
+   * editor between us and the dialog re-fires only after its own render — and
+   * a field committed by the blur *this very click* caused is still in flight
+   * at this point. Letting the microtasks drain first is the difference
+   * between applying the plan and applying it one edit ago.
+   */
+  private _apply = async (): Promise<void> => {
+    if (this._applyState === "saving") return;
+    if (this._applyResetTimer !== null) clearTimeout(this._applyResetTimer);
+    this._applyState = "saving";
+    this._applyError = "";
+    await this.updateComplete;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const result = await applyCardConfig(this);
+    if (!result.ok) {
+      this._applyState = "idle";
+      this._applyError = result.error;
+      return;
+    }
+    this._applyState = "saved";
+    this._applyResetTimer = setTimeout(() => {
+      this._applyResetTimer = null;
+      this._applyState = "idle";
+    }, APPLY_SAVED_MS);
+  };
 
   /**
    * The "+ Add" popover: device, text, then every symbol as its real glyph.
@@ -3483,7 +3866,7 @@ export class FloorplanCardEditor extends LitElement {
       <section class="edit-area">
         <div class="edit-head">
           <ha-icon icon=${icon}></ha-icon>
-          <span class="edit-title">${summary}</span>
+          <span class="edit-title" title=${summary}>${summary}</span>
           <span class="head-spacer"></span>
           <button aria-label="Duplicate" title="Duplicate (Ctrl/Cmd+D)" @click=${this._duplicate}>
             <ha-icon icon="mdi:content-duplicate"></ha-icon>
@@ -3698,7 +4081,11 @@ export class FloorplanCardEditor extends LitElement {
    * badge that swallowed those clicks would make the opening under it awkward
    * to grab. On the card it is a control; here it is a picture of one.
    */
-  private _renderShutterMarkOverlay(o: Opening, c: FloorplanCardConfig): TemplateResult {
+  private _renderShutterMarkOverlay(
+    o: Opening,
+    c: FloorplanCardConfig,
+    scale: OverlayScale
+  ): TemplateResult {
     const id = o.shutterEntity!;
     const st = this.hass?.states[id];
     const open = shutterAmount(st, o.shutterInvert) > 0;
@@ -3708,24 +4095,67 @@ export class FloorplanCardEditor extends LitElement {
     // Same two-part offset as the card (canvas units + screen pixels), so the
     // preview shows where the badge will actually sit. The editor never
     // rotates the plan, hence no rotation argument.
-    // Always the fixed-pixel form here: the editor canvas is zoomed by the
-    // user rather than sized by the card, so `overlayScale: plan` has no
-    // meaning on it — the badges it draws for devices are fixed too.
+    // In the plan's own units when that is how the card measures them, so the
+    // badge previews at the size it will actually be drawn (issue #192).
     const n = shutterMarkNormal(o);
+    const box = overlayLength(SHUTTER_MARK_SIZE, scale);
+    const step = overlayLength(SHUTTER_MARK_PIXEL_OFFSET, scale);
     return html`<div
       class="shutter-mark ${shutterActive(st, o.shutterInvert) ? "on" : "off"}"
       style="left:${(at.x / c.width) * 100}%; top:${(at.y / c.height) * 100}%;
-             width:${SHUTTER_MARK_SIZE}px;height:${SHUTTER_MARK_SIZE}px;
-             transform:translate(-50%,-50%) translate(${n.x * SHUTTER_MARK_PIXEL_OFFSET}px, ${
-               n.y * SHUTTER_MARK_PIXEL_OFFSET
-             }px);--fp-active:${accent};"
+             width:${box};height:${box};
+             transform:translate(-50%,-50%)
+                       translate(calc(${n.x} * ${step}), calc(${n.y} * ${step}));
+             --fp-active:${accent};"
       title=${`${(st?.attributes?.friendly_name as string | undefined) ?? id} — shown on the card, tap it there to open the shutter`}
     >
-      <ha-icon icon=${icon}></ha-icon>
+      <ha-icon icon=${icon} style="--mdc-icon-size:${overlayLength(
+        SHUTTER_MARK_ICON_SIZE,
+        scale
+      )};"></ha-icon>
     </div>`;
   }
 
-  private _renderItemOverlay(it: FloorItem, c: FloorplanCardConfig): TemplateResult {
+  /**
+   * The card's opening badge, previewed (issue #154 follow-up). Same reason as
+   * the shutter's preview above: turning **Show icon** on and finding out where
+   * the badge lands is the whole point of having a canvas. Inert here too.
+   */
+  private _renderOpeningMarkOverlay(
+    o: Opening,
+    c: FloorplanCardConfig,
+    scale: OverlayScale
+  ): TemplateResult {
+    const id = o.entity!;
+    const st = this.hass?.states[id];
+    const open = resolveOpeningAmount(o, st) > 0;
+    const icon = openingMarkIcon(o, st, open, this.hass?.entities?.[id]?.icon);
+    const accent = cssColor(o.activeColor) ?? SKIN_ACCENT;
+    const at = openingMarkPoint(o);
+    const n = openingMarkNormal(o);
+    const box = overlayLength(SHUTTER_MARK_SIZE, scale);
+    const step = overlayLength(SHUTTER_MARK_PIXEL_OFFSET, scale);
+    return html`<div
+      class="shutter-mark ${openingIsActive(o, st) ? "on" : "off"}"
+      style="left:${(at.x / c.width) * 100}%; top:${(at.y / c.height) * 100}%;
+             width:${box};height:${box};
+             transform:translate(-50%,-50%)
+                       translate(calc(${n.x} * ${step}), calc(${n.y} * ${step}));
+             --fp-active:${accent};"
+      title=${`${(st?.attributes?.friendly_name as string | undefined) ?? id} — shown on the card, tap it there to open its dialog`}
+    >
+      <ha-icon icon=${icon} style="--mdc-icon-size:${overlayLength(
+        SHUTTER_MARK_ICON_SIZE,
+        scale
+      )};"></ha-icon>
+    </div>`;
+  }
+
+  private _renderItemOverlay(
+    it: FloorItem,
+    c: FloorplanCardConfig,
+    scale: OverlayScale
+  ): TemplateResult {
     const selected = this._isSel("item", it.id);
     const st = it.entity ? this.hass?.states[it.entity] : undefined;
     // Pass the registry icon here too, so the editor preview matches the card.
@@ -3766,36 +4196,42 @@ export class FloorplanCardEditor extends LitElement {
     // (entity currently active), so the "Badge shows" dropdown shows its
     // effect without leaving the editor.
     const anim = resolveIconAnimation(this.hass, it, st);
+    // Every measure the card expresses in canvas units, expressed the same way
+    // here (issue #192) — the badge box, the value inside it, the glyph, the
+    // ripple and the label below.
+    const box = overlayLength(size, scale);
     const badge = html`<div
       class="badge ${showIcon ? "" : "ghost"} ${stateColor
         ? "state-colored"
         : active
           ? "active-colored"
           : ""}"
-      style="width:${size}px;height:${size}px;transform:rotate(${cssNumber(it.angle, 0)}deg);${
+      style="width:${box};height:${box};transform:rotate(${cssNumber(it.angle, 0)}deg);${
         stateColor ? `--fp-state:${stateColor};` : ""
       }${activeColor ? `--fp-active:${activeColor};` : ""}${
         badgeInk ? `--fp-ink:${badgeInk};` : ""
       }"
     >
       ${value
-        ? html`<span class="badge-value" style="font-size:${badgeValueSize(size, value)}px;"
+        ? html`<span
+            class="badge-value"
+            style="font-size:${overlayLength(badgeValueSize(size, value), scale)};"
             >${value}</span
           >`
         : html`<ha-icon
             class=${anim ? `anim-${anim}` : ""}
             icon=${icon}
-            style="--mdc-icon-size:${itemIconSize(size)}px;"
+            style="--mdc-icon-size:${overlayLength(itemIconSize(size), scale)};"
           ></ha-icon>`}
     </div>`;
 
     // Editor always previews the ripple animated so its effect is visible.
     let visual: TemplateResult;
     if (display === "ripple") {
-      visual = renderRipple(true, rippleColor, rippleSize);
+      visual = renderRipple(true, rippleColor, rippleSize, 3, scale);
     } else if (display === "iconRipple") {
       visual = html`<div class="stack">
-        ${renderRipple(true, rippleColor, rippleSize)}
+        ${renderRipple(true, rippleColor, rippleSize, 3, scale)}
         <div class="stack-icon">${badge}</div>
       </div>`;
     } else {
@@ -3824,23 +4260,28 @@ export class FloorplanCardEditor extends LitElement {
         ${this._hideLabels
           ? nothing
           : html`<span
-              class="ilabel ${cardLabel ? "live" : ""}"
-              style="font-size:${cardLabel || it.labelSize != null
-                ? itemLabelSize(it.labelSize)
-                : 11}px;${cardLabel && stateColor ? `color:${stateColor};` : ""}"
+              class="ilabel ${cardLabel ? "live" : ""} ilabel-${labelPositionOf(it)}"
+              style="font-size:${overlayLength(
+                cardLabel || it.labelSize != null ? itemLabelSize(it.labelSize) : 11,
+                scale
+              )};${cardLabel && stateColor ? `color:${stateColor};` : ""}"
               >${label}</span
             >`}
       </div>
     `;
   }
 
-  private _renderTextOverlay(t: FloorText, c: FloorplanCardConfig): TemplateResult {
+  private _renderTextOverlay(
+    t: FloorText,
+    c: FloorplanCardConfig,
+    scale: OverlayScale
+  ): TemplateResult {
     const selected = this._isSel("text", t.id);
     return html`
       <div
         class="edit-text ${selected ? "selected" : ""}"
         style="left:${(t.x / c.width) * 100}%; top:${(t.y / c.height) * 100}%;
-               font-size:${cssNumber(t.size, DEFAULT_TEXT_SIZE)}px;
+               font-size:${overlayLength(cssNumber(t.size, DEFAULT_TEXT_SIZE), scale)};
                color:${cssColorOr(t.color, SKIN_TEXT)};
                transform:translate(-50%,-50%) rotate(${cssNumber(t.angle, 0)}deg);"
         @pointerdown=${(e: PointerEvent) => this._onOverlayDown(e, { kind: "text", id: t.id })}
@@ -3878,50 +4319,116 @@ export class FloorplanCardEditor extends LitElement {
     `;
   }
 
+  /**
+   * The Project panel, grouped on the same criteria as the element panels:
+   * what the plan *is*, then how it *looks*, then what it *does*.
+   *
+   * It had the same problem the device panel had — nineteen controls in one
+   * run, with the sun's five aiming fields separated from the two brightness
+   * sliders by a press-effect dropdown, and "Offline devices" filed under
+   * display next to the card's rotation.
+   *
+   * `offlineStyle` moves out of the display slice and joins the press effect:
+   * both are statements about how *devices* look and answer, not about how the
+   * card is framed. It stays in `projectDisplayForm` as a field — one form, one
+   * `toPatch` — and is sliced into the group it belongs to (see `formSlice`).
+   */
   private _renderPanelBody(): TemplateResult {
+    const c = this._config;
+    const patch = (p: Record<string, unknown>) =>
+      this._patchConfig(p as Partial<FloorplanCardConfig>);
+    const display = projectDisplayForm(c);
     return html`
       <div class="rows panel-body">
-        ${this._renderForm(projectForm(this._config), (patch, live) => {
-          if ("grid" in patch && typeof patch.grid === "number") {
-            // The grid change rescales a custom snap step. ha-form's number
-            // box fires per keystroke — respect the burst path so typing
-            // "24" isn't two history commits (grid=2, then grid=24).
-            patch = { ...patch, ...this._gridPatch(patch.grid) };
-          }
-          if (live) this._patchConfigLive(patch as Partial<FloorplanCardConfig>);
-          else this._patchConfig(patch as Partial<FloorplanCardConfig>);
-        })}
-        ${this._renderForm(projectSkinForm(this._config), (patch) =>
-          this._patchConfig(patch as Partial<FloorplanCardConfig>)
+        ${this._renderGroup(
+          "Project",
+          this._renderForm(projectForm(c), (p, live) => {
+            if ("grid" in p && typeof p.grid === "number") {
+              // The grid change rescales a custom snap step. ha-form's number
+              // box fires per keystroke — respect the burst path so typing
+              // "24" isn't two history commits (grid=2, then grid=24).
+              p = { ...p, ...this._gridPatch(p.grid) };
+            }
+            if (live) this._patchConfigLive(p as Partial<FloorplanCardConfig>);
+            else this._patchConfig(p as Partial<FloorplanCardConfig>);
+          })
         )}
-        ${this._renderColorRow({
-          label: "Background",
-          value: this._config.background,
-          swatch: "#ffffff",
-          placeholder: "#ffffff or empty",
-          onLive: (background) => this._patchConfigLive({ background }),
-          onCommit: (background) => this._patchConfig({ background }),
-        })}
-        ${this._renderForm(floorImageForm(this._floor()), (patch, live) => {
-          if (live) this._patchFloorLive(patch as Partial<Floor>);
-          else this._commitFloor(patch as Partial<Floor>);
-        })}
-        ${this._renderForm(projectDisplayForm(this._config), (patch) =>
-          this._patchConfig(patch as Partial<FloorplanCardConfig>)
+        ${this._renderGroup(
+          // The plan's own look: its palette, its paper, and the one drawing
+          // convention that is a plan-wide choice rather than an element's.
+          "Look",
+          this._renderForm(projectSkinForm(c), patch),
+          this._renderColorRow({
+            label: "Background",
+            value: c.background,
+            swatch: "#ffffff",
+            placeholder: "#ffffff or empty",
+            onLive: (background) => this._patchConfigLive({ background }),
+            onCommit: (background) => this._patchConfig({ background }),
+          }),
+          this._renderForm(projectDeadSpaceForm(c), patch)
         )}
         ${this._renderForm(floorRotationForm(this._floor()), (patch) =>
           this._commitFloor(patch as Partial<Floor>)
         )}
-        ${this._renderForm(projectSunForm(this._config), (patch) =>
-          this._patchConfig(patch as Partial<FloorplanCardConfig>)
+        ${this._renderGroup(
+          // Per floor, not per project — but it is the floor's paper, so it
+          // belongs beside the plan's own.
+          "Floor image",
+          this._renderForm(floorImageForm(this._floor()), (p, live) => {
+            if (live) this._patchFloorLive(p as Partial<Floor>);
+            else this._commitFloor(p as Partial<Floor>);
+          })
         )}
-        ${this._renderForm(projectPressForm(this._config), (patch) =>
-          this._patchConfig(patch as Partial<FloorplanCardConfig>)
+        ${this._renderGroup(
+          // How the card is framed on the dashboard, as opposed to what is
+          // drawn inside it. Set once for a surface and rarely touched again.
+          "Display",
+          this._renderForm(formSlice(display, ["rotation", "overlayScale", "compactHeader"]), patch)
         )}
-        ${this._renderForm(projectDeadSpaceForm(this._config), (patch) =>
-          this._patchConfig(patch as Partial<FloorplanCardConfig>)
+        ${this._renderGroup(
+          // Light through the openings (issue #177) — where it comes from and
+          // what it looks like where it lands.
+          "Sunlight",
+          this._renderForm(projectReliefForm(c), patch),
+          c.sunlight
+            ? html`${this._renderColorRow({
+                label: "Sun color",
+                title: "Color of the light the openings let in",
+                value: c.sunlightColor,
+                swatch: "#ffd9a0",
+                placeholder: "(warm white)",
+                onLive: (sunlightColor) => this._patchConfigLive({ sunlightColor }),
+                onCommit: (sunlightColor) => this._patchConfig({ sunlightColor }),
+              })}
+              ${c.sunShade === false
+                ? nothing
+                : this._renderColorRow({
+                    label: "Shade color",
+                    title: "Color of everywhere the light does not reach",
+                    value: c.sunShadeColor,
+                    swatch: "#000000",
+                    placeholder: "(black)",
+                    onLive: (sunShadeColor) => this._patchConfigLive({ sunShadeColor }),
+                    onCommit: (sunShadeColor) => this._patchConfig({ sunShadeColor }),
+                  })}`
+            : nothing
         )}
-        ${this._renderSymbolsPanel()}
+        ${this._renderGroup(
+          // The other half of following the sun, and a separate switch: this
+          // one dims the whole plan after dark rather than casting anything.
+          "Night dimming",
+          this._renderForm(projectSunForm(c), patch)
+        )}
+        ${this._renderGroup(
+          // How devices look and answer, plan-wide. "Offline devices" lived
+          // under display, beside the card's rotation, which is not what it is
+          // about.
+          "Devices",
+          this._renderForm(formSlice(display, ["offlineStyle"]), patch),
+          this._renderForm(projectPressForm(c), patch)
+        )}
+        ${this._renderGroup("Symbols", this._renderSymbolsPanel())}
         ${this._renderImportPanel()}
       </div>
     `;
@@ -3985,7 +4492,6 @@ export class FloorplanCardEditor extends LitElement {
     const own = Object.keys(this._config.symbols ?? {});
     return html`
       <div class="row col symbols-panel">
-        <label>Custom symbols</label>
         ${own.length
           ? html`<div class="symbol-list">
               ${own.map(
@@ -4128,47 +4634,67 @@ export class FloorplanCardEditor extends LitElement {
     if (sel.kind === "opening") {
       const o = this._floor().openings.find((x) => x.id === sel.id);
       if (!o) return html`${nothing}`;
+      const spec = openingForm(o, (id) => this._supportedFeatures(id));
+      const apply = (patch: Record<string, unknown>, live: boolean): void => {
+        if ("entity" in patch) {
+          // Infer type/motion from the entity's HA device_class (e.g. a
+          // `cover` with device_class `window` → a window; a `garage`
+          // roller → a sliding door). Only when the class is known, so we
+          // never clobber a hand-set type with a guess.
+          const entity = patch.entity as string | undefined;
+          const dc = entity
+            ? (this.hass?.states[entity]?.attributes?.device_class as string | undefined)
+            : undefined;
+          patch = { ...patch, ...(dc ? openingFromDeviceClass(dc) : {}) };
+        }
+        this._applyElementPatch("opening", o.id, patch, live);
+      };
+      /** A group, skipped when this opening has none of its fields. */
+      const group = (title: string, names: readonly string[], ...extra: unknown[]) => {
+        const slice = formSlice(spec, names);
+        if (!slice.fields.length && !extra.some((x) => x && x !== nothing)) return nothing;
+        return this._renderGroup(title, this._renderForm(slice, apply), ...extra);
+      };
       return html`
-        ${this._renderForm(openingForm(o, (id) => this._supportedFeatures(id)), (patch, live) => {
-          if ("entity" in patch) {
-            // Infer type/motion from the entity's HA device_class (e.g. a
-            // `cover` with device_class `window` → a window; a `garage`
-            // roller → a sliding door). Only when the class is known, so we
-            // never clobber a hand-set type with a guess.
-            const entity = patch.entity as string | undefined;
-            const dc = entity
-              ? (this.hass?.states[entity]?.attributes?.device_class as string | undefined)
-              : undefined;
-            patch = { ...patch, ...(dc ? openingFromDeviceClass(dc) : {}) };
-          }
-          this._applyElementPatch("opening", o.id, patch, live);
-        })}
-        ${o.entity
-          ? this._renderColorRow({
-              label: "Active color",
-              value: o.activeColor,
-              swatch: "#03a9f4",
-              placeholder: "(primary)",
-              onLive: (activeColor) => this._updateOpeningLive(o.id, { activeColor }),
-              onCommit: (activeColor) => this._updateOpening(o.id, { activeColor }),
-            })
-          : nothing}
-        ${o.shutterEntity
-          ? // The shutter's own accent, so an open shutter over a shut window
-            // can read as a separate thing from the sash it covers. Falls back
-            // to the opening's active color, hence the placeholder.
-            this._renderColorRow({
-              label: "Shutter color",
-              title: "Shutter color while it is open",
-              value: o.shutterActiveColor,
-              swatch: o.activeColor ?? "#03a9f4",
-              placeholder: o.activeColor ? "(active color)" : "(primary)",
-              onLive: (shutterActiveColor) =>
-                this._updateOpeningLive(o.id, { shutterActiveColor }),
-              onCommit: (shutterActiveColor) =>
-                this._updateOpening(o.id, { shutterActiveColor }),
-            })
-          : nothing}
+        ${FloorplanCardEditor.OPENING_GROUPS.map(([title, names]) =>
+          title === "Color"
+            ? group(
+                title,
+                names,
+                o.entity
+                  ? this._renderColorRow({
+                      label: "Active color",
+                      value: o.activeColor,
+                      swatch: "#03a9f4",
+                      placeholder: "(primary)",
+                      onLive: (activeColor) => this._updateOpeningLive(o.id, { activeColor }),
+                      onCommit: (activeColor) => this._updateOpening(o.id, { activeColor }),
+                    })
+                  : nothing
+              )
+            : title === "Shutter"
+            ? group(
+                title,
+                names,
+                // The shutter's own accent, so an open shutter over a shut
+                // window can read as a separate thing from the sash it
+                // covers. Falls back to the opening's, hence the placeholder.
+                o.shutterEntity
+                  ? this._renderColorRow({
+                      label: "Shutter color",
+                      title: "Shutter color while it is open",
+                      value: o.shutterActiveColor,
+                      swatch: o.activeColor ?? "#03a9f4",
+                      placeholder: o.activeColor ? "(active color)" : "(primary)",
+                      onLive: (shutterActiveColor) =>
+                        this._updateOpeningLive(o.id, { shutterActiveColor }),
+                      onCommit: (shutterActiveColor) =>
+                        this._updateOpening(o.id, { shutterActiveColor }),
+                    })
+                  : nothing
+              )
+            : group(title, names)
+        )}
       `;
     }
 
@@ -4176,8 +4702,9 @@ export class FloorplanCardEditor extends LitElement {
       const it = this._floor().items.find((x) => x.id === sel.id);
       if (!it) return html`${nothing}`;
       const areaEntities = this._areaEntitiesAt(it.x, it.y);
-      // The entity's device class decides whether this is a presence device,
-      // and so whether the ripple is on offer at all (issue #127).
+      // The entity's device class decides whether this device detects
+      // anything, and so whether the ripple is on offer at all (issues #127,
+      // #202).
       const deviceClass = it.entity
         ? (this.hass?.states[it.entity]?.attributes?.device_class as string | undefined)
         : undefined;
@@ -4190,63 +4717,95 @@ export class FloorplanCardEditor extends LitElement {
       const badgeSource = {
         source: badgeReading(this.hass, it)?.source ?? "primary",
         primaryLabel: friendly(it.entity),
-        secondaryLabel: friendly(it.secondaryEntity),
+        // One label per reading, positionally — the dropdown names each rather
+        // than numbering them, and a reading with no entity of its own is read
+        // off this device, so that is the name to show for it (issue #180).
+        readingLabels: itemReadings(it).map((r) => friendly(r.entity || it.entity)),
       } as const;
-      return html`
-        ${this._renderForm(itemForm(it, areaEntities, deviceClass, badgeSource), (patch, live) => {
+      // One handler for every group: they all patch the same item, and only
+      // the entity field needs anything extra.
+      const apply = (patch: Record<string, unknown>, live: boolean): void => {
+        if ("entity" in patch && typeof patch.entity === "string") {
           // Any entity change re-derives the item kind (icon defaults etc.) —
           // including clearing it, which resets kind to "generic".
-          if ("entity" in patch && typeof patch.entity === "string") {
-            patch = { ...patch, kind: kindFromEntity(patch.entity) };
-          }
-          this._applyElementPatch("item", it.id, patch, live);
-        })}
-        ${
-          // The energy layer's per-device binding. Hidden until the layer is
-          // switched on, so a plan not using it does not carry a field that
-          // draws nothing — but shown regardless once a value exists, or a
-          // hand-written config's binding would be invisible and unclearable.
-          featureEnabled(this._config, "energyLayer") || it.powerEntity
-            ? this._renderForm(itemPowerForm(it), (patch, live) =>
-                this._applyElementPatch("item", it.id, patch, live)
-              )
-            : nothing
+          patch = { ...patch, kind: kindFromEntity(patch.entity) };
         }
-        ${it.stateColor?.length
-          ? // Colour by state supersedes the fixed active colour, so showing
-            // both invites setting one and seeing the other. Say which one is
-            // in charge instead of leaving a dead control on screen.
-            html`<p class="hint rule-note">
-              Colored by the state rules below — they replace the active color.
-            </p>`
-          : this._renderColorRow({
-              label: "Active color",
-              title: "Badge color while this device is on (issue #79)",
-              value: it.activeColor,
-              swatch: "#fdd835",
-              placeholder: "(theme)",
-              onLive: (activeColor) => this._updateItemLive(it.id, { activeColor }),
-              onCommit: (activeColor) => this._updateItem(it.id, { activeColor }),
-            })}
-        ${isPresenceEntity(it.entity, deviceClass) && itemHasRipple(it)
-          ? this._renderColorRow({
-              label: "Ripple color",
-              value: it.rippleColor,
-              swatch: it.activeColor ?? "#03a9f4",
-              placeholder: it.activeColor ? "(active color)" : "(primary)",
-              onLive: (rippleColor) => this._updateItemLive(it.id, { rippleColor }),
-              onCommit: (rippleColor) => this._updateItem(it.id, { rippleColor }),
-            })
-          : nothing}
-        ${this._renderItemIconRow(it)}
-        ${this._renderStateColorRules(
-          it.stateColor,
-          (stateColor) => this._updateItem(it.id, { stateColor }),
-          // Only a device draws a glyph, so only a device's rules offer an
-          // icon — furniture and areas share this rule shape but paint
-          // polygons (issue #106).
-          { icons: true, iconPlaceholder: this._itemDefaultIcon(it) }
+        this._applyElementPatch("item", it.id, patch, live);
+      };
+      const effects = itemEffectsForm(it, deviceClass);
+      return html`
+        ${this._renderGroup("Identity", this._renderForm(itemIdentityForm(it), apply))}
+        ${this._renderGroup(
+          "What it reads",
+          // Entity, its attribute, whether its own state shows, then every
+          // other entity — the order the label prints them in (issue #180).
+          this._renderForm(itemEntityForm(it, areaEntities), apply),
+          this._renderForm(itemShowStateForm(it), apply),
+          this._renderItemReadings(it),
+          // The energy layer's per-device binding, and a reading like any
+          // other — so it belongs in this group under upstream's new layout.
+          // Hidden until the layer is switched on, so a plan not using it does
+          // not carry a field that draws nothing, but shown regardless once a
+          // value exists or a hand-written config's binding would be invisible
+          // and unclearable.
+          featureEnabled(this._config, "energyLayer") || it.powerEntity
+            ? this._renderForm(itemPowerForm(it), apply)
+            : nothing
         )}
+        ${itemHasLabel(it)
+          ? // Nothing to place or size while the device draws no label at all.
+            this._renderGroup("Label", this._renderForm(itemLabelForm(it), apply))
+          : nothing}
+        ${this._renderGroup(
+          "Badge",
+          this._renderForm(itemBadgeForm(it, badgeSource), apply),
+          this._renderItemIconRow(it)
+        )}
+        ${this._renderGroup(
+          "Color",
+          it.stateColor?.length
+            ? // Colour by state supersedes the fixed active colour, so showing
+              // both invites setting one and seeing the other. Say which one is
+              // in charge instead of leaving a dead control on screen.
+              html`<p class="hint rule-note">
+                Colored by the state rules below — they replace the active color.
+              </p>`
+            : this._renderColorRow({
+                label: "Active color",
+                title: "Badge color while this device is on (issue #79)",
+                value: it.activeColor,
+                swatch: "#fdd835",
+                placeholder: "(theme)",
+                onLive: (activeColor) => this._updateItemLive(it.id, { activeColor }),
+                onCommit: (activeColor) => this._updateItem(it.id, { activeColor }),
+              }),
+          this._renderStateColorRules(
+            it.stateColor,
+            (stateColor) => this._updateItem(it.id, { stateColor }),
+            // Only a device draws a glyph, so only a device's rules offer an
+            // icon — furniture and areas share this rule shape but paint
+            // polygons (issue #106).
+            { icons: true, iconPlaceholder: this._itemDefaultIcon(it) }
+          )
+        )}
+        ${effects
+          ? this._renderGroup(
+              "Effects",
+              this._renderForm(effects, apply),
+              // The ring's colour belongs with the ring, not with the badge's.
+              isRippleEntity(it.entity, deviceClass) && itemHasRipple(it)
+                ? this._renderColorRow({
+                    label: "Ripple color",
+                    value: it.rippleColor,
+                    swatch: it.activeColor ?? "#03a9f4",
+                    placeholder: it.activeColor ? "(active color)" : "(primary)",
+                    onLive: (rippleColor) => this._updateItemLive(it.id, { rippleColor }),
+                    onCommit: (rippleColor) => this._updateItem(it.id, { rippleColor }),
+                  })
+                : nothing
+            )
+          : nothing}
+        ${this._renderGroup("Behavior", this._renderForm(itemBehaviourForm(it), apply))}
       `;
     }
 
@@ -4271,34 +4830,41 @@ export class FloorplanCardEditor extends LitElement {
     if (sel.kind === "furniture") {
       const f = this._floor().furniture.find((x) => x.id === sel.id);
       if (!f) return html`${nothing}`;
+      const fSpec = furnitureForm(f, this._areaEntitiesAt(f.x, f.y), this._symbols());
+      const fApply = (patch: Record<string, unknown>, live: boolean) =>
+        this._applyElementPatch("furniture", f.id, patch, live);
       return html`
-        ${this._renderForm(furnitureForm(f, this._areaEntitiesAt(f.x, f.y), this._symbols()), (patch, live) =>
-          this._applyElementPatch("furniture", f.id, patch, live)
+        ${FloorplanCardEditor.FURNITURE_GROUPS.map(([title, names]) =>
+          this._renderGroup(title, this._renderForm(formSlice(fSpec, names), fApply))
         )}
-        ${this._renderColorRow({
+        ${this._renderGroup(
+          "Color",
+          this._renderColorRow({
           label: "Color",
           value: f.color,
           swatch: "#9e9e9e",
           placeholder: "(gray)",
-          onLive: (color) => this._updateFurnitureLive(f.id, { color }),
-          onCommit: (color) => this._updateFurniture(f.id, { color }),
-        })}
-        ${f.entity
-          ? html`
-              ${this._renderColorRow({
-                label: "Active color",
-                title: "Color while the entity is on",
-                value: f.activeColor,
-                swatch: "#03a9f4",
-                placeholder: "(no change)",
-                onLive: (activeColor) => this._updateFurnitureLive(f.id, { activeColor }),
-                onCommit: (activeColor) => this._updateFurniture(f.id, { activeColor }),
-              })}
-              ${this._renderStateColorRules(f.stateColor, (stateColor) =>
-                this._updateFurniture(f.id, { stateColor })
-              )}
-            `
-          : nothing}
+            onLive: (color) => this._updateFurnitureLive(f.id, { color }),
+            onCommit: (color) => this._updateFurniture(f.id, { color }),
+          }),
+          // Without an entity there is nothing to condition a colour on.
+          f.entity
+            ? html`
+                ${this._renderColorRow({
+                  label: "Active color",
+                  title: "Color while the entity is on",
+                  value: f.activeColor,
+                  swatch: "#03a9f4",
+                  placeholder: "(no change)",
+                  onLive: (activeColor) => this._updateFurnitureLive(f.id, { activeColor }),
+                  onCommit: (activeColor) => this._updateFurniture(f.id, { activeColor }),
+                })}
+                ${this._renderStateColorRules(f.stateColor, (stateColor) =>
+                  this._updateFurniture(f.id, { stateColor })
+                )}
+              `
+            : nothing
+        )}
       `;
     }
 
@@ -4312,27 +4878,35 @@ export class FloorplanCardEditor extends LitElement {
       // the button must not misreport the latter as the former.
       const filteredOutEntities =
         !pendingEntities.length && a.haArea ? this._areaHasFilteredOutEntities(a) : false;
+      const aSpec = areaForm(a);
+      const aApply = (patch: Record<string, unknown>, live: boolean) =>
+        this._applyElementPatch("area", a.id, patch, live);
       return html`
-        ${this._renderForm(
-          areaNameForm(a, haAreas.map((ha) => ha.name)),
-          (patch, live) =>
-            // The name field doubles as the HA-area link, so a name change also
-            // decides `haArea` (see areaNamePatch).
-            this._applyElementPatch("area", a.id, areaNamePatch(patch, haAreas), live)
+        ${this._renderGroup(
+          // The name doubles as the HA-area link, so the link status line and
+          // the name-related toggles belong with it.
+          "Identity",
+          this._renderForm(
+            areaNameForm(a, haAreas.map((ha) => ha.name)),
+            (patch, live) =>
+              // A name change also decides `haArea` (see areaNamePatch).
+              this._applyElementPatch("area", a.id, areaNamePatch(patch, haAreas), live)
+          ),
+          this._renderAreaLinkRow(a, haAreas),
+          this._renderForm(formSlice(aSpec, ["showName", "labelSize"]), aApply)
         )}
-        ${this._renderAreaLinkRow(a, haAreas)}
-        ${this._renderForm(areaForm(a), (patch, live) =>
-          this._applyElementPatch("area", a.id, patch, live)
-        )}
-        ${
-          // The climate layer's per-room binding, gated exactly as the energy
-          // layer's per-device one is — see the item branch above.
+        ${this._renderGroup(
+          "What it reads",
+          this._renderForm(formSlice(aSpec, ["entity"]), aApply),
+          // The climate layer's per-room binding — a reading like any other, so
+          // it belongs in this group, exactly as the energy layer's per-device
+          // binding sits in the device's. Gated the same way too: hidden until
+          // the layer is switched on, but shown whenever a value already exists
+          // so a hand-written config's binding stays visible and clearable.
           featureEnabled(this._config, "thermalLayer") || a.tempEntity
-            ? this._renderForm(areaTempForm(a), (patch, live) =>
-                this._applyElementPatch("area", a.id, patch, live)
-              )
+            ? this._renderForm(areaTempForm(a), aApply)
             : nothing
-        }
+        )}
         ${this._renderColorRow({
           label: "Color",
           value: a.color,
@@ -4341,7 +4915,17 @@ export class FloorplanCardEditor extends LitElement {
           onLive: (color) => this._updateAreaLive(a.id, { color }),
           onCommit: (color) => this._updateArea(a.id, { color }),
         })}
-        ${
+        ${this._renderGroup(
+          "Color",
+          this._renderForm(formSlice(aSpec, ["highlight", "opacity", "activeOpacity"]), aApply),
+          this._renderColorRow({
+            label: "Color",
+            value: a.color,
+            swatch: "#03a9f4",
+            placeholder: "(primary)",
+            onLive: (color) => this._updateAreaLive(a.id, { color }),
+            onCommit: (color) => this._updateArea(a.id, { color }),
+          }),
           // The colours the bound entity drives. Same shape furniture and
           // devices already use, and gated the same way — without an entity
           // there is nothing to condition on. Until this existed the Entity
@@ -4364,41 +4948,53 @@ export class FloorplanCardEditor extends LitElement {
                 )}
               `
             : nothing
-        }
+        )}
+        ${this._renderGroup(
+          // What tapping the room does (issue #181). Last, as it is on every
+          // other element: the thing it *does*, after everything it *is*.
+          "Behavior",
+          this._renderForm(
+            formSlice(aSpec, ["tap_action", "hold_action", "double_tap_action"]),
+            aApply
+          )
+        )}
         ${a.haArea
-          ? html`<div class="row wide">
-              <label>Filter entities</label>
-              <input
-                type="checkbox"
-                .checked=${a.filterEntities ?? true}
-                @change=${(e: Event) =>
-                  this._updateArea(a.id, {
-                    filterEntities: (e.target as HTMLInputElement).checked,
-                  })}
-              />
-              <span class="hint"
-                >Scope the entity picker, for devices placed inside this room, to this HA
-                area's entities.</span
-              >
-            </div>`
-          : nothing}
-        ${a.haArea
-          ? html`<div class="row wide">
-              <button
-                ?disabled=${!pendingEntities.length}
-                title=${pendingEntities.length
-                  ? `Add ${pendingEntities.length} device${pendingEntities.length === 1 ? "" : "s"} from this HA area, spread out across the room`
-                  : filteredOutEntities
-                    ? "Every unplaced entity in this HA area is hidden, disabled, diagnostic/config, or an unrecognized device type"
-                    : "Every entity in this HA area is already placed on this floor"}
-                @click=${() => this._addAreaEntities(a)}
-              >
-                <ha-icon icon="mdi:shape-square-plus"></ha-icon>
-                Add all devices in this HA area${pendingEntities.length
-                  ? ` (${pendingEntities.length})`
-                  : ""}
-              </button>
-            </div>`
+          ? this._renderGroup(
+              // Everything that only exists because this room is linked to a
+              // Home Assistant area.
+              "Home Assistant area",
+              html`<div class="row wide">
+                <label>Filter entities</label>
+                <input
+                  type="checkbox"
+                  .checked=${a.filterEntities ?? true}
+                  @change=${(e: Event) =>
+                    this._updateArea(a.id, {
+                      filterEntities: (e.target as HTMLInputElement).checked,
+                    })}
+                />
+                <span class="hint"
+                  >Scope the entity picker, for devices placed inside this room, to this HA
+                  area's entities.</span
+                >
+              </div>`,
+              html`<div class="row wide">
+                <button
+                  ?disabled=${!pendingEntities.length}
+                  title=${pendingEntities.length
+                    ? `Add ${pendingEntities.length} device${pendingEntities.length === 1 ? "" : "s"} from this HA area, spread out across the room`
+                    : filteredOutEntities
+                      ? "Every unplaced entity in this HA area is hidden, disabled, diagnostic/config, or an unrecognized device type"
+                      : "Every entity in this HA area is already placed on this floor"}
+                  @click=${() => this._addAreaEntities(a)}
+                >
+                  <ha-icon icon="mdi:shape-square-plus"></ha-icon>
+                  Add all devices in this HA area${pendingEntities.length
+                    ? ` (${pendingEntities.length})`
+                    : ""}
+                </button>
+              </div>`
+            )
           : nothing}
         <p class="hint">
           Drag inside the fill to move the whole room; drag a vertex handle to reshape it.
@@ -4409,20 +5005,34 @@ export class FloorplanCardEditor extends LitElement {
     if (sel.kind === "tracker") {
       const tr = (this._floor().trackers ?? []).find((x) => x.id === sel.id);
       if (!tr) return html`${nothing}`;
+      const trSpec = trackerForm(tr);
+      const trApply = (patch: Record<string, unknown>, live: boolean) =>
+        this._applyElementPatch("tracker", tr.id, patch, live);
       return html`
-        ${this._renderTrackerSensorRows(tr, "xSensor", "X sensor")}
-        ${this._renderTrackerSensorRows(tr, "ySensor", "Y sensor")}
-        ${this._renderForm(trackerForm(tr), (patch, live) =>
-          this._applyElementPatch("tracker", tr.id, patch, live)
+        ${this._renderGroup(
+          "Zone",
+          this._renderForm(formSlice(trSpec, FloorplanCardEditor.TRACKER_GROUPS[0][1]), trApply)
         )}
-        ${this._renderColorRow({
-          label: "Color",
-          value: tr.color,
-          swatch: "#03a9f4",
-          placeholder: "(primary)",
-          onLive: (color) => this._updateTrackerLive(tr.id, { color }),
-          onCommit: (color) => this._updateTracker(tr.id, { color }),
-        })}
+        ${this._renderGroup(
+          // The two distance sensors that place the marker inside the zone —
+          // the thing a tracker actually is, so it gets its own group rather
+          // than two unlabelled blocks above the box.
+          "Sensors",
+          this._renderTrackerSensorRows(tr, "xSensor", "X sensor"),
+          this._renderTrackerSensorRows(tr, "ySensor", "Y sensor")
+        )}
+        ${this._renderGroup(
+          "Marker",
+          this._renderForm(formSlice(trSpec, FloorplanCardEditor.TRACKER_GROUPS[1][1]), trApply),
+          this._renderColorRow({
+            label: "Color",
+            value: tr.color,
+            swatch: "#03a9f4",
+            placeholder: "(primary)",
+            onLive: (color) => this._updateTrackerLive(tr.id, { color }),
+            onCommit: (color) => this._updateTracker(tr.id, { color }),
+          })
+        )}
       `;
     }
 
@@ -4604,12 +5214,25 @@ export class FloorplanCardEditor extends LitElement {
       background: var(--card-background-color, #fff);
       overflow: hidden;
     }
-    /* Toolbar-icon button (Expand/Exit) — match the gear button's icon+label
-       alignment so it reads as part of the toolbar. */
-    .expand-toggle {
+    /* Toolbar-icon buttons (Expand/Exit, Apply) — match the gear button's
+       icon+label alignment so they read as part of the toolbar. */
+    .expand-toggle,
+    .apply-btn {
       display: inline-flex;
       align-items: center;
       gap: 5px;
+    }
+    /* Apply writes to the dashboard, unlike everything else in the toolbar —
+       accented so it reads as the one committing action. */
+    .apply-btn {
+      color: var(--primary-color, #03a9f4);
+      border-color: var(--primary-color, #03a9f4);
+    }
+    /* Why the last Apply didn't go through; sits in the toolbar so it is
+       visible in the fullscreen workspace too, where nothing else is. */
+    .apply-error {
+      font-size: 12px;
+      color: var(--error-color, #c62828);
     }
     /* Below the two toolbars: the canvas and the element/project sections.
        Stacked at dialog width; split into canvas + docked side panel when
@@ -5158,6 +5781,45 @@ export class FloorplanCardEditor extends LitElement {
       inset: 0;
       pointer-events: none;
     }
+    /*
+     * overlayScale: plan, previewed (issue #192). The same two lines the card
+     * uses, on the box that plays the same part: the stage carries the canvas
+     * ratio, so 100cqw is the plan's own width on screen and --fp-u is one
+     * canvas unit. Declared on .items rather than .stage for the reason the
+     * card documents — an unregistered custom property substitutes as a token
+     * stream, so the cqw resolves where it is used, which stays correct if
+     * --fp-u is ever registered with @property.
+     *
+     * Zoom falls out of it rather than needing a term of its own: the stage's
+     * width is a percentage of the zoom, so zooming in widens the container and
+     * every canvas-unit measure grows with the drawing — which is the mode.
+     */
+    .stage.scale-plan {
+      container-type: inline-size;
+    }
+    .stage.scale-plan .items {
+      --fp-u: calc(100cqw / var(--fp-plan-w));
+    }
+    /* Label padding and offsets go to em so they track the text with the plan,
+       exactly as the card's own scale-plan rules do. Hairlines stay px on
+       purpose there and here: below a pixel they disappear on the small cards
+       this mode is for. */
+    .stage.scale-plan .ilabel {
+      padding: 0.08em 0.33em;
+      border-radius: 0.33em;
+      top: calc(100% + 0.17em);
+      max-width: none;
+    }
+    .stage.scale-plan .ilabel-left,
+    .stage.scale-plan .ilabel-right {
+      top: 50%;
+    }
+    .stage.scale-plan .ilabel-left {
+      right: calc(100% + 0.33em);
+    }
+    .stage.scale-plan .ilabel-right {
+      left: calc(100% + 0.33em);
+    }
     /* Preview of the card's shutter badge. Inherits .items' pointer-events:
        none — the opening underneath stays clickable for selection and drag. */
     .shutter-mark {
@@ -5181,15 +5843,44 @@ export class FloorplanCardEditor extends LitElement {
       --mdc-icon-size: 15px;
       display: flex;
     }
+    /* Grab area = the visible device, matching the card's hit area. A presence
+       ripple is mostly empty air, and while the anchor took pointer events for
+       all of it, a 110px square sat over the plan: the wall or door underneath
+       could not be clicked at all, and neither could a device standing inside
+       the ring. The badge and label answer instead — enough to grab and drag,
+       and it puts back what was buried. */
     .edit-item {
       position: absolute;
       transform: translate(-50%, -50%);
-      pointer-events: auto;
+      pointer-events: none;
       cursor: move;
       display: flex;
       flex-direction: column;
       align-items: center;
       touch-action: none;
+    }
+    .edit-item .badge,
+    .edit-item .ilabel {
+      pointer-events: auto;
+    }
+    .stack-icon,
+    .ripple {
+      pointer-events: none;
+    }
+    /* A ripple-only device has no badge to grab, so its centre answers. */
+    .edit-item .ripple .dot {
+      pointer-events: auto;
+      position: relative;
+    }
+    .edit-item .ripple .dot::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: ${MIN_TOUCH_TARGET}px;
+      height: ${MIN_TOUCH_TARGET}px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
     }
     .badge {
       width: 34px;
@@ -5573,6 +6264,21 @@ export class FloorplanCardEditor extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    /* Label beside the badge (issue #180), mirroring the card's own rule so
+       moving it here shows what the card will do rather than only what the
+       config now says. */
+    .ilabel-left,
+    .ilabel-right {
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .ilabel-left {
+      left: auto;
+      right: calc(100% + 4px);
+    }
+    .ilabel-right {
+      left: calc(100% + 4px);
+    }
     /* The card's own label line, drawn as the card draws it (issue #135):
        full-strength ink, and no width clamp — the card has none, and clipping
        is exactly what would make a long label look right here and wrong live.
@@ -5582,6 +6288,35 @@ export class FloorplanCardEditor extends LitElement {
       color: var(--fp-skin-text, var(--primary-text-color));
       max-width: none;
       overflow: visible;
+    }
+    /* An extra-reading row (issue #180): the entity picker takes the space and
+       the attribute box stays narrow beside it, the same proportions the
+       state-rule rows use for their condition and colour. */
+    .item-reading ha-entity-picker,
+    .item-reading input[type="text"]:not(.reading-attr) {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .item-reading .reading-attr {
+      flex: 0 0 130px;
+      min-width: 0;
+    }
+    /* The visibility toggle belongs to the entity row above it, so it sits
+       tight under it and the gap goes after the pair instead. */
+    .reading-show {
+      margin-top: -4px;
+      margin-bottom: 12px;
+      padding-left: 4px;
+    }
+    .reading-show label {
+      flex: 0 0 auto;
+      font-size: 12px;
+      /* Holds the checkbox it wraps, so the pair reads as one control and the
+         whole thing is a click target. */
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
     }
     /* The panel ("Project" config) and the new element-edit area share the
        same boxed look so the two sections below the canvas read as siblings. */
@@ -5599,7 +6334,12 @@ export class FloorplanCardEditor extends LitElement {
       letter-spacing: 0.06em;
       color: var(--secondary-text-color);
     }
-    /* Element header: kind icon + summary + the selection's actions. */
+    /* Element header: kind icon + summary + the selection's actions.
+       The actions are the fixed part and the summary is the elastic one: a
+       device named after a long entity id used to push Duplicate and Delete
+       off the panel entirely (issue #163), which is unreachable rather than
+       merely ugly. So everything but the title refuses to shrink, and the
+       title truncates instead — its full text stays available on hover. */
     .edit-head {
       display: flex;
       align-items: center;
@@ -5609,18 +6349,28 @@ export class FloorplanCardEditor extends LitElement {
     .edit-head ha-icon {
       --mdc-icon-size: 18px;
       color: var(--secondary-text-color);
+      flex: none;
     }
     .edit-head .edit-title {
       font-size: 13px;
       font-weight: 600;
+      /* min-width:0 is what lets a flex item shrink below its content. */
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .edit-head .head-spacer {
-      flex: 1;
+      /* Grows to push the actions right, but never shrinks the title away
+         while there is still slack of its own to give back. */
+      flex: 1 1 0;
+      min-width: 0;
     }
     .edit-head button {
       display: inline-flex;
       align-items: center;
       padding: 4px 8px;
+      flex: none;
     }
     .edit-head button ha-icon {
       --mdc-icon-size: 16px;
@@ -5671,6 +6421,74 @@ export class FloorplanCardEditor extends LitElement {
     .rows > .hint,
     .rows > p {
       grid-column: 1 / -1;
+    }
+    /* ---- Element panel groups --------------------------------------------
+       The device panel is two dozen controls; ungrouped, finding one meant
+       reading all of them. Each group is a heading and a hairline above it,
+       with real space between groups so the eye can skip a whole section it
+       does not want.
+
+       The rule is on the group rather than between them, and the first group
+       drops it: a line above the very first heading would read as a border
+       around the panel rather than as a separator inside it. */
+    .cfg-group {
+      border-top: 1px solid var(--divider-color, #e0e0e0);
+      padding-top: 14px;
+      margin-top: 18px;
+    }
+    /* A collapsed group is one line, and a column of one-line headings wants
+       to read as a list rather than as eight things with a gap each. */
+    .cfg-group:not(.open) {
+      padding-top: 8px;
+      margin-top: 8px;
+    }
+    /* Ties with the rule above on specificity, so it has to stay below it:
+       the first group leads the panel and takes no space above it whether it
+       is open or shut. */
+    .cfg-group:first-of-type {
+      border-top: none;
+      padding-top: 0;
+      margin-top: 0;
+    }
+    /* The heading names the group without competing with the field labels
+       beneath it: same size, but the primary ink and a little letter-spacing,
+       so it reads as a heading rather than as one more row label.
+
+       It is also the group's disclosure control, so it undoes the panel's
+       generic button look (border, chip padding, capitalize — which would
+       print "What it reads" as "What It Reads") and keeps the heading's own
+       type. Full width so the whole line is the hit target, not just the
+       glyph. */
+    .cfg-group-title {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      width: 100%;
+      margin: 0 0 10px;
+      padding: 2px 0;
+      border: none;
+      border-radius: 0;
+      background: none;
+      cursor: pointer;
+      text-align: left;
+      text-transform: none;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      color: var(--primary-text-color);
+    }
+    /* The chevron is the affordance, so it stays quieter than the title it
+       points at. */
+    .cfg-group-title ha-icon {
+      --mdc-icon-size: 18px;
+      flex: none;
+      color: var(--secondary-text-color);
+    }
+    /* ha-form packs its own fields tightly; the last one in a group should not
+       sit flush against the next group's rule. */
+    .cfg-group > *:last-child {
+      margin-bottom: 0;
     }
     .row {
       display: flex;

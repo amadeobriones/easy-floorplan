@@ -4,10 +4,17 @@
 [![release][release-badge]][release-url]
 [![license][license-badge]](LICENSE)
 
+<a href="https://www.buymeacoffee.com/nicosandller" target="_blank">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important; width: 217px !important;" >
+</a>
+
+--
+
 A Home Assistant Lovelace card for building an interactive floorplan — **with a visual
 drag-and-drop editor**. Draw walls, drop doors and windows, add furniture and labels, and
 place your entities as icons, ripples or live state. Everything scales to the card and
 screen size.
+
 
 <img width="1080" height="608" alt="demo" src="https://github.com/user-attachments/assets/98abaddc-b713-492f-be85-ca5f778f3779" />
 
@@ -17,15 +24,19 @@ screen size.
 
 ## Features
 - **Visual editor** — draw walls, drop doors and windows that snap onto them, drag, nudge with arrow keys, multi-select, copy/paste, undo/redo, zoom.
+  - (${\color{red}NEW!}$) **Apply** — save the plan to the dashboard *without* closing the editor, so you can judge a change on the real card (in a second tab, or by collapsing the editor) instead of in the small preview beside it, then carry straight on. Needs Home Assistant 2025.3 or newer; on anything older the button says so and Save still works.
 - **Devices** — bind any entity to an icon: tap to toggle or open more-info, live state or attribute label, custom icon, size, rotation.
-  - **Presence ripples** — presence sensors drawn as animated rings instead of a static icon.
+  - **Presence ripples** — presence and vibration sensors drawn as animated rings instead of a static icon.
   - (${\color{red}NEW!}$) **Cast light** — a light pools its own color and brightness onto the plan; overlapping pools mix, so a warm lamp and a cool one blend between them.
   - (${\color{red}NEW!}$) **Conditional text / icon / coloring** — threshold and state rules restyle an element from what its entity reads: the badge color, the label, and the glyph itself, so blinds swap between open and closed icons and a thermostat reddens as it heats. The same rules drive furniture and rooms.
  
 <img width="195" height="278" alt="light blend" src="https://github.com/user-attachments/assets/23104587-687b-4c9a-83e8-e83c3d5eb6eb" />
 <img width="240" height="358" alt="conditionals" src="https://github.com/user-attachments/assets/11d359b6-de8c-483c-8763-105ddf7d915b" />
 
-- **Animated doors & windows** — bind a contact `binary_sensor` or `cover` and openings swing, slide or roll with their real state, partial positions included.
+- (${\color{red}NEW!}$) **Many readings, one device** — a sensor that reports temperature, humidity and pressure needs one badge, not three. Add entities one at a time; they show whether or not the device's own state does, so a smart plug can label itself `1.2 kW · 84 · 5 min ago` while the badge colour carries the on/off. The label can sit below, left or right of the badge.
+- **Animated doors & windows** — bind a contact `binary_sensor`, `cover` or `lock` and openings swing, slide or roll with their real state, partial positions included. A lock reads `unlocked` as open, so a door with no contact sensor still animates.
+  - (${\color{red}NEW!}$) **A sensor per leaf** — anything with two leaves takes a second contact and draws them independently: a casement window with one sash open and one shut, a double door ajar on one side, a pair of shutters with one folded back.
+- (${\color{red}NEW!}$) **Offline devices read as offline** — an entity that is unavailable, unknown, or gone from Home Assistant is dimmed (or crossed out), instead of looking exactly like a device someone switched off.
 - (${\color{red}NEW!}$) **Furniture** — 26 gray line-art diagrams (table, sofa, bed, stove, stairs, tv…), each bindable to an entity, in a searchable picker. Every one is a plain JSON file of numbers you can copy: draw your own in the editor's paste box, use it straight away, and open a PR when it's good. No SVG, so nothing you paste can run anything.
 - **Areas** — trace room polygons that color live from an entity, and link them to Home Assistant areas to scope entity pickers and bulk-add devices.
 - **Live position trackers** — map one or two distance sensors (mmWave / radar) onto a marker that moves across the plan in real time.
@@ -36,7 +47,7 @@ screen size.
 <img width="444" height="313" alt="night" src="https://github.com/user-attachments/assets/1590b710-d88f-4a34-986b-b08640a45f4c" />
 
 
-- **Multiple floors** — per-floor elements with a switcher in both the editor and the card.
+- **Multiple floors** — per-floor elements with a switcher in both the editor and the card. (${\color{red}NEW!}$) Give a staircase `goToFloor: up` and clicking it takes you there.
 - **Background image** — trace over a floor-plan scan, per floor, with adjustable opacity.
 - (${\color{red}NEW!}$) **Skins** — restyle the whole plan from one line of config: `default` follows your Home Assistant theme, `odnetnin` is chunky charcoal on cream, `pastel` is soft and low-contrast, `tron` is neon on near-black. Colors you set on an element yourself always win.
   
@@ -96,9 +107,14 @@ then pick the entity in the **Element** section below the canvas.
   both read `Name · state`. **Label size** sets the font size. The editor canvas draws
   the same line the card will, so turning one on is visible straight away; a device
   showing neither still gets a dimmed editor-only label so you can tell it apart.
-- **Two readings in one** — add a **Second entity** to render e.g. `21.5 °C · 45%`. Or set
-  **Attribute** / **2nd attribute** to read attributes instead of states, so a single
-  climate entity shows its temperature and humidity.
+- **Other entities** — **+ Add entity**, right under the first one, appends as many as the
+  device has: `21.5 °C · 45% · 1013 hPa`. Each row picks an entity, an attribute, or both
+  — leave the entity empty and it reads that attribute off this device, so one climate
+  entity can show four of its own numbers. See
+  [More readings per device](#more-readings-per-device).
+- **Label position** — **Below** the badge (the default), or hung off its **left** or
+  **right**. A reading under a badge grows in both directions and meets whatever sits
+  beside it; hung off one side it grows one way only.
 - **Badge shows** — one dropdown for what the device draws: *Icon* — **still**,
   **spinning** or **pulsing** — its *Value*, or *Nothing* (label only). **Value** draws
   the reading inside the badge — a thermostat reads `21°` in the circle your state rules
@@ -228,21 +244,33 @@ window, a `blind` → a slider, a `garage` or `shutter` → a roll-up); adjust a
   fixed panels)* if the outer quarters of your door are fixed glass, and *converging* if
   every leaf slides. **Slide** sets the direction; a style that moves both panels has
   none.
-- **One sensor per panel** — a two-panel slider with a contact on each leaf takes a
-  **Second panel** entity, and then each panel opens and accents on its own state: left
-  open and right shut draws exactly that. Leave it empty and both panels follow the first
-  entity, as they always have. **Invert** covers both, and a tap still acts on the first.
+- **One sensor per leaf** — anything with two leaves takes a **Second leaf** entity, and
+  then each leaf opens and accents on its own state: left open and right shut draws
+  exactly that. That means the two-panel sliders above, and any hinged double — a
+  casement window (`sash: double`, the window default) or a double door. Leave it empty
+  and both leaves follow the first entity, as they always have. The opening's own invert
+  switch covers both, and a tap still acts on the first.
 - **Orientation** — **Hinge** (left / right) and **Opens** (this side / other side) face a
   swing door any of four ways; they're pure mirrors (`flipH` / `flipV`), so the animation
   follows.
 - **External shutters** — bind a second `cover` or contact as **Shutter** and it shares
   the wall gap with the opening, rendering independently — so an open window behind a
   closed shutter shows both. **Shutter type** picks *Hinged* (louvered panels folding back
-  against the façade) or *Roll-up*, defaulting from the entity.
+  against the façade) or *Roll-up*, defaulting from the entity. A hinged pair has a
+  **Second shutter panel** of its own, on the same terms as the leaf above — a shutter is
+  a layer *over* the opening, so a double casement behind a pair of shutters has four
+  leaves and can carry four contacts.
 - **Active color** — the leaf, sash and arc take an accent color while open. Defaults to
   the primary color.
-- **Invert** — flip the open/closed interpretation (and the percentage) for sensors wired
-  the other way.
+- **Show icon** — an optional badge beside the opening carrying its own entity's icon,
+  which changes with the state, and its dialog on a tap. Off by default: a leaf that has
+  swung is still on screen saying so. The roll-up is the case that wants it — raised, its
+  curtain has left the floor plane and only the coloured track remains. With a shutter
+  bound too, the two badges take opposite faces of the wall.
+- **Invert door animation** (**Invert window animation** on a window) — flip the
+  open/closed interpretation (and the percentage) for sensors wired the other way. A bound
+  shutter gets its own **Invert shutter animation**, since a reed contact on the panels
+  routinely disagrees with the sensor behind them about which way round `on` means open.
 - **Tap to control** — a controllable `cover` toggles (`cover.toggle`); read-only sensors
   and position-only covers open the more-info dialog.
 
@@ -255,6 +283,10 @@ openings:
   - { id: bay, type: window, motion: slide, sliderStyle: biparting-bypass, x: 300, y: 500, length: 200, angle: 0, entity: binary_sensor.sliding_door_left, secondaryEntity: binary_sensor.sliding_door_right }
   # the same door with no fixed glass: both leaves slide and stack in the middle
   - { id: terrace, type: window, motion: slide, sliderStyle: converging, x: 300, y: 700, length: 200, angle: 0, entity: binary_sensor.terrace_left, secondaryEntity: binary_sensor.terrace_right }
+  # a casement window with a contact on each sash: one open, one shut
+  - { id: study, type: window, x: 820, y: 100, length: 120, angle: 0, entity: binary_sensor.study_left, secondaryEntity: binary_sensor.study_right }
+  # a single-sash window behind a pair of shutters, one contact per panel
+  - { id: kitchen, type: window, sash: single, x: 500, y: 100, length: 120, angle: 0, shutterEntity: binary_sensor.persiana_left, shutterStyle: swing, shutterSecondaryEntity: binary_sensor.persiana_right }
   # a swing door hinged on the right, opening into the other room
   - { id: hall, type: door, x: 300, y: 100, length: 80, angle: 0, flipH: true, flipV: true }
 ```
@@ -319,17 +351,18 @@ size** are per tracker.
 
 Turn on a device's **Ripple** toggle and it draws animated concentric rings behind the
 badge — set **Badge shows** to *Nothing* for the rings alone. They pulse outward and fade
-while presence is detected, and collapse to a faint dot when it's clear, so the spot stays
-marked without pulling the eye.
+while the device detects something, and collapse to a faint dot when it's clear, so the
+spot stays marked without pulling the eye.
 
 **Ripple color** and **ripple size** are per device (the color follows **Active color**
 and state rules unless you set one).
 
-The toggle appears only on devices that detect presence — a `binary_sensor` whose device
-class is `motion`, `occupancy` or `presence`, or a `device_tracker` / `person` — the same
-way **Cast light** appears only on lights: a ring claims someone is there, so it's offered
-where that claim can be true. The underlying `display` key still works on any entity in
-YAML.
+The toggle appears only on devices that detect something where they sit — a
+`binary_sensor` whose device class is `motion`, `occupancy`, `presence` or `vibration`, or
+a `device_tracker` / `person` — the same way **Cast light** appears only on lights: a ring
+claims something is happening there, so it's offered where that claim can be true. A
+vibration sensor on a door therefore rings like a motion sensor does. The underlying
+`display` key still works on any entity in YAML.
 
 <img width="540" height="304" alt="ripple_demo_gif" src="https://github.com/user-attachments/assets/e43949cf-13a2-48f8-804d-73738299475f" />
 
@@ -363,9 +396,18 @@ The editor writes this config for you; manual editing is optional.
 | `sunDimming` | boolean | `false` | Dim through dusk, brighten through dawn, from the HA instance's sun. See [Follow the sun](#follow-the-sun). |
 | `sunBrightnessMin` | number | `0.45` | Brightness once the sun is fully down, 0–1. |
 | `sunBrightnessMax` | number | `1` | Brightness in full daylight, 0–1. |
+| `sunlight`   | boolean  | `false`            | Let the sun in: light through every window and open door, walls casting the shade behind them. See [Sunlight](#sunlight). |
+| `north`      | number   | `0`                | Where north points on the plan, degrees clockwise from the top of the canvas. What makes the sun angle describe the house rather than the drawing. |
+| `sunBearing` | number   | live sun           | Compass bearing of **where the sun is** (0 = north, 90 = east); the light travels the other way. Absent, the plan follows `sun.sun`'s azimuth and the light swings through the day. |
+| `sunShade`   | boolean  | `true`             | Darken everywhere the light does not reach. Off draws the patches alone, leaving the plan as bright as it was. |
+| `sunlightColor` | string | warm white        | Colour of the light the openings let in. |
+| `sunShadeColor` | string | black             | Colour of that shade — a blue reads as cold north light, a warm grey as dusk. |
+| `sunReach`   | number   | `0.34`             | How far light carries from an opening, as a fraction of the plan's shorter side. It fades out over that distance rather than stopping at it, and shortens as the sun climbs. Clamped to `0.02`–`1.5`; anything unreadable falls back to the default. |
 | `skin`       | string   | `default`          | Built-in look for the whole plan: `default`, `odnetnin`, `pastel` or `tron`. See [Skins](#skins). |
 | `pressEffect`| string   | `scale`            | Feedback when a device is pressed: `scale`, `ripple`, `flash` or `none`. Only devices that actually do something respond. See [Press feedback](#press-feedback). |
-| `overlayScale`| string  | `fixed`            | How badges, labels, room names and text are sized: `fixed` = screen pixels, `plan` = canvas units so they scale with the drawing. See [Overlay scale](#overlay-scale). |
+| `offlineStyle`| string  | `dim`              | How a device whose entity is **offline** is drawn: `dim`, `strike` (dimmed with a diagonal through the badge) or `none`. See [Offline devices](#offline-devices). |
+| `compactHeader`| boolean | `false`           | Draw the title inside the plan and the floor buttons in a row, instead of spending a card header row on them. See [Compact header](#compact-header). |
+| `overlayScale`| string  | `fixed`; `plan` in new plans | How badges, labels, room names and text are sized: `plan` = canvas units so they scale with the drawing, `fixed` = screen pixels. A card added from the picker is created with `plan`; a config that doesn't say renders `fixed`, which is what every plan drawn before the option existed was laid out in. See [Overlay scale](#overlay-scale). |
 | `background` | string   | skin / card bg     | Canvas background color (CSS / hex). Overrides the skin's paper. |
 | `floors`     | Floor[]  | —                  | Per-floor element groups (see [Floor](#floor)).   |
 | `defaultFloor`| string  | first floor        | Id of the floor shown first.                 |
@@ -431,21 +473,26 @@ distorted anyway.
 | `id`          | string                      | Unique id.                                             |
 | `type`        | `door` \| `window`          | The kind of opening.                                   |
 | `motion`      | `swing` \| `slide` \| `roll` | How it moves: hinged (default), sliding panels, or a roll-up curtain (garage / roller shutter). |
+| `sunlight`    | boolean                     | `false` takes this opening out of [Sunlight](#sunlight) entirely — it admits no light and blocks it like wall, however open it is drawn. Editor: **Lets sunlight in**. For the solid door with no sensor, which the plan draws open. |
+| `glazed`      | boolean                     | Lets sunlight through even when shut. Defaults per type — a window is glass, a door is not. Set `true` on a **patio or French door**, which is drawn as a door because that is how it swings but is a wall of glass; set `false` on an opaque window like a glass-brick panel or a hatch, which then admits light only as far as it is open. Only [Sunlight](#sunlight) reads it. |
 | `sash`        | `single` \| `double`        | Swing openings only: how many hinged leaves. The default differs by type, because the ordinary cases do — a window opens with `double` (two casement sashes), a door with `single` (one leaf across the opening). Set it to draw a single-sash window or a **double door**; both leaves then hinge at their own jamb and trace their own arc. Ignored by sliding and rolling openings. |
 | `shutterEntity` | string                     | An external shutter over the same gap (`cover` or contact), with its own open/closed state. With `entity` bound too, the card draws the shutter's own icon beside the opening — open/closed in both glyph and colour — and tapping that icon opens the shutter. |
 | `shutterStyle` | `swing` \| `roll`           | Louvered panels or a roll-up curtain. Defaults from the entity (contact → `swing`, `cover` → `roll`). |
 | `shutterInvert` | boolean                   | Flip the shutter's open/closed reading — a reed contact on hinged panels often reads `on` when they are shut. Separate from `invert`. |
+| `shutterSecondaryEntity` | string            | Hinged shutters only: a second contact for the shutter's other panel, so one can be folded back while the other is still across the glass. Its own key rather than `secondaryEntity` — a double casement behind a pair of shutters has four leaves. `shutterInvert` covers both panels; the roll curtain ignores it. |
 | `shutterActiveColor` | string               | Shutter color while open. Falls back to `activeColor`, then the accent. |
 | `shutterFlipV` | boolean                    | Hang hinged panels on the sash's own side of the wall instead of the far side. Ignored by the roll curtain. |
 | `x`, `y`      | number                      | Center position.                                       |
 | `length`      | number                      | Length along the wall.                                 |
 | `angle`       | number                      | Rotation in degrees.                                   |
-| `entity`      | string                      | Contact `binary_sensor` / `cover` driving open/closed (or `current_position` for partial). |
-| `secondaryEntity` | string                  | Two-panel sliders (`biparting`, `biparting-bypass`, `converging`): a second contact / `cover` for the other panel, so each leaf moves on its own state. Unset = both follow `entity`. |
+| `entity`      | string                      | Contact `binary_sensor`, `cover` or `lock` driving open/closed (a `cover`'s `current_position` gives partial travel). A **lock** reads `unlocked` as open and `locked` as closed — see [Doors on locks](#doors-on-locks). |
+| `secondaryEntity` | string                  | Anything with **two leaves**: a second contact / `cover` for the other leaf, so each moves on its own state. That means the two-panel sliders (`biparting`, `biparting-bypass`, `converging`) and any hinged double — a casement window, or a `sash: double` door. `entity` drives the leaf at the −x jamb, so `flipH` swaps which sensor draws which. Unset = both follow `entity`; ignored where there is only one leaf. |
 | `invert`      | boolean                     | Flip the open/closed interpretation.                   |
-| `activeColor` | string                      | Leaf/arc color while actively open (default primary).  |
+| `activeColor` | string                      | Leaf/arc color while actively open (default primary). On a roll-up it colours the curtain and the track it leaves behind, so a fully raised shutter still reads as open. |
 | `flipH`       | boolean                     | Mirror left↔right. Swing door: hinge jamb. Sliding: slide direction. |
 | `flipV`       | boolean                     | Mirror across the wall so a swing opening faces the other room. |
+| `showIcon`    | boolean                     | Draw this opening's **own** icon beside it (default `false`). Editor: **Show icon**. For the roll-up: raised, its curtain is gone and only the coloured track is left, which is easy to miss across a room. Tapping the badge opens the entity's dialog. It sits on the opposite face of the wall from the shutter's badge, so an opening with both never stacks them. |
+| `icon`        | string                      | Override that icon. Absent, it is the entity's own — a **pair**, so the glyph itself says open or closed; an override is one glyph for both, and colour still reports the state. |
 | `showShutterIcon` | boolean                 | Draw that icon (default `true` whenever both are bound). Editor: **Shutter icon**. Turning it off changes nothing about the gestures — for a plan where every window has a shutter and the icons start to shout. |
 | `shutterIcon` | string                      | Override the icon's glyph. Left unset it follows the shutter entity, whose default comes in an open/closed pair; an override is one glyph for both states, and colour still reports the state. |
 | `tapTarget`   | `opening` \| `shutter`      | With both entities bound, which one a tap acts on (default `opening`); the other moves to press-and-hold. Editor: **Tap opens**. Pointing it at the shutter opens the shutter's dialog — it does not drive the motor; set `tap_action: toggle` for that. |
@@ -459,9 +506,9 @@ distorted anyway.
 | ------------- | -------------------------------------- | ------------ | ------------------------------------------------------ |
 | `id`          | string                                 | —            | Unique id.                                             |
 | `entity`      | string                                 | —            | Entity to bind. Without one the device is a static badge. |
-| `secondaryEntity` | string                             | —            | Second entity shown alongside (e.g. humidity).         |
+| `secondaryEntity` | string                             | —            | **Legacy** spelling of the first `readings` row. Still read — it goes at the head of the list — but it has no editor field, and editing a device's readings rewrites it. Use `readings`. |
 | `attribute`   | string                                 | —            | Show this attribute instead of the state (e.g. `current_temperature`). |
-| `secondaryAttribute` | string                          | —            | Attribute for the 2nd reading — from `secondaryEntity`, or from `entity` when none. |
+| `secondaryAttribute` | string                          | —            | **Legacy**, as above: the attribute for that first row — from `secondaryEntity`, or from `entity` when none. |
 | `stateColor`  | rule[]                                 | —            | Badge/label/icon color rules, regardless of on/off; beats `activeColor`. Each is `{ above?, below?, state?, state_not?, color, icon?, entity?, animation? }` — see **Color & icon by state** under [Devices](#devices) for the full precedence. |
 | `x`, `y`      | number                                 | —            | Position.                                              |
 | `kind`        | light/switch/sensor/binary_sensor/climate/cover/media_player/fan/camera/lock/humidifier/vacuum/generic | inferred | Used for the default icon. |
@@ -469,7 +516,7 @@ distorted anyway.
 | `name`        | string                                 | friendly name| Label / tooltip override.                             |
 | `size`        | number                                 | `34`         | Icon badge diameter (px).                              |
 | `angle`       | number                                 | `0`          | Icon rotation (deg).                                   |
-| `display`     | `badge` \| `ripple` \| `iconRipple`    | `badge`      | How the device is drawn. The editor spells this as the **Ripple** toggle (plus **Badge shows: Nothing** for `ripple`) and offers it on presence devices only; in YAML it works on any entity. |
+| `display`     | `badge` \| `ripple` \| `iconRipple`    | `badge`      | How the device is drawn. The editor spells this as the **Ripple** toggle (plus **Badge shows: Nothing** for `ripple`) and offers it only on devices that detect something where they sit (see [Presence ripples](#presence-ripples)); in YAML it works on any entity. |
 | `iconAnimation` | `auto` \| `none` \| `spin` \| `pulse` | `auto`       | Animate the icon while active. `auto`: fan spins; media player / vacuum pulse. The editor spells this as the icon options of **Badge shows**, showing `auto` as whatever it resolves to. |
 | `activeColor` | string                                 | theme color  | Badge color while on. Ignored while `stateColor` rules match. |
 | `rippleColor` | string                                 | `activeColor`| Ripple ring color, falling back to `activeColor` then the primary color. |
@@ -478,12 +525,14 @@ distorted anyway.
 | `glowRadius`  | number                                 | `140`        | Radius of the cast pool at full brightness, in canvas units. A dimmer lamp casts a proportionally smaller pool, down to half this. |
 | `glowColor`   | string                                 | `#ffd9a0`    | Pool color for a bulb that can't report one; color-capable lights use their own. |
 | `badgeContent` | `icon` \| `value` \| `none`           | `icon`       | What the badge holds. `value` draws the reading inside it, falling back to the icon when there is no number; `none` leaves the label alone. |
-| `badgeEntity` | `primary` \| `secondary`               | automatic    | Which entity a `value` badge reads. Unset picks the first with a number to show; set, only that entity is read. |
+| `badgeEntity` | `primary` \| number                    | automatic    | Which reading a `value` badge shows: the device's own entity, or an index into `readings`. Unset picks the first with a number; set, only that one is read (an index past the end shows the icon). `secondary` is accepted as the legacy spelling of `0`. |
 | `showIcon`    | boolean                                | `true`       | **Deprecated** — use `badgeContent`. Honoured only when it is unset (`false` = `none`). |
 | `powerEntity` | string                                 | —            | A watts sensor for this device. Only read when the **Energy layer** is on, which then draws a halo under the badge coloured by the live draw. See [Optional features](#optional-features). |
 | `hideWhenInactive` | boolean                           | `false`      | Hide on the card while the entity is inactive. Always shown, dimmed, in the editor. |
-| `showState`   | boolean                                | sensors only | Show the entity state in the label line.               |
+| `showState`   | boolean                                | sensors only | Show the entity state in the label line. Governs this device's **own** state only — `readings` show regardless. |
 | `showName`    | boolean                                | `false`      | Show the device's name in the label line (`Name · state` when combined). |
+| `readings`    | `{ entity?, attribute?, showState? }[]` | —           | Everything this device reads beyond its own state — a sensor's humidity and pressure, a plug's power, link quality and battery. These print whatever the **device's** `showState` says, since that one is about the device's own entity. To hide one of *these*, set its **own** `showState: false`, which keeps it bound (the badge can still read it) without printing it. See [More readings per device](#more-readings-per-device). |
+| `labelPosition` | `below` \| `left` \| `right`         | `below`      | Where the label sits relative to the badge. |
 | `labelSize`   | number                                 | `12`         | Label line font size (px).                             |
 | `tap_action`  | ActionConfig                           | per domain   | Standard Lovelace action. By default `light`, `switch`, `fan` and `input_boolean` toggle and everything else — covers included — opens more-info. |
 | `hold_action` / `double_tap_action` | ActionConfig         | —            | Optional extra gestures.                               |
@@ -536,11 +585,11 @@ with nothing to configure. Windows behave the same way, so an open one spills li
 outside. A cover reporting a partial position opens a proportional gap, and at night the
 clearing a lit room holds against the dark reaches through the same doorways its pool does.
 
-A two-panel slider counts **both** its leaves, so a door with a sensor on each opens a gap
-when either one does. How wide follows what the style actually draws: `biparting` sends its
-leaves into the walls and can clear the whole opening, while `biparting-bypass` and
-`converging` keep theirs inside the frame and so clear at most half of it however wide open
-they are.
+An opening with two leaves counts **both** of them, so one with a sensor on each opens a
+gap when either one does. How wide follows what the symbol actually draws: `biparting`
+sends its leaves into the walls and can clear the whole opening, as does a hinged double
+— each sash swings clear of its own half — while `biparting-bypass` and `converging` keep
+theirs inside the frame and so clear at most half of it however wide open they are.
 
 Pools are drawn above room fills but below furniture and walls, so light reads as cast onto
 the floor. Furniture under a lit lamp picks up about half the cast, enough to read as lit
@@ -553,7 +602,7 @@ without turning into the color of the light. Pools never intercept clicks.
 
 ### Furniture
 
-`{ id, type, x, y, w, h, angle?, hand?, color?, entity?, activeColor?, stateColor? }`
+`{ id, type, x, y, w, h, angle?, hand?, color?, entity?, activeColor?, stateColor?, goToFloor? }`
 
 `type` names a **symbol** — one of the ~26 the card ships with (`table`, `sofa`, `bed`,
 `fridge`, `stairs`, …; the full set is [`furniture/`](furniture/), a file each), or one you
@@ -568,6 +617,9 @@ The editor's **+ Add** picker draws every symbol at its real size and is searcha
 Bind an **entity** and `stateColor` / `activeColor` recolor the whole diagram — a plant
 goes red when its soil sensor says it needs watering, a cabinet highlights while its
 contact sensor is open.
+
+**`goToFloor`** (`up` / `down`) makes clicking the piece change floor — written for the
+`stairs` symbol. See [Stairs that change floor](#stairs-that-change-floor).
 
 ```yaml
 { id: plant1, type: plant, x: 300, y: 220, w: 40, h: 40,
@@ -631,15 +683,17 @@ animated inside a rectangular tracked area:
 
 ### Area
 
-`{ id, points, name?, showName?, labelSize?, color?, opacity?, haArea?, filterEntities?, entity?, stateColor?, activeColor?, activeOpacity?, borderColor?, borderWidth?, highlight?, tempEntity? }`
+`{ id, points, name?, showName?, labelSize?, color?, opacity?, haArea?, filterEntities?, entity?, stateColor?, activeColor?, activeOpacity?, borderColor?, borderWidth?, highlight?, tempEntity?, tap_action?, hold_action?, double_tap_action? }`
 
 - `points` — `{ x, y }` vertices in drawing order, implicitly closed last-to-first.
 - `name` / `showName` — label centered on the polygon (`showName` defaults `true`).
   Mirrors the linked HA area's name when `haArea` is set.
 - `labelSize` — that label's size, `8`–`40`, default `14`. Px under `overlayScale: fixed`,
-  canvas units under `plan`. Small rooms want a smaller number than the big ones beside them.
-  Left unset on a `fixed` card the size stays in the stylesheet, so a card-mod rule on
-  `.area-label` still wins; set it, or switch to `plan`, and it moves inline and takes over.
+  which is what a plan renders as unless it says otherwise; canvas units under `plan`,
+  which is what a new plan is created with. Small rooms want a smaller number than the big
+  ones beside them. Left unset on a `fixed` card the size stays in the stylesheet, so a
+  card-mod rule on `.area-label` still wins; set it, or switch to `plan`, and it moves
+  inline and takes over.
 - `color` / `opacity` — the room's fill; theme primary and `0.25` by default.
 - `haArea` — id of a linked Home Assistant area, set by the editor when `name` matches one.
 - `filterEntities` — with `haArea` set, scopes the entity picker for devices inside this
@@ -663,6 +717,12 @@ animated inside a rectangular tracked area:
   down the middle, an exterior wall colors on its inside face only. `borderWidth` is the
   width seen on the room's own side and defaults to `4` here; widen it and the band runs
   past the wall onto the floor.
+- `tap_action` / `hold_action` / `double_tap_action` — standard Lovelace actions on the
+  room itself. **Tap already does something** — it zooms the plan to the room — so setting
+  `tap_action` *replaces* that zoom; leaving it unset keeps it. Put the action on hold or
+  double-tap to have both. An action's `entity` falls back to the area's own, so a room
+  bound to a presence sensor needs no second mention of it. `tap_action: { action: none }`
+  turns the zoom off without adding anything.
 
 ```yaml
 areas:
@@ -1051,36 +1111,157 @@ card_mod:
     }
 ```
 
+## Sunlight
+
+A floor plan is a section through a house, so it has no depth by construction. Letting the
+sun in gives it some, from where depth actually comes from.
+
+```yaml
+sunlight: true    # light through the windows and open doors
+north: 20         # north points 20° clockwise from the top of the canvas
+sunBearing: 135   # the sun sits in the south-east; omit to follow the real one
+```
+
+**Sunlight** lets the light in through the openings. The sun is far enough away that its
+rays arrive parallel, which makes this exact rather than an impression — a wall's shadow is
+precisely that wall moved along the light, and the patch a window admits is precisely its
+gap moved the same way. So:
+
+- every **window** admits its whole gap, open or shut, because glass is transparent — and
+  so does anything `glazed`, which is what a patio or French door is: drawn as a door
+  because that is how it swings, but a wall of glass;
+- anything **opaque** admits exactly as far as it is open, and no further: a door ajar
+  throws a narrow patch, not the one it would throw standing wide open. Sliding styles
+  count the gap they actually clear rather than the distance a leaf travels, so a
+  converging pair reads the same here as it draws;
+- a patch **fades out from its opening** over the distance the light actually travels
+  before a wall stops it, so it is always faint by the time it ends, whatever size the
+  room is. `sunReach` is the ceiling on that distance, not a fixed span. The falloff is
+  an ellipse fitted to the patch — long along the light, narrow across it — so the tip
+  rounds off and the flanks dim, instead of the light stopping at an edge;
+  What ends a patch is that circle, not the edge of any shape: the beam's outline always
+  extends past the point the light has faded to nothing, so you see the arc and never a
+  straight cut across the room;
+- while the plan follows the real sun, that reach **shortens as the sun climbs** — a patch
+  is about as deep as the opening is tall over the tangent of the sun's angle, so a midday
+  sun lays a short patch at your feet and an evening one rakes across the room. A pinned
+  `sunBearing` states a picture rather than reading the sky, so it keeps the plain reach;
+- **walls cast the shade behind them**, cutting the patches — and the part of a door that
+  is still shut casts shade like the wall it stands in, while an open doorway casts none,
+  the same rule the lamps already follow;
+- **only the openings the sun shines on are sources.** Trace back along the light: if a
+  wall stands between an opening and the sky, that opening is not letting the sun in. So
+  the shaded façade stays dark, and an interior door is never a second sun. Light still
+  travels *through* an interior doorway — the beam from the window upstream carries on,
+  because that wall's shade has the same gap cut in it — it simply does not start there
+  and widen to the doorway's own width (issues #177 / #178);
+- a **shutter that is all the way down** stops the light whatever the glass says — that is
+  what a shutter is for, and a window behind a closed one is as dark as a wall;
+- an opening with `sunlight: false` is **wall to the sun**: no patch of its own, and it
+  stops a beam crossing it. That is the answer for a solid front door with no sensor bound
+  — the plan draws such a door open, the light believes the drawing, and the corridor
+  behind it filled with sunshine the door has never let in;
+- everywhere the light never reaches is drawn a shade darker — turn `sunShade` off for the
+  patches alone.
+
+`sunBearing` says where the sun **is**; the light travels the opposite way. With the sun in
+the south-west it comes in through the south-west windows and falls toward the north-east.
+
+**North** is what makes the angle a statement about the *house*. Without it, "the sun is in
+the south-east" would only mean "toward the bottom-left of the drawing", and the same house
+traced at a different angle would be lit from the wrong side. Set it once and every bearing
+turns with it.
+
+**The sun's height** comes from the same entity while the plan follows it: `sun.sun`'s
+`elevation` says whether there is any light at all. Below the horizon nothing is drawn — a
+plan does not keep its beams all night — and over the first degrees above it the light
+fades in, so sunrise and sunset are a ramp rather than a switch. An unreadable `sun.sun`
+leaves the plan lit, never stuck in a night that never ends — and unaimed rather than
+aimed wrongly: the bearing falls back to south-east instead of reading a missing azimuth
+as due north.
+
+Set `sunBearing` and **the light stays on**, at that angle, around the clock. Stating an
+angle is a decision about the picture rather than a reading of the sky, so the elevation
+stops applying with it: a plan that pins its sun and then goes dark every evening would be
+half-following a sun it had already declined to follow.
+
+**`sunBearing`** pins the light. Leave it out and the plan follows `sun.sun`'s azimuth, so
+the light swings through the day — the better picture, but one that moves while you are
+laying a plan out, and one with no sensible answer at night. It stacks with
+[Follow the sun](#follow-the-sun), which dims the whole plan after dark and has the last
+word: there is nothing to let in at night.
+
+Skins can restyle both through `--fp-skin-sunlight` and `--fp-skin-sunshade`.
+
 ## Overlay scale
 
 The card draws in two layers. Walls, doors, furniture and room fills are SVG, scaled from
 the canvas to whatever width the card gets — draw at any size, they always fit. Badges,
-labels, room names and text are HTML on top of that, so they stay upright under
-`rotation` and can take clicks, and by default they are sized in **screen pixels**.
+labels, room names and text are HTML on top of that, so they stay upright under `rotation`
+and can take clicks.
 
-Those two agree while the card renders at roughly its canvas size. Below that they drift
-apart: a `980`-wide plan shown `500` wide draws every wall at half size while a 14px room
-name stays 14px, so names spill past their rooms and collide with the badges under them.
-Nothing in the config can fix that, because a label's px size doesn't know what scale the
-plan ended up at.
+**A new plan is created with the overlay in canvas units too** (`overlayScale: plan`), so
+both layers shrink together and the card looks the same at every size — a scale drawing
+rather than a drawing with fixed-size furniture on it. Every measure follows: `size` and
+`labelSize` on a device, the reading drawn inside a badge, `size` on text, an area's
+`labelSize`, and `rippleSize`. Hairlines deliberately don't — a badge border and a label's
+drop shadow are about a pixel either way, and scaling them down is how you lose them.
 
-`overlayScale: plan` sizes the overlay in **canvas units** instead, so both layers shrink
-together and the card looks the same at every size — a scale drawing rather than a drawing
-with fixed-size furniture on it. Every measure follows: `size` and `labelSize` on a
-device, the reading drawn inside a badge, `size` on text, an area's `labelSize`, and
-`rippleSize`. Hairlines deliberately don't — a badge border and a label's drop shadow
-are about a pixel either way, and scaling them down is how you lose them.
+Sizes then mean the same thing as everything else in the config: `labelSize: 14` is 14
+units on a `980`-unit-wide canvas, about 1.4 % of the card's width whatever that turns out
+to be.
+
+**The editor previews whichever mode the plan uses.** The canvas sizes its badges and
+labels the same way the card will, so the number you type is the number that renders — and
+zooming the canvas previews the card at other widths. (Before this it always drew screen
+pixels, so a plan in canvas units looked right in the editor and small on the dashboard,
+which is what made 1.5's change so hard to place.)
+
+### `fixed`, and when to reach for it
+
+`overlayScale: fixed` pins the overlay to **screen pixels** instead:
 
 ```yaml
 type: custom:easy-floorplan-card
 width: 980
 height: 700
-overlayScale: plan
+overlayScale: fixed
 ```
 
-Sizes are read in canvas units under `plan`, so the numbers mean the same thing as
-everything else in the config: `labelSize: 14` is 14 units on a `980`-unit-wide canvas,
-about 1.4 % of the card's width whatever that turns out to be.
+That is the original behaviour, and what a config that doesn't mention `overlayScale`
+still renders as. It agrees with the drawing only while the card renders at roughly its
+canvas size — which is not something a plan gets to
+decide, because the dashboard hands it whatever width it has. Below that the two come
+apart: a `980`-wide plan shown `500` wide draws every wall at half size while a 14px room
+name stays 14px, so names spill past their rooms and collide with the badges under them.
+Nothing in the config fixes it, because a label's px size doesn't know what scale the plan
+ended up at.
+
+It also loses a **cluster**. A group of badges placed close together — three sensors of the
+same physical device, say — has positions that scale with the plan and sizes that do not,
+so a cluster neatly spaced on a wide card collides on a narrow one: the badges stay 34px
+while the gaps between them shrink. Under `plan` the whole cluster shrinks as one and the
+spacing you set is the spacing you keep. (That is the answer to "my grouped icons drift
+apart when the card resizes" — though the better answer is often to have no cluster at
+all: put the readings on **one** device with [`readings`](#more-readings-per-device) and
+there is no relative position left to preserve.)
+
+Reach for `fixed` when the card renders **larger** than its canvas, or on a wall tablet
+where a px floor under the text is what keeps it readable from across the room.
+
+> **Upgrading from 1.5.x?** 1.5.0 changed what a *missing* `overlayScale` meant, which
+> resized the overlay of every plan that had never set one — including plans whose author
+> had deliberately chosen the pixels, since that was the default at the time and the editor
+> wrote nothing down for it. On a card narrower than its canvas the badges came out a
+> fraction of their size (issue #192). That is undone: **a config with no `overlayScale`
+> renders in pixels, as it always did.** Canvas units are what a plan wants, so a card
+> added from the picker is created with `overlayScale: plan` written into it — a new
+> default belongs in new configs, not in a changed reading of old ones.
+>
+> If you liked what 1.5 did, add `overlayScale: plan` and keep it — or pick **Canvas
+> units** under **Display** in the editor, which now writes your choice down instead of
+> omitting it for being the default. Merely opening that panel changes nothing: a plan's
+> YAML gains the key when you choose a mode, not because you looked at the setting.
 
 ### Where it helps, and where it costs
 
@@ -1102,11 +1283,280 @@ to compensate — a `labelSize` of `20`–`24` on a card at half its canvas widt
 where the default was. That is a real trade, not a free win: sizes are relative, and
 nothing puts a floor under them.
 
-Use it whenever the card renders smaller than its canvas but not drastically so — a
-dashboard tile, a sidebar, a desktop widget. Leave it off for a wall tablet showing the
-plan at full size, where fixed px is what keeps text legible from across the room, and
-for a card so small that scaled text would disappear. The default stays `fixed`, so an
-existing card looks exactly as it did.
+So the escape hatch runs both ways. On a card **much** smaller than its canvas, raise the
+sizes rather than switching to `fixed` — the geometry is still right, only the numbers are
+too small. Switch to `fixed` when the card is rendered **larger** than its canvas, or on a
+wall tablet showing the plan at full size where a px floor is what keeps text legible from
+across the room.
+
+The rule of thumb: `plan` is what a plan wants, and the size numbers are yours to set.
+
+## More readings per device
+
+One device, as many readings as it has. A sensor that reports temperature,
+humidity and pressure needs one badge, not three:
+
+```yaml
+items:
+  - id: study
+    entity: sensor.study_temperature
+    kind: sensor
+    showName: true
+    showState: true
+    readings:
+      - { entity: sensor.study_humidity }
+      - { entity: sensor.study_pressure }
+```
+
+→ `Study · 21.5 °C · 48% · 1013 hPa`, on one line, in the order written.
+
+Each row is `{ entity?, attribute?, showState? }`. `entity` and `attribute` say where the
+number comes from:
+
+| `entity` | `attribute` | reads |
+| --- | --- | --- |
+| set | — | that entity's state |
+| set | set | that attribute of that entity |
+| — | set | that attribute of **this device's own** entity |
+| — | — | nothing — a blank row draws no text |
+
+The third row is what lets one climate entity show four of its own attributes without
+naming itself four times. The fourth is why the editor's **+ Add entity** can hand you an
+empty row without a `—` appearing on the plan.
+
+### Bound, but not printed
+
+`showState: false` on a row keeps the entity bound to the device without putting its value
+in the label:
+
+```yaml
+  - id: desk_plug
+    entity: switch.desk_plug
+    kind: switch
+    badgeContent: value
+    badgeEntity: 0             # the badge shows the power
+    readings:
+      - { entity: sensor.desk_plug_power, showState: false }
+```
+
+The badge reads `1.2 kW` in its circle and the label does not repeat it. The card still
+watches the entity, so the badge stays live.
+
+**Hiding a row does not renumber the others.** `badgeEntity` indexes the whole list,
+visible or not, so switching a row off cannot silently repoint the badge at a different
+entity. A device whose every extra row is hidden draws no label at all, and the editor
+stops offering the label's size and position for it.
+
+### Readings ignore the device's "Show state"
+
+That is the point of them. A smart plug already says on/off through its badge colour, so
+its label should carry the *other* numbers and not the word "on":
+
+```yaml
+  - id: desk_plug
+    entity: switch.desk_plug
+    kind: switch
+    showName: true
+    showState: false          # the badge colour already says on/off
+    readings:
+      - { entity: sensor.desk_plug_power }
+      - { entity: sensor.desk_plug_lqi }
+      - { attribute: battery }
+```
+
+→ `Desk plug · 1.2 kW · 84 · 84`. The device's `showState` is about its **own** entity;
+the readings are their own statement, and each carries its own `showState` for the times
+you want one bound but not printed (above).
+
+### One list, not two mechanisms
+
+There used to be a `secondaryEntity` / `secondaryAttribute` pair — one extra reading, with
+its own pair of dropdowns and its own rule about when it showed. It is now simply the
+**first row of `readings`**: still read, so no existing plan breaks, but with no field of
+its own in the editor, and rewritten into `readings` the first time you touch a device's
+readings. The order on the label is `entity`, then that legacy row, then the rest.
+
+The badge follows the same list. **Badge reads** offers one option per reading rather than
+just "the second one", so a plug reporting power, link quality and battery can badge
+whichever it likes:
+
+```yaml
+    badgeContent: value
+    badgeEntity: 1            # index into readings; "primary" is the device itself
+```
+
+`badgeEntity: secondary` still works and means index `0`.
+
+> **Upgrading?** One behaviour changed with the merge. `secondaryEntity` used to be part of
+> the state line, so it only showed while **Show state** was on — which is off by default
+> for anything that isn't a `sensor`. As a reading it now shows on its own terms. If you
+> have a light or a switch with a second entity and Show state off, a reading will appear
+> under it that wasn't there before; delete that row, or leave it — it is the number you
+> pointed the device at. Sensors, which show state by default, are unaffected.
+
+In the editor these sit **directly under the entity** as **Other entities**, added one at a
+time with **+ Add entity** rather than by putting four entity dropdowns on every device
+that will never use them. Each row's attribute box is HA's own attribute picker, listing
+what that entity actually has.
+
+Every element's panel is grouped under headings, on the same criteria: what it **is**
+first, then what it **reads**, then how it **looks**, then what it **does**. Groups with
+nothing to offer are left out — a sensor gets no Effects group, a device that draws no
+label gets no Label group, and an opening with no shutter gets no Shutter group.
+
+| Element | Groups |
+| --- | --- |
+| Device | Identity · What it reads · Label · Badge · Color · Effects · Behavior |
+| Door / window | Shape · What it reads · Sunlight · Shutter · Badge · Color · Behavior |
+| Furniture | Shape · What it reads · Color |
+| Area | Identity · What it reads · Color · Home Assistant area |
+| Tracker | Zone · Sensors · Marker |
+| Project | Project · Look · Floor image · Display · Sunlight · Night dimming · Devices · Symbols |
+
+Walls and text keep a plain list: a wall is thickness and length, a text is its words, size
+and angle. A heading over one or two fields is chrome rather than structure.
+
+## Doors on locks
+
+A door with a smart lock and no contact sensor already knows whether it is shut. Bind the
+lock and it drives the door (issue #176):
+
+```yaml
+openings:
+  - { id: front, type: door, x: 300, y: 100, length: 90, angle: 0, entity: lock.front_door }
+```
+
+`unlocked` draws the door open, `locked` draws it shut. The in-between states follow the
+lock domain's own reading, the same table the device badges use: `unlocking` and a latch
+`open` / `opening` count as open, and `locking` is on its way to shut and draws shut.
+`invert` flips all of those, for a lock wired the other way round.
+
+**`jammed` is not one of those readings.** A lock that tried to move and could not has a
+bolt that is neither thrown nor withdrawn, so it is the same "we don't know" as an
+`unavailable` or `unknown` entity: the door draws shut, and `invert` does not get to turn
+that into a door standing open.
+
+A lock publishes no position, so the door is fully open or fully shut, never partway.
+
+**A tap on a lock-driven door opens its dialog; it never turns the lock.** That is the
+same rule that keeps a tap off a shutter motor: unlocking a front door by brushing the
+plan is the worst version of an accidental hardware move. `tap_action: { action: toggle }`
+opts in, explicitly.
+
+## Actions on rooms
+
+Rooms answer gestures (issue #181) — tap the floor of a room to run a scene, toggle its
+lights, or open a dashboard for it:
+
+```yaml
+areas:
+  - id: kitchen
+    points: [ … ]
+    entity: light.kitchen_lights
+    hold_action: { action: toggle }
+```
+
+**Tap already does something**: it zooms the plan to that room, and has since zooming
+existed. So `tap_action` *replaces* the zoom rather than joining it, and leaving it unset
+keeps the zoom exactly as it was — every plan drawn before this behaves identically.
+
+That gives three arrangements:
+
+| You want | Set |
+| --- | --- |
+| Zoom, and an action | the action on `hold_action` or `double_tap_action` |
+| An action instead of the zoom | `tap_action` |
+| Neither | `tap_action: { action: none }` |
+
+An action's own `entity` wins; without one it falls back to the area's `entity`, so the
+example above toggles `light.kitchen_lights` without naming it twice. With no entity
+anywhere, only the actions that need none — `navigate`, `url`, `call-service` — do
+anything.
+
+A room with an action bound announces itself as a button and takes a tab stop; a room that
+only zooms does not, exactly as before.
+
+## Stairs that change floor
+
+A staircase already draws an arrow saying which way it goes. `goToFloor` makes that a
+promise the card keeps (issue #121):
+
+```yaml
+floors:
+  - id: ground
+    name: Ground floor
+    furniture:
+      - { id: stairs_up, type: stairs, x: 640, y: 300, w: 80, h: 140, goToFloor: up }
+  - id: upstairs
+    name: Upstairs
+    furniture:
+      - { id: stairs_down, type: stairs, x: 640, y: 300, w: 80, h: 140, goToFloor: down }
+```
+
+Click the stairs, change floor. `up` is the next entry in `floors`, `down` the previous —
+the list is read bottom-to-top — and the button's tooltip names the floor it leads to.
+
+**At the end of the list it leads nowhere, and stops being a button.** An `up` staircase
+on the top floor still draws as a staircase; it just takes no clicks, gets no pointer
+cursor and no tab stop. A control that does nothing is worse than no control. It does not
+wrap either: the loft is not above the cellar.
+
+The option is on **furniture generally**, not just the built-in `stairs` symbol — a plan
+can [draw its own](#drawing-your-own) staircase, and a rule keyed on one symbol id would
+leave those out. It sits under **Behavior** in the furniture panel.
+
+This does not replace the floor switcher in the card's corner; the stairs are a second way
+up. Set `floors` and you get both.
+
+## Offline devices
+
+An entity that has dropped out no longer looks like one that is simply switched off.
+
+```yaml
+type: custom:easy-floorplan-card
+offlineStyle: dim      # dim (default) | strike | none
+```
+
+A device counts as **offline** when its entity reads `unavailable` or `unknown`, or when
+the entity id is not in Home Assistant at all — renamed, deleted, or from an integration
+that failed to load. A device with no entity bound is not offline: those are plain
+markers, and there is nothing about them to be wrong.
+
+| `offlineStyle` | What it draws |
+| --- | --- |
+| `dim` *(default)* | The badge, its icon and its label fade back. |
+| `strike` | The same fade, with a diagonal through the badge. Reads from further away. |
+| `none` | The pre-#162 behaviour — an offline device looks like any other. |
+
+The default is `dim`, and that **is** a change on upgrade: until now a dead bulb and a
+bulb someone turned off were the same picture, and the plan gave that answer confidently.
+`none` keeps it for anyone who wants it. Set it in the editor under **Project → Offline
+devices**.
+
+The mark's colour is `--fp-offline-mark`, falling back to the theme's `--error-color`, so
+card-mod can recolour it without touching anything else. A device drawn as a bare ripple,
+or as a label with no badge, has nothing to cross out and takes the fade alone.
+
+## Compact header
+
+For a dashboard where the top of the card is mostly empty:
+
+```yaml
+type: custom:easy-floorplan-card
+title: Ground floor
+compactHeader: true
+```
+
+- The **title** becomes a small chip in the plan's top-left corner instead of an
+  `ha-card` header. That header is a fixed ~76px whatever it says — 48px of line-height
+  plus its padding — and none of it is reachable from outside `ha-card`, so the only way
+  to stop spending it is not to use it.
+- The **floor buttons** lay out as a row rather than a column, sharing that one strip
+  with the title instead of running down the side.
+
+Off by default, because the title then sits over the drawing — the right trade only when
+there is room for it, which is the author's call. Set it in the editor under
+**Project → Compact header**.
 
 ## Styling hooks (card-mod)
 
@@ -1122,12 +1572,17 @@ it by something stable.
 | Furniture | `fp-furniture`, `fp-furniture-<type>` | `data-id`, `data-entity` |
 | Door / window | `fp-opening`, `fp-opening-door` \| `fp-opening-window` | `data-id`, `data-entity` |
 | Wall | `wall`, `fp-wall` | `data-id` |
-| Device | `item`, `fp-item` | `data-id`, `data-entity`, `data-kind` |
+| Device | `item`, `fp-item` (plus `offline` while its entity has dropped out) | `data-id`, `data-entity`, `data-kind` |
 | Text | `text`, `fp-text` | `data-id` |
 | Room name | `area-label` | — |
 | Tracker | `tracker`, `fp-tracker` | `data-id` |
 
 Ids come from the editor (`area_a5r5nwl`, `furn_3j66s50`, …) and are stable across edits.
+
+The stage carries the plan-wide modes as classes too — `press-scale` … `press-none`, and
+`offline-dim` / `offline-strike` / `offline-none` — so a rule can be scoped to one of
+them. The offline mark's own colour is `--fp-offline-mark` (see
+[Offline devices](#offline-devices)).
 
 A dead space has no `data-id`, and cannot: it's derived from the walls rather than placed,
 so there's nothing for an id to be stable against. Style them as a group —
@@ -1182,27 +1637,66 @@ npm test           # vitest (pure-logic tests; no browser)
 Releases are built and attached automatically by GitHub Actions when a GitHub release
 is published.
 
-### Browser dev harness
+### Local Home Assistant
 
-Iterate on the editor / card without a Home Assistant instance:
+A throwaway Home Assistant in a container: the way to test a change against the real
+thing. The card is loaded the way a user's instance loads it, `hass` arrives over the
+real websocket, and the house is busy enough that there is real recorder history to
+scrub within a couple of minutes of starting it.
+
+Needs Docker, with **Compose v2** — the scripts call `docker compose` (a subcommand), not
+the older standalone `docker-compose` binary. Docker Desktop ships it; for a CLI-only
+setup, `brew install colima docker docker-compose && colima start`. Check with `docker
+compose version`.
 
 ```bash
-npm run serve      # opens /dev/ on the Vite dev server with HMR
+npm run ha
 ```
 
-It mounts the **real** editor and card side-by-side over a minimal `hass` mock, with
-`<ha-card>` / `<ha-icon>` / `<ha-entity-picker>` / `<ha-combo-box>` stubs so the harness
-drives the same code branch a real HA install does. Editor changes round-trip through
-`config-changed` into the live preview, and a **Tracker emulator** panel appears whenever
-the config has a tracker — per-axis sliders write into the mock states, and **Auto-orbit**
-drives them on `requestAnimationFrame`.
+That builds the card and starts Home Assistant at **<http://localhost:8123>**.
 
-The harness lives entirely under `dev/` and is not in the production build. Flip
-`START_WITH_DEMO` in `dev/dev.ts` to start with a sample room instead of a blank floor.
+**First run only**, Home Assistant ends at its onboarding screen. Create an account —
+any username and password; the instance is not reachable from outside your machine —
+then skip through location, analytics and the "found these devices" page. It is a
+one-time step: the account persists in `docker/config/.storage`, so every later
+`npm run ha` goes straight to the dashboard.
 
-`/dev/symbols.html` on the same server draws every symbol in [`furniture/`](furniture/) on
-one page — the contact sheet to check a new one against. It reads the directory, so a file
-you add appears with no other edit.
+Then, in the sidebar:
+
+| Where | What it is for |
+| --- | --- |
+| **Floorplan Demo** | The sample plan, and fully editable — click the pencil and the card's visual editor opens on it. Its starting content is [`docker/config/floorplan-demo.yaml`](docker/config/floorplan-demo.yaml), seeded into an editable dashboard on first run, so the plan lives in git *and* in the editor. `npm run ha:reseed` puts the committed version back. |
+| **Overview** | Home Assistant's auto-generated dashboard. Not needed for anything here, but if you want a second surface, click the pencil and choose **⋮ → Take control** first — auto-generated dashboards are read-only until claimed. |
+| **History** (a view inside Floorplan Demo) | A plain history graph over the same entities, plus switches for the sample-data generators. When the card and Home Assistant disagree about what happened, this is where you find out which of them is wrong. |
+
+While working, run `npm run watch` in a second terminal. It rebuilds `dist/` on save and
+`dist/` is mounted into the container, so the new file is in place immediately — but the
+browser has cached the old one, so a change needs a hard refresh (Cmd/Ctrl-Shift-R). This
+is the one place the container is more friction than `dev/`, which hot-reloads.
+
+```bash
+npm run ha:logs    # follow the Home Assistant log
+npm run ha:down    # stop the container
+npm run ha:reset   # wipe account, dashboards and history, back to onboarding
+```
+
+**The sample data.** A container that has just booted has an empty recorder — nothing to
+replay, nothing on a graph, every entity sitting where it started. So automations keep
+the house busy: lights toggling and recolouring, covers driving to intermediate
+positions, temperature and humidity walking a couple of hundredths at a time, a door open
+for four seconds, a tracker drifting across the room, and one sensor that goes genuinely
+`unavailable` for 45s every five minutes. Switch the lot off with
+`input_boolean.history_generator` when you want to read a still plan.
+
+History only ever builds forward from boot — recorder timestamps are wall-clock, so there
+is no handing yourself a plan that was busy yesterday.
+
+[`docker/README.md`](docker/README.md) has the detail: what each generator produces and
+why, which entities come from where, and how to pin a Home Assistant version.
+
+The container is the only harness. There was a mock-`hass` one under `dev/`, faster to
+start but only ever able to agree with itself; it is gone, and `npm run ha` is the way to
+see a change running.
 
 ## License
 

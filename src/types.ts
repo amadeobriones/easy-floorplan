@@ -93,12 +93,16 @@ export interface Opening {
    */
   entity?: string;
   /**
-   * Two-panel sliders only: a second contact / `cover` driving the **other**
-   * moving panel (issue #145), for a two-panel door with a sensor on each leaf.
-   * `entity` keeps the first panel — the one at the −x jamb in the opening's own
-   * frame, so `flipH` swaps which panel each sensor draws, exactly as it mirrors
-   * everything else. Unset (the default) leaves both panels on `entity`, which
-   * is what a single-sensor slider has always drawn. `invert` covers both.
+   * A second contact / `cover` driving the opening's **other** leaf, for
+   * anything two-leaved with a sensor on each: a two-panel slider (issue
+   * #145), or a hinged double — a casement window's two sashes, a double door
+   * (issue #159). See {@link openingHasTwoLeaves} for which shapes qualify;
+   * anything with one leaf ignores this.
+   *
+   * `entity` keeps the first leaf — the one at the −x jamb in the opening's own
+   * frame, so `flipH` swaps which leaf each sensor draws, exactly as it mirrors
+   * everything else. Unset (the default) leaves both on `entity`, which is what
+   * a single-sensor opening has always drawn. `invert` covers both.
    */
   secondaryEntity?: string;
   /** Flip the open/closed interpretation of `entity` (for inverted sensors). */
@@ -117,12 +121,46 @@ export interface Opening {
    */
   flipV?: boolean;
   /**
-   * Swing windows only: how many sashes. `double` (the default, today's look)
-   * draws two casement leaves meeting in the middle; `single` draws one sash
-   * hinged at a jamb (issue #73) — `flipH` picks which jamb. Ignored for
-   * doors and for sliding / rolling openings.
+   * Swing openings only: how many hinged leaves. The two types default the
+   * other way round, because the ordinary cases do — a window opens with
+   * `double` (two casement sashes), a door with `single` (one leaf across the
+   * opening). Set it for a single-sash window (issue #73) or a double door
+   * (issue #168); either way both leaves hinge at their own jamb and trace
+   * their own arc, and `flipH` picks the jamb for a single. Ignored by sliding
+   * and rolling openings. See {@link defaultSash} / {@link openingSash}.
    */
   sash?: "single" | "double";
+  /**
+   * Lets sunlight through even while shut. Defaults per type rather than to a
+   * fixed value: a window is glass, a door is not.
+   *
+   * Both defaults are worth overriding, in opposite directions. `true` on a
+   * **door** is what a patio or French door is — drawn as a door because that
+   * is how it swings, but a wall of glass, and left opaque it kept the
+   * sunniest side of a house dark. `false` on a **window** is the opaque
+   * exception: a glass-brick panel, a hatch, a serving window with a solid
+   * flap, all of which admit light only as far as they are open.
+   *
+   * Only the sunlight reads this — it changes nothing about how the opening
+   * is drawn. See {@link openingIsGlazed}.
+   */
+  glazed?: boolean;
+  /**
+   * Whether this opening takes part in the sunlight at all (default `true`).
+   *
+   * `false` makes it wall as far as the sun is concerned: no patch of its own,
+   * and it stops a beam crossing it like any other stretch of wall. Nothing
+   * else changes — it is still drawn, still tappable, still lets a lamp's pool
+   * through if it is open.
+   *
+   * The case it exists for (issue #177): a **solid front door with no sensor
+   * bound**. The plan draws such a door open, because that is the floor-plan
+   * convention and what makes an unwired door useful, and the light believes
+   * the drawing — so a corridor behind the front door filled with sunshine
+   * that the door has never let in. This is how you say "drawn open, but shut
+   * to the sun".
+   */
+  sunlight?: boolean;
   /**
    * An external shutter sharing this opening's wall gap (issue #74): a
    * `cover` (roller shutter / tapparella) or a `binary_sensor` contact on a
@@ -151,6 +189,18 @@ export interface Opening {
    * both.
    */
   shutterInvert?: boolean;
+  /**
+   * A second contact driving the hinged shutter's **other** panel (issue
+   * #159) — the pair of persiane with a reed switch on each, one folded back
+   * and one still across the glass.
+   *
+   * Its own key rather than reusing {@link secondaryEntity}, because the
+   * shutter is a layer over the opening rather than part of it: a double
+   * casement behind a pair of shutters has four leaves and can want four
+   * contacts. Read only by a `swing` shutter — a roll curtain is one piece —
+   * and {@link shutterInvert} covers it, as {@link invert} covers both sashes.
+   */
+  shutterSecondaryEntity?: string;
   /**
    * Colour of the shutter while it is (partly) open. Falls back to
    * {@link activeColor}, then the skin accent — so a plan that only wants one
@@ -182,6 +232,27 @@ export interface Opening {
    * {@link tap_action}.
    */
   tapTarget?: OpeningTapTarget;
+  /**
+   * Draw the opening's **own** icon beside it (default false).
+   *
+   * The symbol usually says everything: a leaf swings, a panel slides. A
+   * roll-up is the exception — its curtain leaves the floor plane, so wide
+   * open there is nothing left but a coloured line, and a garage door across
+   * the room is a state you want to read at a glance rather than infer from a
+   * hairline (issue #154 follow-up). Off by default because a plan of swing
+   * doors does not need a badge on every one of them.
+   *
+   * Sits on the opposite side of the wall from {@link showShutterIcon}'s
+   * badge, so an opening that draws both never stacks them.
+   */
+  showIcon?: boolean;
+  /**
+   * Override that icon. Absent, it is the opening entity's own, resolved the
+   * way {@link shutterIcon} describes — a **pair**, so the glyph carries
+   * open/closed by itself. An override is one glyph for both states; colour
+   * still reports the state.
+   */
+  icon?: string;
   /**
    * Draw the shutter's icon beside the opening (default true, whenever both
    * entities are bound). It is what makes the second entity visible at all —
@@ -252,14 +323,74 @@ export type ItemKind =
   | "vacuum"
   | "generic";
 
+/**
+ * One **extra** reading on a device (issue #180) — the third, fourth, fifth
+ * line of text after `entity` and `secondaryEntity` have had their turn.
+ *
+ * Both fields are optional, and between them they say where the number comes
+ * from:
+ *
+ * | `entity` | `attribute` | reads                                    |
+ * | -------- | ----------- | ---------------------------------------- |
+ * | set      | unset       | that entity's state                      |
+ * | set      | set         | that attribute of that entity            |
+ * | unset    | set         | that attribute of the **device's own** entity |
+ * | unset    | unset       | nothing — a blank row draws no text      |
+ *
+ * The third row is what makes one climate device able to show four of its own
+ * attributes without naming itself four times; the fourth is what keeps a row
+ * the editor has just added from printing "—" before anything is picked.
+ */
+export interface ItemReading {
+  /** Entity to read. Omitted, the device's own {@link FloorItem.entity}. */
+  entity?: string;
+  /** Attribute to read instead of the state. */
+  attribute?: string;
+  /**
+   * Whether this reading's value joins the label line. Default `true`.
+   *
+   * `false` binds the entity to the device without printing it: the badge can
+   * still be pointed at it with {@link FloorItem.badgeEntity}, and the card
+   * still watches it for changes. That is the case this exists for — a smart
+   * plug that badges `1.2 kW` in its circle has no use for the same number
+   * repeated in text underneath.
+   *
+   * Hiding a reading does **not** renumber the others: `badgeEntity` indexes
+   * the whole list, visible or not, so switching this off cannot silently
+   * repoint the badge at a different entity.
+   */
+  showState?: boolean;
+}
+
+/**
+ * Where a device's label sits relative to its badge (issue #180, and the
+ * discussion behind it). `below` is the historic centre-under-the-icon
+ * position and stays the default.
+ *
+ * `left` / `right` exist because a long reading under a badge grows in both
+ * directions and collides with whatever is beside it, while a label hung off
+ * one side grows only one way — which is what a row of devices along a wall
+ * needs.
+ */
+export type LabelPosition = "below" | "left" | "right";
+
 /** An entity icon placed on the plan. */
 export interface FloorItem {
   id: string;
   entity: string;
   /**
-   * Optional second entity (e.g. a humidity sensor paired with a temperature
-   * entity). When set and the state is shown, both values are displayed in the
-   * same element. The primary `entity` drives on/off state and click actions.
+   * **Legacy spelling of the first {@link readings} row.** A second entity
+   * shown alongside the primary — e.g. a humidity sensor paired with a
+   * temperature one.
+   *
+   * Kept because plans in the wild use it, and still read: `itemReadings`
+   * puts it at the head of the pool, where it always sat. It has no field in
+   * the editor any more, and touching a device's readings rewrites it as a
+   * `readings` entry. New configs should just use `readings`.
+   *
+   * One behaviour did change with issue #180: it used to be part of the state
+   * line and so appeared only while `showState` was on. It is a reading now,
+   * and readings show on their own terms — see {@link readings}.
    */
   secondaryEntity?: string;
   /**
@@ -269,9 +400,11 @@ export interface FloorItem {
    */
   attribute?: string;
   /**
-   * Attribute for the second reading. Applies to `secondaryEntity` when set,
-   * else to `entity` — so one climate device can show
-   * `current_temperature · current_humidity` without a second entity.
+   * Attribute for {@link secondaryEntity}, and legacy in the same way. Applies
+   * to `secondaryEntity` when set, else to `entity` — so one climate device
+   * could show `current_temperature · current_humidity` without a second
+   * entity. A {@link ItemReading} with an attribute and no entity means
+   * exactly that, which is how it translates into the pool.
    */
   secondaryAttribute?: string;
   /**
@@ -316,6 +449,27 @@ export interface FloorItem {
    * "Name · state". Default false.
    */
   showName?: boolean;
+  /**
+   * Everything this device reads **beyond its own state** (issue #180) — a
+   * temperature sensor that also reports humidity and pressure, a plug that
+   * reports power, link quality and battery.
+   *
+   * This is *the* list. {@link secondaryEntity} is a legacy spelling of its
+   * first entry rather than a parallel mechanism, so there is one pool, one
+   * order (`entity`, then any legacy pair, then these) and one rule about when
+   * they show. Resolve with `itemReadings`, never by reading either key
+   * directly.
+   *
+   * **Shown whether or not the *device's* {@link FloorItem.showState} is**,
+   * which is the point of them — a row's own {@link ItemReading.showState} is
+   * the switch for hiding one of these. A plug
+   * says on/off through its badge colour, so its owner wants Power · LQI ·
+   * Battery and *not* the word "on" (I-G-1-1's case in discussion #173).
+   * `showState` is about the device's *own state*; these are not it.
+   */
+  readings?: ItemReading[];
+  /** Where the label sits relative to the badge (issue #180). Default `below`. */
+  labelPosition?: LabelPosition;
   /** Label line font size in pixels (issue #59). Default 12. */
   labelSize?: number;
   /**
@@ -340,8 +494,8 @@ export interface FloorItem {
   badgeContent?: BadgeContent;
   /**
    * Which of this device's own entities the badge reads while
-   * `badgeContent: "value"` (issue #136) — the main `entity`, or
-   * {@link secondaryEntity}.
+   * `badgeContent: "value"` (issue #136) — the main `entity`, or one of its
+   * other {@link readings} by index.
    *
    * Absent means "work it out", which is what {@link badgeValue} has always
    * done: the first candidate with a number wins, so a switch that reads "on"
@@ -349,10 +503,11 @@ export interface FloorItem {
    * but it is only a guess, and there was no way to overrule it when the main
    * entity happens to be numeric too.
    *
-   * Set, it is the *only* entity read. No falling back to the other one:
-   * having asked for the power sensor, being shown the switch instead would
-   * be worse than being shown the icon — which is what a device with no
-   * number to display falls back to anyway.
+   * Set, it is the *only* reading read. No falling back to another: having
+   * asked for the power sensor, being shown the switch instead would be worse
+   * than being shown the icon — which is what a device with no number to
+   * display falls back to anyway. An index past the end of the pool behaves
+   * the same way, rather than sliding onto a neighbouring reading.
    */
   badgeEntity?: BadgeEntity;
   /**
@@ -371,8 +526,10 @@ export interface FloorItem {
    * How the device is drawn. Default "badge".
    *
    * The ripple modes render on any entity. The editor only *offers* them on a
-   * presence device (issue #127) — a ring says "someone is there" — so a ring
-   * on anything else is a YAML-only choice.
+   * device that detects something where it sits (issues #127, #202) — a
+   * motion, occupancy, presence or vibration sensor, or a `device_tracker` /
+   * `person`, per {@link isRippleEntity} — so a ring on anything else is a
+   * YAML-only choice.
    */
   display?: ItemDisplay;
   /**
@@ -435,11 +592,21 @@ export type ItemDisplay = "badge" | "ripple" | "iconRipple";
 export type BadgeContent = "icon" | "value" | "none";
 
 /**
- * Which of a device's two entities feeds its value badge — see
- * {@link FloorItem.badgeEntity} (issue #136). Named by role rather than by
- * entity id so renaming an entity in Home Assistant cannot orphan the choice.
+ * Which of a device's readings feeds its value badge — see
+ * {@link FloorItem.badgeEntity} (issue #136).
+ *
+ * - `"primary"` — the device's own entity.
+ * - a **number** — that index into the device's other readings (see
+ *   `itemReadings`), so a plug with power, link quality and battery can badge
+ *   whichever of them it likes.
+ * - `"secondary"` — the historic spelling of index `0`, from when a device had
+ *   exactly two entities and the second had a name rather than a position.
+ *   Still read, so no stored config is orphaned; the editor writes indices.
+ *
+ * Addressed by role or position rather than by entity id, so renaming an
+ * entity in Home Assistant cannot strand the choice.
  */
-export type BadgeEntity = "primary" | "secondary";
+export type BadgeEntity = "primary" | "secondary" | number;
 
 /**
  * One colour rule for {@link FloorItem.stateColor} / {@link Furniture.stateColor}.
@@ -582,6 +749,23 @@ export interface Furniture {
   angle?: number;
   /** Stroke/fill color. Defaults to gray so it reads differently from walls. */
   color?: string;
+  /**
+   * Clicking this changes floor (issue #121) — `up` for the next floor in
+   * `floors`, `down` for the previous one.
+   *
+   * Written for the **stairs** symbol, which is where a plan already draws the
+   * thing people expect to click: the arrow on a staircase is a promise that
+   * it goes somewhere. It is not restricted to that symbol, because a plan can
+   * define its own staircase (see "Drawing your own") and a rule keyed on one
+   * built-in id would leave those out.
+   *
+   * `floors` is read bottom-to-top, so `up` is the next entry and `down` the
+   * previous. At the end of the list the direction has nowhere to go: the
+   * piece draws as ordinary furniture and takes no clicks, rather than
+   * offering a control that does nothing. It does not wrap — a staircase on
+   * the top floor does not lead to the basement.
+   */
+  goToFloor?: "up" | "down";
   /**
    * Optional entity that makes the drawing live (issue #82) — a soil sensor on
    * a plant, a water temperature sensor on a fish tank, a contact sensor on a
@@ -778,6 +962,28 @@ export interface Area {
    * which drives stateColor/activeColor for the fill.
    */
   tempEntity?: string;
+  /**
+   * Lovelace actions for the room itself (issue #181) — tapping the floor of a
+   * room to run a scene, toggle its lights, or open a dashboard for it.
+   *
+   * Same shape as {@link FloorItem.tap_action}, with one difference that comes
+   * from a room already doing something when you tap it: **tap defaults to
+   * zoom-to-room**, which is what an area has done since zooming existed.
+   * Setting `tap_action` replaces that zoom; leaving it unset keeps it. Hold
+   * and double-tap have no default and are free.
+   *
+   * So a room can zoom *and* act: put the action on hold or double-tap. A room
+   * that should act on tap and never zoom sets `tap_action`; a room that should
+   * do neither sets `tap_action: { action: "none" }`.
+   *
+   * An action's `entity` falls back to the area's own {@link entity}, so a room
+   * already bound to a presence sensor needs no second mention of it. With no
+   * entity anywhere, only actions that need none (navigate, url, call-service)
+   * do anything. See `areaActionForGesture`.
+   */
+  tap_action?: ActionConfig;
+  hold_action?: ActionConfig;
+  double_tap_action?: ActionConfig;
 }
 
 /**
@@ -815,6 +1021,26 @@ export type PressEffect = "scale" | "ripple" | "flash" | "none";
 
 /** On by default: the issue asked for feedback, so "no feedback" is the opt-out. */
 export const DEFAULT_PRESS_EFFECT: PressEffect = "scale";
+
+/**
+ * How a device whose entity has dropped out is drawn (issue #162):
+ *
+ * - `dim` — the badge, its icon and its label all fade back.
+ * - `strike` — the same fade, with a diagonal mark through the badge, for a
+ *   plan that has to say it from across the room.
+ * - `none` — the pre-#162 behaviour: an offline device looks like any other.
+ */
+export type OfflineStyle = "dim" | "strike" | "none";
+
+/**
+ * Dimmed by default, and this one *is* a change on upgrade — deliberately.
+ *
+ * Until now an unavailable device was drawn exactly like a device that is
+ * simply off: a dead bulb and a bulb someone switched off were the same
+ * picture. That is not a neutral default, it is a wrong answer, and the plan
+ * was giving it confidently. `none` keeps it for anyone who wants it.
+ */
+export const DEFAULT_OFFLINE_STYLE: OfflineStyle = "dim";
 
 /**
  * How far a pressed device shrinks. Deep enough to read at a 34px badge,
@@ -893,6 +1119,15 @@ export const FURNITURE_GLOW_TRANSMISSION = 0.5;
 export const DEFAULT_TRACKER_DOT_SIZE = 14;
 
 export const DEFAULT_ITEM_SIZE = 34;
+/**
+ * Smallest area that answers a press, in screen pixels — for a device whose
+ * only visual is a presence ripple and so has no badge to aim at.
+ *
+ * Screen pixels on purpose, and never scaled by `overlayScale`: this is a
+ * measure of fingers, not of the drawing. A plan shrunk into a narrow card
+ * would otherwise shrink its touch targets with it.
+ */
+export const MIN_TOUCH_TARGET = 34;
 export const DEFAULT_TEXT_SIZE = 16;
 export const DEFAULT_RIPPLE_SIZE = 80;
 /** Neutral gray, so furniture reads differently from the walls. Skinnable (#122). */
@@ -1025,20 +1260,52 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   /**
    * How the HTML overlay (badges, labels, room names, text) is sized.
    *
-   * - **`fixed`** (default) — screen pixels, whatever size the card renders at.
-   * - **`plan`** — canvas units, so the overlay scales with the drawing exactly
-   *   as the SVG does.
+   * - **`plan`** — canvas units, so the overlay scales with the drawing
+   *   exactly as the SVG does. What {@link newPlanConfig} creates a card with.
+   * - **`fixed`** — screen pixels, whatever size the card renders at. What an
+   *   **absent** key means, and so what every plan drawn before this option
+   *   existed keeps rendering as.
    *
-   * `fixed` is the historic behaviour and is right when the card renders at
-   * roughly its canvas size. It falls apart below that: a plan drawn at 980
-   * wide and rendered 510 wide draws every wall at half size while a 14px room
-   * name stays 14px, so labels collide with the badges and each other. `plan`
-   * makes the two layers shrink together. Default stays `fixed` so no existing
-   * card changes appearance on upgrade.
+   * The split is deliberate and is the whole shape of issue #192. `plan` is
+   * the better way to lay a plan out: `fixed` agrees with the drawing only
+   * while the card renders at roughly its canvas size, which is not something
+   * a plan gets to decide, since the dashboard hands it whatever width it has.
+   * Below that the two layers come apart — a plan drawn 980 wide and rendered
+   * 510 wide draws every wall at half size while a 14px room name stays 14px,
+   * so labels collide with the badges and each other and a carefully spaced
+   * cluster of badges overlaps (issue #179).
+   *
+   * None of which makes it safe to *infer*. 1.5.0 made `plan` the answer for a
+   * missing key and resized the overlay of every plan in the field, badges
+   * landing at a third of their size on a card narrower than its canvas — and
+   * nobody could have opted out, because the editor omitted `fixed` as the
+   * default of the day, so a plan that had chosen pixels stored exactly what a
+   * plan that had never been asked stored. A new default belongs in new
+   * configs: see {@link newPlanConfig} and {@link normalizeOverlayScale}.
+   *
+   * `fixed` is also a real choice on its own merits, for a card rendered much
+   * larger than its canvas or a wall tablet that wants a px floor under its
+   * text. See the README's "Where it helps, and where it costs".
    */
   overlayScale?: OverlayScale;
   /** Canvas background color (CSS / hex). Falls back to the skin's paper, then the card background. */
   background?: string;
+  /**
+   * Draw the card's own chrome *inside* the plan instead of above it (issue
+   * #152), for a dashboard where the top of the card is mostly empty:
+   *
+   * - the **title** becomes a small chip in the plan's top-left corner rather
+   *   than an `ha-card` header. That header is a fixed ~76px whatever it says
+   *   — 48px of line-height plus its padding — and none of it can be reached
+   *   from outside `ha-card`'s shadow root, so the only way to stop spending
+   *   it is not to use it;
+   * - the **floor buttons** lay out as a row rather than a column, so they
+   *   share that one strip with the title instead of running down the side.
+   *
+   * Off by default: the title then sits over the drawing, which is the right
+   * trade only when there is room for it — and it is the author who knows.
+   */
+  compactHeader?: boolean;
   /**
    * Hatch the plan's dead spaces (issue #88): every region the walls close off
    * completely that no door or window opens onto — the void behind a boxed-in
@@ -1078,6 +1345,65 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
   /** Plan brightness in full daylight, 0-1. Default {@link DEFAULT_SUN_MAX}. */
   sunBrightnessMax?: number;
   /**
+   * Let the sun in (issue: sunlight through openings). Light arrives from
+   * {@link sunBearing}, enters through every window and every open door, and
+   * is stopped by the walls — so the rooms it never reaches are drawn a shade
+   * darker, and the patches it lands on are tinted warm.
+   *
+   * Needs {@link north} to mean anything about the actual house.
+   */
+  sunlight?: boolean;
+  /**
+   * Where north is on this plan, in degrees clockwise from the top of the
+   * canvas. Default 0 (north is up).
+   *
+   * What makes a sun angle a statement about the *house*: without it, "the sun
+   * is in the south-east" would only mean "toward the bottom-left of the
+   * drawing", and the same house traced at a different angle would be lit from
+   * the wrong side.
+   */
+  north?: number;
+  /**
+   * The sun's compass bearing for the shadows (0 = north, 90 = east). Absent,
+   * the plan follows `sun.sun`'s live azimuth, so the shadows swing through
+   * the day; set it to pin the light where you want it.
+   */
+  sunBearing?: number;
+  /**
+   * Colour of the light the openings let in. Defaults to the same warm white
+   * a lamp with no colour of its own casts (issue #6). Passes through the
+   * style-injection allowlist (#64), like every other colour here.
+   */
+  sunlightColor?: string;
+  /**
+   * Darken everywhere the light does not reach (default true). Off leaves the
+   * plan as bright as it was and draws the patches alone — the shade is the
+   * half that changes how the *whole* plan reads, so it is the half worth
+   * being able to decline.
+   */
+  sunShade?: boolean;
+  /**
+   * Colour of the shade everywhere the light does not reach. Black by
+   * default, so it darkens what is under it rather than tinting it — a blue
+   * here reads as cold north light, a warm grey as dusk.
+   */
+  sunShadeColor?: string;
+  /**
+   * How far sunlight carries from an opening, as a fraction of the plan's
+   * shorter side. Default {@link SUN_REACH} (0.34).
+   *
+   * The light fades out over this distance rather than stopping at it, and
+   * while the plan follows the real sun it is shortened as the sun climbs —
+   * a midday sun lays a short patch, an evening one rakes across the room
+   * (issue #185). Raise it for a plan whose rooms read as too dark, lower it
+   * for one where the patches still reach further than they should.
+   *
+   * Coerced and clamped to 0.02-1.5 before it reaches the drawing — see
+   * {@link sunReachFraction}. It is hand-editable YAML, and an unreadable one
+   * put NaN straight into a coordinate.
+   */
+  sunReach?: number;
+  /**
    * What a device does when you press it (issue #134). Tapping used to change
    * nothing on screen until the entity itself came back — which on a cover or
    * a slow bulb is long enough to wonder whether the tap registered at all.
@@ -1091,6 +1417,17 @@ export interface FloorplanCardConfig extends LovelaceCardConfig {
    * worse than none.
    */
   pressEffect?: PressEffect;
+  /**
+   * How a device whose entity is **offline** is drawn (issue #162) —
+   * `unavailable`, `unknown`, or an entity id that is not in Home Assistant at
+   * all (renamed, or the integration is down).
+   *
+   * Plan-wide, for the same reason `pressEffect` is: it is a drawing
+   * convention, and a plan where half the dead devices announced themselves
+   * would read as broken rather than as configured. Default
+   * {@link DEFAULT_OFFLINE_STYLE}.
+   */
+  offlineStyle?: OfflineStyle;
   /**
    * Multi-floor data. When present and non-empty this is the source of truth.
    * When absent, the legacy flat arrays below describe a single implicit floor
@@ -1327,6 +1664,27 @@ export function emptyConfig(type: string): FloorplanCardConfig {
     trackers: [],
     areas: [],
   };
+}
+
+/**
+ * What a **newly created** card starts as — the config HA's card picker gets
+ * back from `getStubConfig`.
+ *
+ * Deliberately not the same thing as {@link emptyConfig}, which backfills
+ * missing keys on *any* config the editor is handed, existing plans included.
+ * Anything stated here is stated about new plans only; putting it in
+ * `emptyConfig` would apply it to every plan ever drawn, the moment its author
+ * next opened the editor.
+ *
+ * That distinction is the whole point of this function. `overlayScale: plan`
+ * is the better way to lay a plan out (issue #179) and so it is what a new
+ * plan is made with — but it is written into the config rather than inferred
+ * from a missing key, because inference reaches backwards: 1.5.0 changed what
+ * an absent `overlayScale` meant and resized the overlay of every plan in the
+ * field (issue #192). A new default belongs in new configs.
+ */
+export function newPlanConfig(): Partial<FloorplanCardConfig> {
+  return { overlayScale: "plan" };
 }
 
 export function uid(prefix: string): string {

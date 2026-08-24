@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { renderOpening } from "./render";
+import { renderOpening, renderSunlight, SUN_REACH } from "./render";
 import type { OpeningStyle } from "./render";
-import type { Opening } from "./types";
+import type { Opening, Wall } from "./types";
+import { nothing } from "lit";
 
 /**
  * Serialize a Lit SVGTemplateResult (and its nested templates/arrays) back into
@@ -24,6 +25,406 @@ function serialize(node: unknown): string {
 const base = { id: "x", x: 100, y: 60, length: 90, angle: 0 } as const;
 const svgOf = (o: Partial<Opening>, style: Partial<OpeningStyle> = {}) =>
   serialize(renderOpening({ ...base, ...o } as Opening, { color: "#000", ...style }));
+
+describe("renderSunlight — the markup, not just the geometry", () => {
+  // The geometry is covered in render.test.ts. This is here because none of
+  // that caught a `<rect …` opened in one lit template and closed in the next:
+  // templates are parsed one at a time, so the tag never closed, both masks
+  // lost their white ground, and the whole layer rendered invisible while
+  // every pure function still returned exactly the right numbers.
+  const wall = { id: "w", x1: 0, y1: 100, x2: 400, y2: 100 };
+  const win = {
+    id: "o",
+    type: "window",
+    x: 200,
+    y: 100,
+    length: 60,
+    angle: 0,
+  } as Opening;
+  const sun = { x: 0, y: 1 };
+  const walls = [wall];
+  const light = (openings: Opening[] = [win], walls = [wall]) =>
+    serialize(renderSunlight(walls, openings, 400, 400, "sun", { dir: sun, openAmount: () => 0, shutterOpen: () => undefined }));
+
+  it("gives both masks a ground to subtract from, in one piece", () => {
+    const s = light();
+    expect(s.match(/<mask /g)?.length).toBe(2);
+    // Three rects — a ground in each mask, and the shade itself — and every
+    // one of them closes. That count is the whole point: a `<rect` with no `>`
+    // is exactly the bug this describe exists for, and it leaves the masks
+    // black, which hides what they were meant to shape.
+    expect(s.match(/<rect[^>]*>/g)?.length).toBe(3);
+    // The white grounds specifically — the shade mask also paints its wall
+    // shadows white, which is a different thing wearing the same colour.
+    expect(s.match(/<rect[^>]*fill=#fff[^>]*>/g)?.length).toBe(2);
+  });
+
+  it("draws a patch per opening that admits light, and a shadow per wall piece", () => {
+    const s = light();
+    // The window splits its wall in two, so two shadow pieces, in both masks
+    // (4). The beam is a hole in the shade mask and the warm patch itself (2).
+    expect(s.match(/<polygon/g)?.length).toBe(6);
+    expect(s.match(/fp-sunbeam/g)?.length).toBe(1);
+    // Two windows in the same wall: a patch each.
+    const two = light([win, { ...win, id: "o2", x: 320 } as Opening]);
+    expect(two.match(/fp-sunbeam/g)?.length).toBe(2);
+  });
+
+  it("every id a beam references is actually defined, shade or no shade", () => {
+    // The bug this exists for: the edge masks were emitted INSIDE the shade
+    // mask, so turning the shade off deleted them while the beams went on
+    // pointing at them. An undefined mask is not an error in SVG — it simply
+    // does not apply — so the patches came back at full strength with knife
+    // edges and nothing looked broken enough to suspect. It shipped, and it
+    // was the one configuration the reporter was running.
+    //
+    // So this checks the graph rather than any one feature: whatever a beam
+    // points at has to exist, in both configurations.
+    for (const shade of [undefined, null]) {
+      const s = serialize(
+        renderSunlight([wall], [win], 400, 400, "sun", {
+          dir: sun, openAmount: () => 0, shutterOpen: () => undefined, shade,
+        })
+      );
+      const referenced = [...s.matchAll(/url\(#([^)]+)\)/g)].map((m) => m[1]!);
+      expect(referenced.length).toBeGreaterThan(0);
+      const defined = new Set(
+        [...s.matchAll(/<(?:mask|linearGradient|radialGradient|clipPath) id=([^\s>]+)/g)].map((m) => m[1]!)
+      );
+      const dangling = referenced.filter((id) => !defined.has(id));
+      expect(dangling).toEqual([]);
+    }
+  });
+
+  it("fades over the distance the light really travels, not a share of the plan", () => {
+    // A room shallower than the reach used to keep the patch at full strength
+    // until a wall cut it — a hard bar across the floor.
+    const near = { id: "near", x1: 0, y1: 160, x2: 400, y2: 160 };
+    const far = { id: "far", x1: 0, y1: 340, x2: 400, y2: 340 };
+    const alongWith = (blocker: Wall) =>
+      falloff(
+        serialize(
+          renderSunlight([wall, blocker], [win], 400, 400, "sun", {
+            dir: sun,
+            openAmount: () => 0,
+            shutterOpen: () => undefined,
+          })
+        )
+      )!.along;
+    expect(alongWith(near)).toBeCloseTo(60, 0);
+    // A wall further off does not push it out: sunReach stays the ceiling.
+    expect(alongWith(far)).toBeCloseTo(SUN_REACH * 400, 0);
+  });
+
+  it("runs its outline past the falloff, so the ellipse is what bounds it", () => {
+    for (const dir of [sun, { x: 0.72, y: 0.69 }]) {
+      const markup = serialize(
+        renderSunlight([wall], [win], 400, 400, "sun", {
+          dir,
+          openAmount: () => 0,
+          shutterOpen: () => undefined,
+        })
+      );
+      const f = falloff(markup)!;
+      const pts = markup.match(/class="fp-sunbeam" points=([-\d., ]+)/)![1]!.trim().split(" ")
+        .map((q) => q.split(",").map(Number));
+      // Distance from the opening to each FAR corner, measured in the
+      // ellipse's own units: at or beyond 1 means the light is already gone.
+      const rad = (-f.angle * Math.PI) / 180;
+      for (const i of [2, 3]) {
+        const dx = pts[i]![0]! - f.cx;
+        const dy = pts[i]![1]! - f.cy;
+        const u = (dx * Math.cos(rad) - dy * Math.sin(rad)) / f.along;
+        const v = (dx * Math.sin(rad) + dy * Math.cos(rad)) / f.across;
+        expect(Math.hypot(u, v)).toBeGreaterThanOrEqual(1);
+      }
+    }
+  });
+
+  it("a door ajar throws a narrower patch than one standing open", () => {
+    // The end of the boolean, seen in the markup: the width of the polygon is
+    // the width of the gap that is actually clear, and the wall keeps the
+    // rest — so the two never overlap and the light cannot leak past the leaf.
+    const door = { ...win, type: "door" } as Opening;
+    const at = (amount: number) =>
+      serialize(
+        renderSunlight([wall], [door], 400, 400, "sun", {
+          dir: sun,
+          openAmount: () => amount,
+          shutterOpen: () => undefined,
+        })
+      );
+    const spanOf = (markup: string) => {
+      const pts = markup.match(/class="fp-sunbeam" points=([^ ]+ [^ ]+)/)![1];
+      const xs = pts.split(" ").map((p) => Number(p.split(",")[0]));
+      return Math.abs(xs[1]! - xs[0]!);
+    };
+    const open = spanOf(at(1));
+    const ajar = spanOf(at(0.25));
+    expect(open).toBeCloseTo(60); // the whole gap
+    expect(ajar).toBeCloseTo(15); // a quarter of it
+    expect(ajar).toBeLessThan(open);
+  });
+
+  it("stays away entirely when nothing lets light in", () => {
+    // A shut door is opaque: no patches, so no layer at all rather than a
+    // full-canvas shade sitting over the plan for nothing.
+    const shut = { ...win, type: "door" } as Opening;
+    expect(renderSunlight([wall], [shut], 400, 400, "sun", { dir: sun, openAmount: () => 0, shutterOpen: () => undefined })).toBe(nothing);
+    expect(renderSunlight([wall], [], 400, 400, "sun", { dir: sun, openAmount: () => 0, shutterOpen: () => undefined })).toBe(nothing);
+    // …but the same door, open, does let it in.
+    expect(renderSunlight([wall], [shut], 400, 400, "sun", { dir: sun, openAmount: () => 1, shutterOpen: () => undefined })).not.toBe(nothing);
+  });
+
+  it("an opening standing in a wall's shadow lets nothing in", () => {
+    // Every opening used to be a source in its own right, so an interior door
+    // on the dark side of the house lit the room beyond it out of nothing.
+    // Here a second wall sits upstream of the window, across the light.
+    const upstream = { id: "up", x1: 0, y1: 40, x2: 400, y2: 40 };
+    expect(renderSunlight([wall, upstream], [win], 400, 400, "sun", { dir: sun, openAmount: () => 0, shutterOpen: () => undefined })).toBe(nothing);
+    // Move that wall out of the way (downstream of the window) and the same
+    // window lights the room again.
+    const downstream = { ...upstream, y1: 300, y2: 300 };
+    const s = serialize(renderSunlight([wall, downstream], [win], 400, 400, "sun", { dir: sun, openAmount: () => 0, shutterOpen: () => undefined }));
+    expect(s).toContain("fp-sunbeam");
+  });
+
+  it("a window on the shaded façade does not throw sunlight out of the house (#177)", () => {
+    // Two windows facing each other across a room, which is as ordinary as a
+    // plan gets. The far one used to line up with the near one's gap, escape
+    // every shadow, and emit a patch of its own — sweeping *away* from the
+    // building, so the reporter watched sunlight pour out of their apartment.
+    const north = { id: "n", x1: 0, y1: 0, x2: 400, y2: 0 };
+    const south = { id: "s", x1: 0, y1: 300, x2: 400, y2: 300 };
+    const facing = [
+      { ...win, id: "north", y: 0 },
+      { ...win, id: "south", y: 300 },
+    ] as Opening[];
+    const s = light(facing, [north, south]);
+    const beams = s.match(/class="fp-sunbeam"/g) ?? [];
+    expect(beams.length).toBe(1); // exactly one lit opening
+    // …and it is the one on the sunlit side: the patch starts at y=0.
+    expect(s).toContain('points=170,0 230,0');
+    expect(s).not.toContain("230,300");
+  });
+
+  it("an interior door does not re-emit the light that reaches it (#178)", () => {
+    // A 20-wide window upstream of a 120-wide doorway. The doorway used to
+    // become a source in its own right and flood the room behind it six times
+    // wider than the light that arrived — "sunlight spawns at open doors".
+    const mid = { id: "m", x1: 0, y1: 250, x2: 400, y2: 250 };
+    const plan = [
+      { ...win, id: "w", length: 20 },
+      { ...win, id: "d", type: "door", y: 250, length: 120 },
+    ] as Opening[];
+    const s = serialize(
+      renderSunlight([wall, mid], plan, 400, 400, "sun", {
+        dir: sun,
+        openAmount: () => 1,
+        shutterOpen: () => undefined,
+      })
+    );
+    expect(s.match(/class="fp-sunbeam"/g)?.length).toBe(1); // exactly one lit opening
+    // The one beam is the window's, 20 across — not the door's 120.
+    expect(s).toContain("points=190,100 210,100");
+    // The light still gets *through* the doorway: the interior wall is cut
+    // there, so its two shadow pieces stop either side of the beam and none
+    // of them covers it. That is what makes re-emitting unnecessary.
+    const shadows = [...s.matchAll(/<polygon points=([\d.,\- ]+) fill=#fff/g)].map((m) => m[1]!);
+    const spans = shadows.map((p) => p.split(" ").map((q) => Number(q.split(",")[0]!)));
+    expect(spans.some((xs) => xs[0]! <= 190 && xs[1]! >= 210)).toBe(false);
+  });
+
+  it("an opening switched out of the sunlight is wall to it (#177)", () => {
+    // The solid front door the plan draws open because nothing is bound to it.
+    const shut = { ...win, type: "door", sunlight: false } as Opening;
+    expect(
+      renderSunlight([wall], [shut], 400, 400, "sun", {
+        dir: sun,
+        openAmount: () => 1,
+        shutterOpen: () => undefined,
+      })
+    ).toBe(nothing);
+    // Its wall keeps its full shadow too — it stops a beam like any wall does.
+    const other = { ...win, id: "o2", x: 60 } as Opening;
+    const s = serialize(
+      renderSunlight([wall], [shut, other], 400, 400, "sun", {
+        dir: sun,
+        openAmount: () => 1,
+        shutterOpen: () => undefined,
+      })
+    );
+    expect(s.match(/class="fp-sunbeam"/g)?.length).toBe(1); // exactly one lit opening
+    expect(s).toContain("points=30,100 90,100");
+  });
+
+  it("fades every patch out with an ellipse fitted to it (issue #185)", () => {
+    const s = light();
+    // An ELLIPSE, not a circle. A circle centred on the opening is nearly a
+    // straight edge by the time it has travelled far enough to matter — on
+    // the plan that reopened #185 it bowed 13px across a 129-wide window —
+    // so the tip read as a hard stop however the stops were tuned. Squashed
+    // to the beam's own proportions it curves on the scale of the WIDTH.
+    const f = falloff(s)!;
+    expect(f).toBeDefined();
+    expect(f.cx).toBe(win.x);
+    expect(f.cy).toBe(win.y);
+    expect(f.across).toBeLessThan(f.along); // squashed across the light
+    // Tip curvature is across^2/along; it has to be small next to the beam's
+    // own width or the end is flat again.
+    expect((f.across * f.across) / f.along).toBeLessThan(win.length);
+    expect(s).toContain('stop-opacity="0"');
+    expect(s).toMatch(/class="fp-sunbeam"[^>]*fill=url\(#/);
+  });
+
+  it("lets the shade return as the patch dies, so no hard edge is left", () => {
+    // The shade mask punches the beams out as holes. Flat holes against a
+    // fading beam would leave the plan un-shaded in a hard-edged stripe well
+    // past the point the light itself had gone — the bug swapped for a
+    // subtler one. The hole has to fade on exactly the same ramp.
+    const s = light();
+    const mask = s.slice(s.indexOf("<mask id=sun-shade"), s.indexOf("</mask>"));
+    expect(mask).toContain("fill=url(#");
+    expect(mask).not.toMatch(/<polygon points=[^>]*fill="#000"/);
+  });
+
+  it("pins each beam's gradient id to its opening, not to its rank (issue #119)", () => {
+    // The trap renderSunDimMask documents, in this feature's own terms: filter
+    // the openings down to the lit ones and every later beam renumbers when a
+    // door moves, rewriting the id on a <linearGradient> that a polygon is
+    // already pointing at through a cached paint server. The beams after the
+    // door would go back to painting flat and full-length — this very bug,
+    // reappearing, and only sometimes.
+    const many = [
+      { ...win, id: "door", x: 80, type: "door" } as Opening,
+      { ...win, id: "a", x: 200 } as Opening,
+      { ...win, id: "b", x: 320 } as Opening,
+    ];
+    const idsByOpening = (doorOpen: number) => {
+      const s = serialize(
+        renderSunlight([wall], many, 400, 400, "sun", {
+          dir: sun,
+          openAmount: (o) => (o.id === "door" ? doorOpen : 0),
+          shutterOpen: () => undefined,
+        })
+      );
+      const out: Record<string, string> = {};
+      for (const m of s.matchAll(
+        /<radialGradient id=(sun-b\d+)[^>]*gradientTransform=translate\((\d+)/g
+      ))
+        out[m[2]!] = m[1]!;
+      return out;
+    };
+    const shut = idsByOpening(0);
+    const open = idsByOpening(1);
+    // The two windows keep the same gradient ids whatever the door is doing.
+    expect(shut["200"]).toBe(open["200"]);
+    expect(shut["320"]).toBe(open["320"]);
+    // …and the door, once it is lit, brings its own rather than taking one.
+    expect(open["80"]).toBeDefined();
+    expect(new Set(Object.values(open)).size).toBe(3);
+  });
+
+  it("never puts a NaN in a coordinate, whatever reach it is handed", () => {
+    // sunReach is hand-editable YAML. "wide" made every far corner NaN, in
+    // the polygon and in the gradient both; a negative one swept the beam
+    // backwards, so the light left through the wall it came in by.
+    for (const bad of [NaN, Infinity, -Infinity, "wide" as unknown as number, -3, 40, null]) {
+      const s = serialize(
+        renderSunlight([wall], [win], 400, 400, "sun", {
+          dir: sun,
+          openAmount: () => 1,
+          shutterOpen: () => undefined,
+          reach: bad as number,
+        })
+      );
+      expect(s).not.toContain("NaN");
+      expect(s).not.toContain("Infinity");
+      // Light travels the way it was sent: sun is {x:0,y:1}, so the far edge
+      // is below the wall at y=100, never back above it.
+      const pts = s.match(/class="fp-sunbeam" points=([-\d., ]+)/)![1]!;
+      const ys = pts.trim().split(" ").map((q) => Number(q.split(",")[1]));
+      expect(Math.max(...ys)).toBeGreaterThan(100);
+    }
+  });
+
+  it("paints with the colours it is given", () => {
+    const s = serialize(
+      renderSunlight([wall], [win], 400, 400, "sun", { dir: sun, openAmount: () => 0, shutterOpen: () => undefined, light: "#ff0000", shade: "#0000ff" })
+    );
+    // The light now carries its colour on the gradient that fades it out
+    // along the beam (issue #185); the shade is still a flat fill.
+    expect(s).toContain("stop-color=#ff0000");
+    expect(s).toContain("fill:#0000ff");
+    // …and refuses one that isn't a colour (#64), falling back rather than
+    // letting it into a style attribute or a stop.
+    const nasty = serialize(
+      renderSunlight([wall], [win], 400, 400, "sun", { dir: sun, openAmount: () => 0, shutterOpen: () => undefined, light: "red;position:fixed", shade: "#000" })
+    );
+    expect(nasty).not.toContain("position:fixed");
+    // The fallback is the skin default, not the rejected string.
+    expect(nasty).toContain("--fp-skin-sunlight");
+  });
+
+  it("can draw the light without darkening anything else", () => {
+    const s = serialize(
+      renderSunlight([wall], [win], 400, 400, "sun", { dir: sun, openAmount: () => 0, shutterOpen: () => undefined, light: "#ff0", shade: null })
+    );
+    // The patches stay; the shade rect and the mask it needed are simply not
+    // built, rather than emitted at zero opacity.
+    expect(s).toContain("fp-sunbeam");
+    expect(s.match(/<mask /g)?.length).toBe(1);
+    expect(s.match(/<rect /g)?.length).toBe(1); // the surviving mask's ground
+  });
+
+  it("draws nothing once the sun is below the horizon", () => {
+    const night = renderSunlight(walls, [win], 400, 400, "sun", {
+      dir: sun,
+      openAmount: () => 0,
+      shutterOpen: () => undefined,
+      strength: 0,
+    });
+    // Nothing at all, rather than a layer at zero opacity that still costs
+    // every polygon on every render.
+    expect(night).toBe(nothing);
+    // A low sun still lights the room, only more faintly.
+    const dusk = serialize(
+      renderSunlight(walls, [win], 400, 400, "sun", {
+        dir: sun,
+        openAmount: () => 0,
+        shutterOpen: () => undefined,
+        strength: 0.25,
+      })
+    );
+    expect(dusk).toContain("fp-sunbeam");
+    const noon = serialize(
+      renderSunlight(walls, [win], 400, 400, "sun", {
+        dir: sun,
+        openAmount: () => 0,
+        shutterOpen: () => undefined,
+      })
+    );
+    // The strength lives on the beam group's own opacity; the penumbra bands
+    // carry fill-opacity, which this must not match instead.
+    const op = (s: string) => Number(s.match(/<g mask=[^>]*? opacity=([0-9.]+)/)![1]);
+    expect(op(dusk)).toBeLessThan(op(noon));
+  });
+
+  it("takes no pointer events — the plan underneath stays pressable", () => {
+    // It spans the whole canvas; the lesson from #108.
+    expect(light()).toContain("fp-sunlight");
+  });
+});
+
+
+/** The falloff ellipse a beam is painted with: where it sits and how big. */
+function falloff(markup: string, id = "sun-b0") {
+  const m = markup.match(
+    new RegExp(`<radialGradient id=${id}[^>]*gradientTransform=translate\\(([-\\d.]+) ([-\\d.]+)\\) rotate\\(([-\\d.]+)\\) scale\\(([\\d.]+) ([\\d.]+)\\)`)
+  );
+  if (!m) return undefined;
+  return { cx: +m[1]!, cy: +m[2]!, angle: +m[3]!, along: +m[4]!, across: +m[5]! };
+}
 
 describe("renderOpening — orientation mirror", () => {
   it("wraps the body in an identity scale by default (unchanged output)", () => {
@@ -289,6 +690,82 @@ describe("renderOpening — a two-panel slider's second panel (issue #145)", () 
   });
 });
 
+describe("renderOpening — a hinged double's second leaf (issue #159)", () => {
+  // Both shapes with two hinged leaves: a window's casement pair (the type's
+  // own default) and the double door #168 added.
+  const DOUBLES = [
+    { what: "casement window", o: { type: "window" } as Partial<Opening> },
+    { what: "double door", o: { type: "door", sash: "double" } as Partial<Opening> },
+  ] as const;
+
+  for (const { what, o } of DOUBLES) {
+    describe(what, () => {
+      it("swings both leaves together when no second state is given", () => {
+        const open = svgOf(o, { amount: 1 });
+        expect(open).toContain("rotate(-90deg)"); // left leaf
+        expect(open).toContain("rotate(90deg)"); // right leaf
+      });
+
+      it("opens one leaf while the other stays shut", () => {
+        const s = svgOf(o, { amount: 1, second: { amount: 0 } });
+        expect(s).toContain("rotate(-90deg)"); // the left one swung
+        expect(s).toContain("rotate(0deg)"); // the right one still shut
+        expect(s).not.toContain("rotate(90deg)");
+      });
+
+      it("opens the second leaf while the first stays shut", () => {
+        const s = svgOf(o, { amount: 0, second: { amount: 1 } });
+        expect(s).toContain("rotate(90deg)");
+        expect(s).toContain("rotate(0deg)");
+        expect(s).not.toContain("rotate(-90deg)");
+      });
+
+      it("gives each leaf its own travel for two position-aware covers", () => {
+        const s = svgOf(o, { amount: 0.5, second: { amount: 1 } });
+        expect(s).toContain("rotate(-45deg)");
+        expect(s).toContain("rotate(90deg)");
+      });
+
+      it("clamps a second leaf's out-of-range amount", () => {
+        expect(svgOf(o, { amount: 0, second: { amount: 4 } })).toContain("rotate(90deg)");
+        expect(svgOf(o, { amount: 0, second: { amount: -2 } })).not.toContain("rotate(90deg)");
+      });
+
+      it("draws each arc from its own leaf's state", () => {
+        // arcLen = (pi/2) * 45; the shut leaf's arc is fully offset, the open
+        // one's not at all — so a half-open pair shows two different offsets.
+        const arcLen = (Math.PI / 2) * 45;
+        const s = svgOf(o, { amount: 1, second: { amount: 0 } });
+        expect(s).toContain(`stroke-dashoffset:0;`); // the open leaf's arc, drawn on
+        expect(s).toContain(`stroke-dashoffset:${arcLen};`); // the shut one's, hidden
+      });
+
+      it("accents only the leaf whose own sensor reads open", () => {
+        const s = svgOf(o, {
+          amount: 1,
+          active: true,
+          accent: "#f00",
+          second: { amount: 0, active: false },
+        });
+        // The open leaf and its arc take the accent; the shut leaf and arc
+        // keep the base colour.
+        expect(s.match(/#f00/g)?.length).toBe(2);
+        expect(s).toContain("fill:#000");
+      });
+    });
+  }
+
+  it("is ignored where there is only one leaf", () => {
+    for (const o of [
+      { type: "door" } as Partial<Opening>, // a plain swing door
+      { type: "window", sash: "single" } as Partial<Opening>, // a single sash (issue #73)
+      { type: "door", motion: "roll" } as Partial<Opening>, // a roll-up curtain
+    ]) {
+      expect(svgOf(o, { amount: 1, second: { amount: 0 } })).toBe(svgOf(o, { amount: 1 }));
+    }
+  });
+});
+
 describe("renderOpening — sliding window", () => {
   it("slides like a slider but with thin glass panels (thickness 1.5)", () => {
     const win = svgOf({ type: "window", motion: "slide" }, { open: true });
@@ -326,6 +803,36 @@ describe("renderOpening — roll-up cover (issue #45)", () => {
     expect(s).not.toContain("fp-slide-panel");
     expect(s).not.toContain("fp-door-arc");
     expect(s).not.toContain("fp-door-leaf");
+  });
+});
+
+describe("renderOpening — an open roll-up reads as open (issue #154)", () => {
+  const roll = { type: "door", motion: "roll" } as Partial<Opening>;
+
+  it("accents the track, the only mark a wide-open garage leaves behind", () => {
+    // The curtain has scaled to nothing at amount 1, so a base-coloured track
+    // is indistinguishable from a shut garage — the bug this fixes.
+    const open = svgOf(roll, { open: true, active: true, accent: "#ff0000" });
+    expect(open).toContain('stroke=#ff0000 stroke-width="0.75"');
+    expect(open).toContain('opacity=1'); // full strength: a 0.6 accent reads as neither colour
+  });
+
+  it("still accents it half-open, where curtain and track are both on screen", () => {
+    const half = svgOf(roll, { amount: 0.5, active: true, accent: "#ff0000" });
+    expect(half).toContain('stroke=#ff0000 stroke-width="0.75"');
+    expect(half).toContain("scaleY(0.5)");
+  });
+
+  it("leaves a shut garage exactly as it was — dimmed track in the base colour", () => {
+    const shut = svgOf(roll, { open: false, accent: "#ff0000" });
+    expect(shut).toContain('stroke=#000 stroke-width="0.75"');
+    expect(shut).toContain('opacity=0.6');
+    expect(shut).not.toContain("#ff0000");
+  });
+
+  it("keeps the jambs structural: they are wall, not cover, so they never accent", () => {
+    const open = svgOf(roll, { open: true, active: true, accent: "#ff0000" });
+    expect(open.match(/stroke=#000 stroke-width="2"/g)?.length).toBe(2);
   });
 });
 
@@ -458,6 +965,73 @@ describe("renderOpening — which side the shutter hangs on (issue #74 follow-up
     const plain = svgOf(win, { open: false, shutter: { amount: 0.4, style: "roll" } });
     const flipped = svgOf(win, { open: false, shutter: { amount: 0.4, style: "roll", flip: true } });
     expect(flipped).toBe(plain);
+  });
+});
+
+describe("renderOpening — a hinged shutter's second panel (issue #159)", () => {
+  // A window with a single sash, so the only leaves in the markup are the
+  // shutter's own pair — the sash's own second-leaf plumbing is tested above,
+  // and this keeps the two from being confused for each other.
+  const win = { type: "window", sash: "single" } as Partial<Opening>;
+  const shut = { amount: 0, style: "swing" } as const;
+
+  it("folds both panels together when no second state is given", () => {
+    const s = svgOf(win, { open: false, shutter: { ...shut, amount: 1 } });
+    expect(s).toContain("rotate(90deg)");
+    expect(s).toContain("rotate(-90deg)");
+  });
+
+  it("folds one panel back while the other stays across the glass", () => {
+    const s = svgOf(win, {
+      open: false,
+      shutter: { ...shut, amount: 1, second: { amount: 0 } },
+    });
+    expect(s).toContain("rotate(90deg)"); // the folded panel
+    expect(s).toContain("rotate(0deg)"); // the one still shut
+    expect(s).not.toContain("rotate(-90deg)");
+  });
+
+  it("folds the second panel while the first stays shut", () => {
+    const s = svgOf(win, { open: false, shutter: { ...shut, second: { amount: 1 } } });
+    expect(s).toContain("rotate(-90deg)");
+    expect(s).toContain("rotate(0deg)");
+    expect(s).not.toContain("rotate(90deg)");
+  });
+
+  it("gives each panel its own travel, and clamps a junk reading", () => {
+    expect(
+      svgOf(win, { open: false, shutter: { ...shut, amount: 0.5, second: { amount: 1 } } })
+    ).toContain("rotate(45deg)");
+    expect(svgOf(win, { open: false, shutter: { ...shut, second: { amount: 9 } } })).toContain(
+      "rotate(-90deg)"
+    );
+  });
+
+  it("still swings away from the wall on the near side", () => {
+    // flip mirrors both panels, so the second one's angle flips with it.
+    const s = svgOf(win, {
+      open: false,
+      shutter: { ...shut, flip: true, second: { amount: 1 } },
+    });
+    expect(s).toMatch(/fp-leaf-r" style="transform:rotate\(90deg\)/);
+  });
+
+  it("accents only the panel whose own contact reads open", () => {
+    const s = svgOf(win, {
+      open: false,
+      shutter: { ...shut, amount: 1, active: true, accent: "#0f0", second: { amount: 0 } },
+    });
+    expect(s.match(/fill:#0f0/g)?.length).toBe(1); // the folded panel only
+    expect(s).toContain("fill:#000"); // the shut one keeps the base colour
+  });
+
+  it("the roll curtain ignores it — a slat band is one piece", () => {
+    const plain = svgOf(win, { open: false, shutter: { amount: 0.4, style: "roll" } });
+    const withSecond = svgOf(win, {
+      open: false,
+      shutter: { amount: 0.4, style: "roll", second: { amount: 1 } },
+    });
+    expect(withSecond).toBe(plain);
   });
 });
 

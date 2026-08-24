@@ -17,7 +17,10 @@ import type {
   StateColorRule,
   BadgeContent,
   BadgeEntity,
+  ItemReading,
+  LabelPosition,
   PressEffect,
+  OfflineStyle,
   Furniture,
   Tracker,
   Area,
@@ -47,6 +50,7 @@ import {
   GLOW_MAX_OPACITY,
   GLOW_MIN_RADIUS,
   DEFAULT_PRESS_EFFECT,
+  DEFAULT_OFFLINE_STYLE,
   BADGE_MIN_LIGHTNESS,
   FURNITURE_GLOW_TRANSMISSION,
   getFloors,
@@ -105,25 +109,39 @@ export function hassRenderInputsChanged(
 /** Every entity id whose state can change what a plan draws (all floors). */
 export function collectWatchedEntities(c: FloorplanCardConfig): Set<string> {
   const ids = new Set<string>();
-  // Sun dimming (issue #113) reads sun.sun's elevation. Miss this and the
-  // plan is lit once and then frozen at whatever the sun was doing when the
-  // card loaded — the same trap entity-bound furniture (#82) and areas (#6)
-  // each fell into. HA replaces the state object when the attribute moves,
-  // so identity comparison in hassRenderInputsChanged catches it.
-  if (c.sunDimming) ids.add("sun.sun");
+  // Anything that reads the real sun has to watch it. Miss this and the plan
+  // is drawn once and then frozen at whatever the sun was doing when the card
+  // loaded — the same trap entity-bound furniture (#82) and areas (#6) each
+  // fell into, and in its worst form (#145) it is not even frozen: it lurches
+  // forward whenever some *other* watched entity moves, so it reads as
+  // intermittent rather than broken. HA replaces the state object when an
+  // attribute moves, so identity comparison in hassRenderInputsChanged
+  // catches it.
+  //
+  // Sun dimming (#113) reads the elevation. Sunlight reads both halves — the
+  // azimuth for the direction, the elevation for whether there is any light —
+  // but only while it follows the real sun: a pinned sunBearing reads neither
+  // (see sunBearingOf and sunlightStrengthOf), so it needs no subscription.
+  if (c.sunDimming || (c.sunlight && !sunIsPinned(c))) ids.add("sun.sun");
   for (const f of getFloors(c)) {
     for (const o of f.openings) {
       if (o.entity) ids.add(o.entity);
       if (o.shutterEntity) ids.add(o.shutterEntity);
-      // The second panel of a two-panel slider (issue #145). Exactly the trap
-      // named above, and the worst version of it: the panel is not frozen, it
-      // catches up whenever some *other* watched entity moves, so it reads as
+      // The opening's second leaf (issues #145, #159). Exactly the trap named
+      // above, and the worst version of it: the leaf is not frozen, it catches
+      // up whenever some *other* watched entity moves, so it reads as
       // intermittent rather than broken.
       if (o.secondaryEntity) ids.add(o.secondaryEntity);
+      if (o.shutterSecondaryEntity) ids.add(o.shutterSecondaryEntity);
     }
     for (const it of f.items) {
       if (it.entity) ids.add(it.entity);
-      if (it.secondaryEntity) ids.add(it.secondaryEntity);
+      // Every reading beyond the device's own state (issue #180), legacy
+      // second entity included — one pool, so one loop. Same trap as the
+      // opening's second leaf above: miss one and that line of the label is
+      // not frozen but *intermittent*, catching up only when some other
+      // watched entity happens to move.
+      for (const r of itemReadings(it)) if (r.entity) ids.add(r.entity);
       // A state rule's own `entity` (the fork extension) watches somewhere
       // else entirely — miss it and a sofa that's meant to redden when the
       // front door opens stays its first-painted colour until something
@@ -175,29 +193,77 @@ export function entityAttributeText(
 }
 
 /**
- * State text for an item: primary reading (state, or `attribute` of the
- * entity — issue #70), plus a secondary one when configured. The secondary
- * reading comes from `secondaryEntity` when set, else from the same entity —
- * so one climate device can show `21.5 °C · 45%` from two attributes.
+ * One {@link ItemReading}'s text (issue #180), or `""` when the row says
+ * nothing yet.
+ *
+ * The empty answer is load-bearing: the editor adds a reading as a blank row
+ * for you to fill in, and a blank row that rendered `entityStateText`'s "—"
+ * would put a dash on the plan the moment you clicked "+". So a row with
+ * neither an entity nor an attribute draws nothing at all, and only a row that
+ * names *something* gets to fail visibly.
+ */
+export function itemReadingText(
+  hass: RenderHass | undefined,
+  item: { entity?: string },
+  reading: ItemReading,
+): string {
+  // An attribute with no entity of its own means "this device's own entity",
+  // which is what lets one climate show four of its attributes (issue #70's
+  // trick, generalised).
+  const entity = reading.entity || (reading.attribute ? item.entity : undefined);
+  if (!entity) return "";
+  return reading.attribute
+    ? entityAttributeText(hass, entity, reading.attribute)
+    : entityStateText(hass, entity);
+}
+
+/**
+ * Every reading a device carries **beyond its own state**, as one list
+ * (issue #180).
+ *
+ * There used to be two mechanisms with two different rules: `secondaryEntity`
+ * / `secondaryAttribute` — one extra reading, joined to the state line and
+ * shown only while `showState` was on — and then `readings`, any number of
+ * them, shown always. Two ways to say the same thing, one of them capped at
+ * one, is a distinction nothing outside the config format cared about.
+ *
+ * So there is one pool, and this builds it: the legacy pair first (it was
+ * always the *second* reading, so it keeps that place), then `readings` in
+ * order. Everything downstream — the label, the badge, the watched-entity set,
+ * the editor — reads this rather than either key, which is what makes the
+ * legacy pair a spelling rather than a special case.
+ *
+ * `secondaryAttribute` with no `secondaryEntity` meant "that attribute of this
+ * device's own entity"; an {@link ItemReading} with an attribute and no entity
+ * means exactly the same thing, so it survives the translation unchanged.
+ */
+export function itemReadings(item: {
+  secondaryEntity?: string;
+  secondaryAttribute?: string;
+  readings?: ItemReading[];
+}): ItemReading[] {
+  const legacy: ItemReading[] =
+    item.secondaryEntity || item.secondaryAttribute
+      ? [{ entity: item.secondaryEntity, attribute: item.secondaryAttribute }]
+      : [];
+  return [...legacy, ...(item.readings ?? [])];
+}
+
+/**
+ * A device's own state as text: its `state`, or its `attribute` when one is
+ * named (issue #70).
+ *
+ * The *primary* reading only. Everything else the device shows comes from
+ * {@link itemReadings} and is appended by {@link itemBadgeLabel} — this is the
+ * one `showState` gates, because it is the one that is the device's own state.
  */
 export function itemStateText(
   hass: RenderHass | undefined,
-  item: {
-    entity: string;
-    attribute?: string;
-    secondaryEntity?: string;
-    secondaryAttribute?: string;
-  },
+  item: { entity: string; attribute?: string },
 ): string {
-  const primary = item.attribute
+  return item.attribute
     ? entityAttributeText(hass, item.entity, item.attribute)
     : entityStateText(hass, item.entity);
-  const secondaryEntity = item.secondaryEntity ?? (item.secondaryAttribute ? item.entity : undefined);
-  if (!secondaryEntity) return primary;
-  const secondary = item.secondaryAttribute
-    ? entityAttributeText(hass, secondaryEntity, item.secondaryAttribute)
-    : entityStateText(hass, secondaryEntity);
-  return `${primary} · ${secondary}`;
 }
 
 /**
@@ -656,15 +722,23 @@ function clipWallToBox(
  *  | `biparting`              | all of it | half     |
  *  | `biparting-bypass`       | half      | a quarter|
  *  | `converging`             | half      | a quarter|
+ *  | hinged double            | all of it | half     |
  *
- * Every other opening keeps `amount` untouched, so a swing door, a roll-up and
- * a single-panel slider all behave exactly as they did — as does a
- * single-sensor `biparting`, where both leaves share one amount and the mean
- * of it is itself.
+ * The hinged double joined the table with issue #159, and swings the same way
+ * `biparting` slides: each leaf covers its own half of the opening and clears
+ * it completely when open, so one open sash of a casement pair lets through
+ * half the light.
+ *
+ * Every other opening keeps `amount` untouched, so a single-leaf swing door, a
+ * roll-up and a single-panel slider all behave exactly as they did — as does a
+ * single-sensor `biparting` or double sash, where both leaves share one amount
+ * and the mean of it is itself.
  */
 export function openingClearFraction(o: Opening, amount: number, secondAmount?: number): number {
   const a1 = Math.max(0, Math.min(1, amount));
   const a2 = Math.max(0, Math.min(1, secondAmount ?? amount));
+  if (openingMotion(o) === "swing")
+    return openingSash(o) === "double" ? (a1 + a2) / 2 : a1;
   switch (sliderStyleOf(o)) {
     case "biparting":
       // Each leaf recesses into its own wall, so between them they can clear
@@ -1056,6 +1130,8 @@ export function itemBadgeLabel(
     kind: ItemKind;
     showName?: boolean;
     showState?: boolean;
+    secondaryAttribute?: string;
+    readings?: ItemReading[];
   },
 ): string {
   const parts: string[] = [];
@@ -1066,7 +1142,66 @@ export function itemBadgeLabel(
   }
   if (!!item.entity && (item.showState ?? item.kind === "sensor"))
     parts.push(itemStateText(hass, item));
+  // Every other reading (issue #180), deliberately *not* gated on `showState`:
+  // the case they were asked for is a plug that says on/off through its badge
+  // colour and wants "1.2 kW · 84 · 5 min ago" without the word "on" in front
+  // of it. `showState` is about the device's own state, and these are not it.
+  //
+  // Each is added only if it resolves to something, so the blank row the
+  // editor's "+" creates stays invisible until it is filled in.
+  for (const reading of itemReadings(item)) {
+    // `showState: false` binds the entity without printing it — for a device
+    // whose badge shows that number and has no use for it twice. The reading
+    // keeps its place in the list either way, so the badge's index into it
+    // does not move (see ItemReading.showState).
+    if (reading.showState === false) continue;
+    const text = itemReadingText(hass, item, reading);
+    if (text) parts.push(text);
+  }
   return parts.join(" · ");
+}
+
+/**
+ * Whether a device draws a label line at all.
+ *
+ * Was `showName || (showState ?? kind === "sensor")` written out at each call
+ * site, which stopped being the whole truth with issue #180: a device can now
+ * have a label from its extra readings alone, both toggles off. The editor
+ * offers the label's size and position off this, so getting it wrong hides the
+ * controls for a label that is on screen.
+ *
+ * Deliberately *not* "would `itemBadgeLabel` return something": that depends
+ * on live state, and a control that vanishes when a sensor drops out is worse
+ * than one that is occasionally offered for an empty line.
+ */
+export function itemHasLabel(item: {
+  kind: ItemKind;
+  showName?: boolean;
+  showState?: boolean;
+  secondaryEntity?: string;
+  secondaryAttribute?: string;
+  readings?: ItemReading[];
+}): boolean {
+  if (item.showName) return true;
+  if (item.showState ?? item.kind === "sensor") return true;
+  // Only the readings that actually print count: a device whose every extra
+  // entity is bound for the badge alone draws no label, and should not be
+  // offered a label's size and position.
+  return itemReadings(item).some((r) => r.showState !== false && (r.entity || r.attribute));
+}
+
+/**
+ * Where a device's label sits (issue #180), resolving anything unrecognised to
+ * the historic `below`.
+ *
+ * Checked rather than trusted for the same reason {@link pressEffectOf} is: the
+ * value becomes a class name, so a hand-edited typo would otherwise land as
+ * `label-blow`, match no rule, and leave the label in whatever position the
+ * base stylesheet happens to give it.
+ */
+export function labelPositionOf(item: { labelPosition?: LabelPosition }): LabelPosition {
+  const v = item.labelPosition;
+  return v === "left" || v === "right" ? v : "below";
 }
 
 /**
@@ -1155,7 +1290,27 @@ export function wallStrokeStyle(thickness: unknown): string {
 // inside it, see the card's stylesheet) is one canvas unit as a length, so
 // `calc(14 * var(--fp-u))` is 14 canvas units however large the card ends up.
 
-/** Coerce a config `overlayScale`; anything unrecognised means the default. */
+/**
+ * Coerce a config `overlayScale`. An **absent** value means `fixed`, which is
+ * how every plan drawn before the option existed was laid out.
+ *
+ * Canvas units are the better default and new plans get them — but they get
+ * them *written down* ({@link FloorplanCard.getStubConfig}), not inferred from
+ * silence. 1.5.0 changed this function's answer for the missing key instead,
+ * and that is not a default for new plans: it is a restyle of every plan in
+ * the field, applied on upgrade with nothing on screen to say so. It landed
+ * hardest where nobody could have opted out — the editor wrote no key at all
+ * for `fixed`, being the default at the time, so *choosing* the old behaviour
+ * and never touching the setting left identical YAML, and both flipped
+ * together. Badges came out at a third of their size on a card narrower than
+ * its canvas, and the number in the editor no longer matched the drawing
+ * (issue #192).
+ *
+ * The rule that follows, and the reason {@link projectDisplayForm} now records
+ * whichever value is chosen rather than omitting the default: **a config says
+ * what it renders as.** A stored `overlayScale` is immune to whatever this
+ * function is ever made to answer for silence.
+ */
 export function normalizeOverlayScale(v: unknown): OverlayScale {
   return v === "plan" ? "plan" : "fixed";
 }
@@ -1412,29 +1567,34 @@ export function resolveIconAnimation(
 }
 
 /**
- * Device classes that mean "something is here" — the sensors a ripple ring was
- * drawn for (issue #127). `motion` and `occupancy` are HA's own binary-sensor
- * classes; `presence` is the home/away one.
+ * Device classes a ripple ring is offered for (issue #127). `motion` and
+ * `occupancy` are HA's own binary-sensor classes for someone being there;
+ * `presence` is the home/away one. `vibration` joins them (issue #202,
+ * @GhislainC): a vibration sensor on a door reports the same thing a ring
+ * says — something happened at this spot on the plan — so the ring is as true
+ * of it as of a motion sensor.
  */
-const PRESENCE_DEVICE_CLASSES = new Set(["motion", "occupancy", "presence"]);
+const RIPPLE_DEVICE_CLASSES = new Set(["motion", "occupancy", "presence", "vibration"]);
 
 /**
- * Whether a device detects presence, and so should be offered the ripple ring
- * (issue #127) — the same shape of gate as "Cast light" on a `light`.
+ * Whether a device detects something happening where it sits, and so should be
+ * offered the ripple ring (issue #127) — the same shape of gate as "Cast
+ * light" on a `light`.
  *
  * A `device_tracker` or `person` qualifies on its domain alone; a
  * `binary_sensor` needs the device class to say so, which is what separates a
- * motion sensor from a door contact or a leak detector. A binary sensor with
- * no device class set is therefore *not* presence: it could be anything, and
- * guessing from the entity id would ring doorbells and smoke alarms.
+ * motion or vibration sensor from a door contact or a leak detector. A binary
+ * sensor with no device class set therefore does not qualify: it could be
+ * anything, and guessing from the entity id would ring doorbells and smoke
+ * alarms.
  */
-export function isPresenceEntity(
+export function isRippleEntity(
   entity: string | undefined,
   deviceClass: string | undefined,
 ): boolean {
   const domain = entity?.split(".")[0];
   if (domain === "device_tracker" || domain === "person") return true;
-  return domain === "binary_sensor" && !!deviceClass && PRESENCE_DEVICE_CLASSES.has(deviceClass);
+  return domain === "binary_sensor" && !!deviceClass && RIPPLE_DEVICE_CLASSES.has(deviceClass);
 }
 
 /**
@@ -1588,6 +1748,69 @@ export function pressEffectOf(c: { pressEffect?: PressEffect }): PressEffect {
 }
 
 /**
+ * Which floor a piece of furniture's click leads to (issue #121), or
+ * `undefined` when it leads nowhere.
+ *
+ * `floors` is bottom-to-top, so `up` is the next entry and `down` the
+ * previous. Nothing at that end of the list means no target, and the card
+ * draws the piece as ordinary furniture: a staircase on the top floor is still
+ * a staircase, but it is not a button, because a button that does nothing is
+ * worse than no button.
+ *
+ * Deliberately not wrapping. A plan's floors are a building, and the top of a
+ * building is not above the basement — a stair click that teleported you from
+ * the loft to the cellar would be a bug report, not a feature.
+ */
+export function furnitureFloorTarget(
+  f: Pick<Furniture, "goToFloor">,
+  floors: readonly { id: string }[],
+  activeFloorId: string | undefined,
+): string | undefined {
+  if (f.goToFloor !== "up" && f.goToFloor !== "down") return undefined;
+  const i = floors.findIndex((x) => x.id === activeFloorId);
+  if (i < 0) return undefined;
+  const next = floors[i + (f.goToFloor === "up" ? 1 : -1)];
+  return next?.id;
+}
+
+/**
+ * Which offline treatment a plan uses (issue #162), resolving anything
+ * unrecognised to the default — the value becomes a class name, exactly as
+ * {@link pressEffectOf}'s does, so an unchecked string would silently mean
+ * "no treatment".
+ */
+export function offlineStyleOf(c: { offlineStyle?: OfflineStyle }): OfflineStyle {
+  const v = c.offlineStyle;
+  return v === "dim" || v === "strike" || v === "none" ? v : DEFAULT_OFFLINE_STYLE;
+}
+
+/**
+ * Whether a device's entity has dropped out (issue #162) — the reporter's
+ * "offline" ceiling light. Three things count, because on the plan they are
+ * the same thing:
+ *
+ * - `unavailable` — the integration says the device is not answering;
+ * - `unknown` — it is answering but has no reading, which is Home Assistant's
+ *   other half of the same story (`isSensorOutage`, and the rule every other
+ *   fail-closed reader in this file already follows);
+ * - **no state at all** — the entity id is not in `hass`. Renamed, deleted, or
+ *   from an integration that failed to load. Today that draws a perfectly
+ *   ordinary "off" badge for something that does not exist.
+ *
+ * A device with no entity bound at all is *not* offline: those are the plain
+ * markers issue #39 added, and there is nothing about them to be wrong.
+ *
+ * The caller passes the state string it already looked up, so this stays pure
+ * and the card does not resolve the same entity twice. A card with no `hass`
+ * yet must not call this — before the first state arrives everything would
+ * read as offline, and the plan would flash grey on load.
+ */
+export function itemIsOffline(item: { entity?: string }, state: string | undefined): boolean {
+  if (!item.entity) return false;
+  return state === undefined || isSensorOutage(state);
+}
+
+/**
  * The reading a domain shows in its badge when the config does not name one,
  * with the compact unit that goes with it (issue #106). A thermostat's *state*
  * is its mode — "heat" — so without this the one device the issue was opened
@@ -1686,13 +1909,33 @@ export interface BadgeReadingItem {
   attribute?: string;
   secondaryEntity?: string;
   secondaryAttribute?: string;
+  readings?: ItemReading[];
   badgeEntity?: BadgeEntity;
 }
 
-/** What a badge is showing, and which of the device's entities it came from. */
+/** What a badge is showing, and which of the device's readings it came from. */
 export interface BadgeReading {
   text: string;
-  source: BadgeEntity;
+  /** `"primary"`, or the index into {@link itemReadings} that supplied it. */
+  source: "primary" | number;
+}
+
+/**
+ * Which reading {@link FloorItem.badgeEntity} points at, as an index into
+ * {@link itemReadings} — or `"primary"` for the device's own entity, or
+ * `undefined` for "work it out".
+ *
+ * One place translates the stored value, so the historic `"secondary"` (index
+ * 0, from when a device had exactly two entities) and a modern index arrive at
+ * the same answer and the card and the editor cannot disagree about it. An
+ * index past the end of the pool resolves to nothing rather than silently
+ * sliding to another reading — a config that names a reading which no longer
+ * exists should show its icon, not a number off some other sensor.
+ */
+export function badgeEntityIndex(v: BadgeEntity | undefined): "primary" | number | undefined {
+  if (v === "primary") return "primary";
+  if (v === "secondary") return 0;
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined;
 }
 
 /**
@@ -1715,9 +1958,10 @@ export function badgeReading(
 ): BadgeReading | undefined {
   if (!hass || !item.entity) return undefined;
 
-  // The secondary, resolved as the label line resolves it ({@link itemStateText}),
-  // so the two never disagree about which entity the second reading comes from.
-  const secondaryEntity = item.secondaryEntity ?? (item.secondaryAttribute ? item.entity : undefined);
+  // The other readings, resolved from the same pool the label line uses
+  // ({@link itemReadings}), so the badge and the label can never disagree
+  // about which entity a reading comes from.
+  const readings = itemReadings(item);
 
   const primary = (): string | undefined => {
     const st = hass.states[item.entity as string];
@@ -1739,34 +1983,45 @@ export function badgeReading(
     return own === undefined ? undefined : formatReading(own, attrs?.unit_of_measurement);
   };
 
-  const secondary = (): string | undefined => {
-    if (!secondaryEntity) return undefined;
-    const sec = hass.states[secondaryEntity];
-    const secAttrs = sec?.attributes as Record<string, unknown> | undefined;
-    if (item.secondaryAttribute) {
-      const n = numericReading(secAttrs?.[item.secondaryAttribute]);
+  /** The numeric value of one reading in the pool, or undefined. */
+  const readingAt = (i: number): string | undefined => {
+    const r = readings[i];
+    if (!r) return undefined;
+    const entity = r.entity || (r.attribute ? item.entity : undefined);
+    if (!entity) return undefined;
+    const st = hass.states[entity];
+    const attrs = st?.attributes as Record<string, unknown> | undefined;
+    if (r.attribute) {
+      const n = numericReading(attrs?.[r.attribute]);
       return n === undefined ? undefined : compactNumber(n);
     }
-    const n = numericReading(sec?.state);
-    return n === undefined ? undefined : formatReading(n, secAttrs?.unit_of_measurement);
+    const n = numericReading(st?.state);
+    return n === undefined ? undefined : formatReading(n, attrs?.unit_of_measurement);
   };
 
-  // An explicit choice reads that entity and stops. Falling through to the
-  // other one would quietly show a different device than the one asked for;
-  // no number at all is honest, and the badge draws its icon instead.
-  if (item.badgeEntity === "secondary") {
-    const text = secondary();
-    return text === undefined ? undefined : { text, source: "secondary" };
-  }
-  if (item.badgeEntity === "primary") {
+  // An explicit choice reads that entity and stops. Falling through to another
+  // would quietly show a different device than the one asked for; no number at
+  // all is honest, and the badge draws its icon instead.
+  const chosen = badgeEntityIndex(item.badgeEntity);
+  if (chosen === "primary") {
     const text = primary();
     return text === undefined ? undefined : { text, source: "primary" };
   }
+  if (typeof chosen === "number") {
+    const text = readingAt(chosen);
+    return text === undefined ? undefined : { text, source: chosen };
+  }
 
+  // Nothing chosen: the first candidate with a number wins, the device's own
+  // entity first. A plug that reads "on" falls through to its power sensor
+  // without anything being configured.
   const own = primary();
   if (own !== undefined) return { text: own, source: "primary" };
-  const other = secondary();
-  return other === undefined ? undefined : { text: other, source: "secondary" };
+  for (let i = 0; i < readings.length; i++) {
+    const text = readingAt(i);
+    if (text !== undefined) return { text, source: i };
+  }
+  return undefined;
 }
 
 /**
@@ -1891,24 +2146,41 @@ export function sliderStyleOf(o: Opening): SliderStyle {
  * Takes the style rather than the opening because the editor asks about a style
  * the user has just picked, before it is on any opening.
  */
-export function sliderStyleHasTwoPanels(style: SliderStyle): boolean {
+export function sliderStyleHasTwoLeaves(style: SliderStyle): boolean {
   return style === "biparting" || style === "biparting-bypass" || style === "converging";
 }
 
-/** {@link sliderStyleHasTwoPanels} for an opening as configured. */
-export function openingHasTwoPanels(o: Opening): boolean {
-  return sliderStyleHasTwoPanels(sliderStyleOf(o));
+/**
+ * Whether an opening has **two** moving leaves, and so a second one for
+ * `secondaryEntity` to drive. The single predicate everything downstream keys
+ * off — the editor's field, the card's resolver, which drawing reads the
+ * second amount — so widening it is what gives a new shape per-leaf sensors
+ * (issue #159).
+ *
+ * Two shapes qualify, for the same reason:
+ *
+ * - a **hinged double** — a casement window's two sashes, or the double door
+ *   #168 added — each leaf on its own jamb, each with its own contact;
+ * - a **two-panel slider** (issue #145), by {@link sliderStyleHasTwoLeaves}.
+ *
+ * A single-leaf swing door does not: there is nothing to split. Nor does a
+ * roll-up, whose curtain is one piece.
+ */
+export function openingHasTwoLeaves(o: Opening): boolean {
+  return openingMotion(o) === "swing"
+    ? openingSash(o) === "double"
+    : sliderStyleHasTwoLeaves(sliderStyleOf(o));
 }
 
 /**
- * The second moving panel as an opening in its own right, so it can go through
+ * The second leaf as an opening in its own right, so it can go through
  * {@link resolveOpeningAmount} / {@link openingIsActive} unchanged rather than
- * threading a "which panel" argument down the whole resolver chain (issue #145).
+ * threading a "which leaf" argument down the whole resolver chain (issue #145).
  * Shares the geometry and `invert`; only the bound entity differs. Callers must
- * check {@link openingHasTwoPanels} and a set `secondaryEntity` first — with no
- * entity this resolves to the type default, not to the first panel's state.
+ * check {@link openingHasTwoLeaves} and a set `secondaryEntity` first — with no
+ * entity this resolves to the type default, not to the first leaf's state.
  */
-export function secondPanelOf(o: Opening): Opening {
+export function secondLeafOf(o: Opening): Opening {
   return { ...o, entity: o.secondaryEntity };
 }
 
@@ -2112,6 +2384,46 @@ export function openingActionForGesture(
 }
 
 /**
+ * What a gesture on a room resolves to (issue #181), or `undefined` for
+ * "nothing configured".
+ *
+ * Tap is the one with a prior claim: an area has zoomed to itself on tap since
+ * zooming existed, and plans rely on it. So this answers only for *configured*
+ * actions, and the card falls back to the zoom when tap resolves to nothing —
+ * which keeps every existing plan behaving exactly as it did, and leaves hold
+ * and double-tap free for a room that wants both.
+ *
+ * The action's own `entity` wins, else the area's. A room bound to a presence
+ * sensor can therefore say `tap_action: { action: toggle }` and mean it,
+ * without naming the entity twice.
+ */
+export function areaActionForGesture(
+  a: Pick<Area, "entity" | "tap_action" | "hold_action" | "double_tap_action">,
+  gesture: "tap" | "hold" | "double_tap",
+): { entity?: string; config: ActionConfig } | undefined {
+  const configured =
+    gesture === "tap" ? a.tap_action : gesture === "hold" ? a.hold_action : a.double_tap_action;
+  if (!configured) return undefined;
+  return { entity: configured.entity ?? a.entity, config: configured };
+}
+
+/**
+ * Whether a room does anything a plain zoom would not — i.e. whether any of
+ * its three gestures is configured.
+ *
+ * The card uses it for the `button` role and the tab stop. Not for the *hit
+ * target*: every area is already tappable because every area zooms, so unlike
+ * an opening there is no affordance here that has to be earned.
+ */
+export function areaHasActions(
+  a: Pick<Area, "tap_action" | "hold_action" | "double_tap_action">,
+): boolean {
+  return (["tap", "hold", "double_tap"] as const).some((g) =>
+    hasAction(areaActionForGesture(a, g)?.config),
+  );
+}
+
+/**
  * Whether pressing an opening does anything at all — the mirror of
  * {@link itemIsInteractive}, and used for the same things: the hit target, the
  * `button` role and the tab stop. An opening with nothing bound draws no
@@ -2146,14 +2458,51 @@ function isSensorOutage(state: string | undefined): boolean {
  */
 export function resolveOpeningOpen(o: Opening, state: string | undefined): boolean {
   if (!o.entity || state === undefined) return openingDefaultOpen(o);
-  // Fail closed on an outage before applying invert — a stale "open" during a
-  // sensor dropout is worse than showing closed.
-  if (isSensorOutage(state)) return false;
-  // `opening`/`closing` are transient cover states: the cover is in motion and
-  // not fully closed, so draw it open. Anything else (closed/off/…) reads closed.
-  const open =
-    state === "on" || state === "open" || state === "opening" || state === "closing";
+  // Fail closed before applying invert — a stale "open" while we have no
+  // reliable reading is worse than showing closed.
+  if (openingReadingFailsClosed(o.entity, state)) return false;
+  const open = openingEntityReadsOpen(o.entity, state);
   return o.invert ? !open : open;
+}
+
+/**
+ * States that mean "no reliable reading", so the opening draws shut and
+ * `invert` does not get to flip that into a door standing open.
+ *
+ * The outages every entity can report, plus one the lock domain adds:
+ * **`jammed`**, which is a lock that tried to move and could not. The bolt is
+ * neither thrown nor withdrawn — or is, and the lock does not know — so it is
+ * the same "we do not know" the dropouts are, not a third open/closed reading.
+ * Treating it as merely "not unlocked" would leave `invert: true` drawing a
+ * jammed front door wide open, which is the one picture a jam must not paint.
+ *
+ * Lock-domain only: no other domain reports `jammed`, and a hypothetical
+ * `sensor.jammed` reading the literal word should keep meaning whatever its
+ * own domain says.
+ */
+function openingReadingFailsClosed(entityId: string, state: string): boolean {
+  if (isSensorOutage(state)) return true;
+  return entityId.split(".")[0] === "lock" && state === "jammed";
+}
+
+/**
+ * Whether a bound entity's raw state means "open", by the rules of its domain.
+ *
+ * A **lock** says it the domain's own way (issue #176): `locked` is a shut
+ * door and `unlocked` an open one, and neither word is `on` or `open`, so the
+ * generic test called every lock closed forever. The states that count come
+ * from {@link entityIsActive} rather than a second list here — that table
+ * already answers "is this lock doing its active thing" for devices, and two
+ * copies of it would be two chances for a door and its badge to disagree about
+ * the same entity.
+ *
+ * Everything else keeps the generic reading: `on`/`open` are open, and
+ * `opening`/`closing` are transient cover states — the cover is in motion and
+ * not fully closed, so it draws open.
+ */
+function openingEntityReadsOpen(entityId: string, state: string): boolean {
+  if (entityId.split(".")[0] === "lock") return entityIsActive(entityId, state);
+  return state === "on" || state === "open" || state === "opening" || state === "closing";
 }
 
 /** A `cover` in transit. Its `current_position` may not have caught up yet. */
@@ -2242,13 +2591,19 @@ function rollCurtain(length: number, tone: string, amt: number): SVGTemplateResu
  * side from the sashes, `-1` the sash's own side, for a window whose outside
  * is the near side of the wall. It flips both the offset and the fold
  * direction, so the panels still swing *away* from the wall either way.
+ *
+ * `tone2` / `amt2` are the right-hand panel's, for a shutter with a contact on
+ * each panel (issue #159). They default to the left's, so a single-sensor
+ * shutter folds symmetrically exactly as it always has.
  */
 function swingShutter(
   length: number,
   cutH: number,
   tone: string,
   amt: number,
-  side: 1 | -1 = 1
+  side: 1 | -1 = 1,
+  tone2: string = tone,
+  amt2: number = amt
 ): SVGTemplateResult {
   const half = length / 2;
   const t = 3;
@@ -2277,8 +2632,8 @@ function swingShutter(
         </g>
       </g>
       <g transform="translate(${half} ${y0})">
-        <g class="fp-leaf-r" style="transform:rotate(${-side * 90 * amt}deg);">
-          <rect x=${-half} y=${-t / 2} width=${half} height=${t} style="fill:${tone};" />
+        <g class="fp-leaf-r" style="transform:rotate(${-side * 90 * amt2}deg);">
+          <rect x=${-half} y=${-t / 2} width=${half} height=${t} style="fill:${tone2};" />
           ${louvers(-half, half)}
         </g>
       </g>`;
@@ -2378,6 +2733,45 @@ export function hasShutterMark(
 /** Last-resort shutter glyphs, for an entity with no device class of its own. */
 const SHUTTER_FALLBACK_ICON = { on: "mdi:window-shutter-open", off: "mdi:window-shutter" };
 
+/** The same, for an opening's own badge — a door reads as a door, glass as glass. */
+const OPENING_FALLBACK_ICON: Record<OpeningType, { on: string; off: string }> = {
+  door: { on: "mdi:door-open", off: "mdi:door-closed" },
+  window: { on: "mdi:window-open", off: "mdi:window-closed" },
+};
+
+/**
+ * The badge glyph for one bound entity: the author's override first, then the
+ * entity's **own** icon resolved exactly as Home Assistant resolves it —
+ * registry override, then the icon on the state, then the domain/device-class
+ * default — and a state-aware pair as the last resort.
+ *
+ * Shared by both badges an opening can draw, because "show whatever this
+ * entity shows everywhere else in HA" is the same promise either time. `open`
+ * is the already-inverted reading, so a sensor wired the other way round still
+ * picks the right half of every pair.
+ */
+function markIcon(
+  entityId: string,
+  configured: string | undefined,
+  st: { state: string; attributes?: Record<string, unknown> } | undefined,
+  open: boolean,
+  fallback: { on: string; off: string },
+  registryIcon?: string,
+): string {
+  // The author's own choice first, as it is for a device (issue #106) — the
+  // one candidate that is a decision rather than a default.
+  const chosen = cssIcon(configured);
+  if (chosen) return chosen;
+  const registry = cssIcon(registryIcon);
+  if (registry) return registry;
+  const attr = cssIcon(st?.attributes?.icon);
+  if (attr) return attr;
+  return (
+    entityDefaultIcon(entityId, st?.attributes?.device_class as string | undefined, open) ??
+    (open ? fallback.on : fallback.off)
+  );
+}
+
 /**
  * The glyph for an opening's shutter badge — the shutter entity's **own**
  * icon, resolved exactly as Home Assistant resolves it, so the badge shows
@@ -2396,19 +2790,72 @@ export function shutterMarkIcon(
   open: boolean,
   registryIcon?: string,
 ): string {
-  const entityId = o.shutterEntity ?? "";
-  // The author's own choice first, as it is for a device (issue #106) — the
-  // one candidate that is a decision rather than a default.
-  const configured = cssIcon(o.shutterIcon);
-  if (configured) return configured;
-  const registry = cssIcon(registryIcon);
-  if (registry) return registry;
-  const attr = cssIcon(st?.attributes?.icon);
-  if (attr) return attr;
-  return (
-    entityDefaultIcon(entityId, st?.attributes?.device_class as string | undefined, open) ??
-    (open ? SHUTTER_FALLBACK_ICON.on : SHUTTER_FALLBACK_ICON.off)
+  return markIcon(
+    o.shutterEntity ?? "",
+    o.shutterIcon,
+    st,
+    open,
+    SHUTTER_FALLBACK_ICON,
+    registryIcon,
   );
+}
+
+/**
+ * Whether an opening draws a badge for its **own** entity (issue #154
+ * follow-up).
+ *
+ * Off unless asked for, unlike the shutter's: the symbol already carries the
+ * state for anything that stays on screen while it moves. A roll-up is the
+ * case that doesn't — its curtain leaves the floor plane, so wide open there
+ * is only a coloured track line left, which is a lot to read across a room.
+ */
+export function hasOpeningMark(o: Pick<Opening, "entity" | "showIcon">): boolean {
+  return !!o.entity && (o.showIcon ?? false);
+}
+
+/**
+ * The glyph for that badge — the opening entity's own icon, on the same terms
+ * as the shutter's, falling back to a door/window pair for an entity with no
+ * device class to speak for it.
+ */
+export function openingMarkIcon(
+  o: Pick<Opening, "type" | "entity" | "icon">,
+  st: { state: string; attributes?: Record<string, unknown> } | undefined,
+  open: boolean,
+  registryIcon?: string,
+): string {
+  return markIcon(
+    o.entity ?? "",
+    o.icon,
+    st,
+    open,
+    OPENING_FALLBACK_ICON[o.type] ?? OPENING_FALLBACK_ICON.door,
+    registryIcon,
+  );
+}
+
+/**
+ * Where that badge sits, and which way it is pushed: the mirror image of the
+ * shutter's, on the other face of the wall.
+ *
+ * Not a style choice — it is what keeps the two badges apart. A shutter hangs
+ * outside, so its badge follows it there; the opening belongs to the room, so
+ * its own badge sits inside. An opening drawing both then has one on each
+ * side, at any angle and under any `flipV`, without either having to know the
+ * other exists.
+ */
+export function openingMarkPoint(
+  o: Pick<Opening, "x" | "y" | "angle" | "flipV">,
+): { x: number; y: number } {
+  return shutterMarkPoint(o, -SHUTTER_MARK_OFFSET);
+}
+
+export function openingMarkNormal(
+  o: Pick<Opening, "angle" | "flipV">,
+  rot: PlanRotation = 0,
+): { x: number; y: number } {
+  const n = shutterMarkNormal(o, rot);
+  return { x: -n.x, y: -n.y };
 }
 
 /** Style options for {@link renderOpening}. */
@@ -2446,12 +2893,21 @@ export interface OpeningStyle {
     style?: "roll" | "swing";
     accent?: string;
     flip?: boolean;
+    /**
+     * The hinged shutter's **other** panel, when it has a contact of its own
+     * (issue #159) — the second half of a pair of persiane, one folded back
+     * and one still across the glass. Omitted, both panels share `amount` and
+     * `active`, which is what a single-sensor shutter has always drawn. The
+     * roll curtain ignores it: a rolling slat band is one piece.
+     */
+    second?: { amount: number; active?: boolean };
   };
   /**
-   * The second moving panel of a biparting slider (issue #145), when it has a
-   * sensor of its own. Omitted — the only case before that issue — leaves both
-   * panels sharing `amount` and `active`, so a single-entity slider parts
-   * symmetrically exactly as it always has. Ignored by every other style.
+   * The opening's second leaf, when it has a sensor of its own — a biparting
+   * slider's other panel (issue #145), or the other sash of a hinged double
+   * (issue #159). Omitted — the only case before those issues — leaves both
+   * leaves sharing `amount` and `active`, so a single-entity opening moves
+   * symmetrically exactly as it always has. Ignored by anything with one leaf.
    */
   second?: { amount: number; active?: boolean };
 }
@@ -2473,6 +2929,15 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
   // Fraction open (0..1) drives partial swing/slide. Defaults to the binary
   // `open` so callers that don't pass `amount` render exactly as before.
   const amt = Math.max(0, Math.min(1, style.amount ?? (open ? 1 : 0)));
+  // The second leaf's own state, when it has a sensor of its own (issues #145,
+  // #159). Omitted it mirrors the first, which is what every opening drew
+  // before there was a second sensor to read. Resolved here rather than inside
+  // a branch because two shapes now have two leaves — sliding panels and a
+  // hinged double — and both read the same pair.
+  const amt2 = style.second ? Math.max(0, Math.min(1, style.second.amount)) : amt;
+  const tone2 = style.second
+    ? cssColorOr(style.second.active ? accent : color, SKIN_ACCENT)
+    : tone;
 
   let body: SVGTemplateResult;
   if (openingMotion(o) === "swing") {
@@ -2488,9 +2953,11 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
     const leafW = two ? half : o.length;
     const arcLen = (Math.PI / 2) * leafW;
     // Revealed via stroke-dashoffset so each arc "draws on" as its leaf opens.
-    const arc = (d: string) => svg`<path class="fp-door-arc" d=${d}
+    // Each arc is drawn from its own leaf's state, so a pair of casement sashes
+    // with a contact each traces two different arcs (issue #159).
+    const arc = (d: string, tn: string, a: number) => svg`<path class="fp-door-arc" d=${d}
               fill="none" stroke-width="1.5" stroke-dasharray=${arcLen}
-              style="stroke:${tone};stroke-dashoffset:${arcLen * (1 - amt)};" />`;
+              style="stroke:${tn};stroke-dashoffset:${arcLen * (1 - a)};" />`;
     // Jambs are what say "glass": a door is drawn by its leaf and arc alone,
     // and that is what tells the two symbols apart at a glance.
     const jambs =
@@ -2507,10 +2974,12 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
           two
             ? // Two leaves hinged at opposite jambs, meeting in the middle when
               // shut and each tracing its own quarter circle outward.
-              svg`${arc(`M 0 0 A ${half} ${half} 0 0 0 ${-half} ${-half}`)}${arc(
-                `M 0 0 A ${half} ${half} 0 0 1 ${half} ${-half}`
+              svg`${arc(`M 0 0 A ${half} ${half} 0 0 0 ${-half} ${-half}`, tone, amt)}${arc(
+                `M 0 0 A ${half} ${half} 0 0 1 ${half} ${-half}`,
+                tone2,
+                amt2
               )}`
-            : arc(`M ${half} 0 A ${o.length} ${o.length} 0 0 0 ${-half} ${-o.length}`)
+            : arc(`M ${half} 0 A ${o.length} ${o.length} 0 0 0 ${-half} ${-o.length}`, tone, amt)
         }
         <!-- leaf hinged at the left jamb (flipH mirrors it to the right one) -->
         <g transform="translate(${-half} 0)">
@@ -2520,9 +2989,12 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
         </g>
         ${
           two
-            ? svg`<g transform="translate(${half} 0)">
-          <g class="fp-leaf-r" style="transform:rotate(${90 * amt}deg);">
-            <rect x=${-half} y="-1.25" width=${half} height="2.5" style="fill:${tone};" />
+            ? // The other leaf, on its own sensor when it has one (issue #159):
+              // a casement pair with a contact per sash draws left-open /
+              // right-shut, exactly as a two-sensor slider parts unevenly.
+              svg`<g transform="translate(${half} 0)">
+          <g class="fp-leaf-r" style="transform:rotate(${90 * amt2}deg);">
+            <rect x=${-half} y="-1.25" width=${half} height="2.5" style="fill:${tone2};" />
           </g>
         </g>`
             : nothing
@@ -2540,9 +3012,15 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
               stroke=${color} stroke-width="2" />
         <line x1=${half} y1=${-cutH / 2} x2=${half} y2=${cutH / 2}
               stroke=${color} stroke-width="2" />
-        <!-- track: stays when the curtain is up so the gap still reads as an opening -->
+        <!-- Track: stays when the curtain is up so the gap still reads as an
+             opening — and wears the accent while the cover is open or moving
+             (issue #154). Wide open the curtain has scaled away to nothing, so
+             this line is the *only* mark left: drawn in the base colour it read
+             exactly like a shut garage, which is the one thing it must not do.
+             Full strength when accented, since a 0.6 tint of the accent reads
+             as neither colour. -->
         <line x1=${-half} y1="0" x2=${half} y2="0"
-              stroke=${color} stroke-width="0.75" opacity="0.6" />
+              stroke=${tone} stroke-width="0.75" opacity=${active ? 1 : 0.6} />
         ${rollCurtain(o.length, tone, amt)}`;
   } else {
     // Sliding — the last of the three motions, so the fallback.
@@ -2557,15 +3035,6 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
         <line x1=${half} y1=${-cutH / 2} x2=${half} y2=${cutH / 2}
               stroke=${color} stroke-width="2" />`;
     const sliderStyle = sliderStyleOf(o);
-    // The second moving panel of a biparting slider (issue #145). With a sensor
-    // of its own it opens and accents independently; without one it mirrors the
-    // first panel, which is what a single-entity slider has always drawn.
-    const amt2 = style.second
-      ? Math.max(0, Math.min(1, style.second.amount))
-      : amt;
-    const tone2 = style.second
-      ? cssColorOr(style.second.active ? accent : color, SKIN_ACCENT)
-      : tone;
     if (sliderStyle === "bypass") {
       // Double bypass: two half-width panels on parallel tracks. The moving
       // (back) panel slides left to stack behind the fixed (front) panel.
@@ -2685,11 +3154,29 @@ export function renderOpening(o: Opening, style: OpeningStyle): SVGTemplateResul
       style.shutter.active ? (style.shutter.accent ?? accent) : color,
       SKIN_ACCENT
     );
-    const amt2 = Math.max(0, Math.min(1, style.shutter.amount));
+    const shutterAmt = Math.max(0, Math.min(1, style.shutter.amount));
+    // The hinged pair's other panel, on its own contact when it has one
+    // (issue #159); without one it folds with the first, as before.
+    const second = style.shutter.second;
+    const shutterTone2 = second
+      ? cssColorOr(
+          second.active ? (style.shutter.accent ?? accent) : color,
+          SKIN_ACCENT
+        )
+      : shutterTone;
+    const shutterAmt2 = second ? Math.max(0, Math.min(1, second.amount)) : shutterAmt;
     body = svg`${body}${
       style.shutter.style === "swing"
-        ? swingShutter(o.length, cutH, shutterTone, amt2, style.shutter.flip ? -1 : 1)
-        : rollCurtain(o.length, shutterTone, amt2)
+        ? swingShutter(
+            o.length,
+            cutH,
+            shutterTone,
+            shutterAmt,
+            style.shutter.flip ? -1 : 1,
+            shutterTone2,
+            shutterAmt2
+          )
+        : rollCurtain(o.length, shutterTone, shutterAmt)
     }`;
   }
   const { sx, sy } = openingMirror(o);
@@ -2817,6 +3304,670 @@ export function sunBrightness(
   const t = Math.max(0, Math.min(1, (e - SUN_ELEVATION_NIGHT) / span));
   const eased = t * t * (3 - 2 * t);
   return lo + (hi - lo) * eased;
+}
+
+// ---- where the light comes from ------------------------------------------
+
+/** Where the sun sits when nothing says otherwise — south-east, a low morning. */
+export const DEFAULT_SUN_BEARING = 135;
+
+/**
+ * Elevation at which the light is at full strength. Between the horizon and
+ * here it fades in, so sunrise and sunset are a ramp rather than a switch —
+ * and a sun one degree up does not throw the same light as a midday one.
+ */
+export const SUN_ELEVATION_FULL = 12;
+
+/**
+ * A live `sun.sun` attribute as a number, or `undefined` when it is not a
+ * reading at all.
+ *
+ * The allowlist is the whole point, and it is why this is one function rather
+ * than two: `Number(null)`, `Number("")` and `Number(false)` are all **0**,
+ * and 0 is a meaningful value for both attributes an outage can hand us — the
+ * horizon exactly for the elevation, due north for the azimuth. Coercing
+ * blindly turns "we do not know" into a confident wrong answer, so each
+ * caller gets `undefined` and applies its own fail-bright default.
+ */
+function liveSunAttribute(value: unknown): number | undefined {
+  const usable = typeof value === "number" || (typeof value === "string" && value.trim() !== "");
+  if (!usable) return undefined;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * How much sunlight there is, 0..1, from `sun.sun`'s **elevation**.
+ *
+ * The azimuth says where the light comes from; only the elevation says
+ * whether there is any. Without it a plan kept its beams all night, pointing
+ * at a sun that had set hours ago — the picture was of a sun that never moved
+ * below the horizon, only around it.
+ *
+ * Below the horizon: nothing. It reads `sun.sun` whether or not the bearing
+ * was pinned, because pinning an angle says *where* the sun is, not
+ * *whether* it is up.
+ *
+ * A missing or unreadable elevation returns full strength, matching
+ * {@link sunBrightness}: an outage should leave the plan lit and legible, not
+ * stuck in a night that never ends. {@link liveSunAttribute} is what keeps 0
+ * — the horizon exactly — from being confused with a reading that never came.
+ */
+export function sunlightStrength(elevation: unknown): number {
+  const e = liveSunAttribute(elevation);
+  if (e === undefined) return 1;
+  if (e <= 0) return 0;
+  if (e >= SUN_ELEVATION_FULL) return 1;
+  const t = e / SUN_ELEVATION_FULL;
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * A compass bearing as a direction vector in **plan** space, given where north
+ * is on this plan.
+ *
+ * Bearings are clockwise from north (0 = N, 90 = E), the convention Home
+ * Assistant's `sun.sun` azimuth already uses. `north` is the plan's own
+ * orientation, also clockwise, so a plan drawn with north to the right sets
+ * `north: 90` and every bearing turns with it. Without that, a sun angle would
+ * be a statement about the drawing rather than about the house, and the same
+ * house drawn sideways would be lit from the wrong side.
+ */
+export function planDirection(bearing: number, north = 0): { x: number; y: number } {
+  const t = ((bearing + north) * Math.PI) / 180;
+  // North is up the canvas (0, −1) before the plan's own rotation.
+  return { x: Math.sin(t), y: -Math.cos(t) };
+}
+
+/**
+ * The sun's compass bearing for the relief: an explicit `sunBearing` when the
+ * plan states one, else `sun.sun`'s live azimuth, else {@link
+ * DEFAULT_SUN_BEARING}.
+ *
+ * Config first, deliberately. A live sun is the better picture — shadows swing
+ * through the day, which is most of the charm — but it is also a picture that
+ * changes while you are trying to lay a plan out, and at night there is no
+ * sensible answer at all. Stating an angle is how you get a plan that looks
+ * the same every time you open it.
+ */
+export function sunBearingOf(cfg: Pick<FloorplanCardConfig, "sunBearing">, azimuth?: unknown): number {
+  if (sunIsPinned(cfg)) return cfg.sunBearing as number;
+  // Through the same allowlist as the elevation, and for a sharper reason:
+  // Number(null) is 0, and 0 is due north — a real bearing. Coerced blindly,
+  // a dead sun.sun does not fall back, it lights the house from the north
+  // and looks entirely deliberate while doing it.
+  return liveSunAttribute(azimuth) ?? DEFAULT_SUN_BEARING;
+}
+
+/** Whether the plan states its own sun angle rather than following the real one. */
+export function sunIsPinned(cfg: Pick<FloorplanCardConfig, "sunBearing">): boolean {
+  return typeof cfg.sunBearing === "number" && Number.isFinite(cfg.sunBearing);
+}
+
+/**
+ * How strong the light is for this plan: the sky's answer while the plan
+ * follows the real sun, and **always full** once it pins its own angle.
+ *
+ * A stated bearing is a decision about the picture rather than a reading of
+ * the sky — it says where the light goes and, by saying so, that it stays.
+ * Fading such a plan out at dusk would half-follow a sun it had already
+ * declined to follow, and leave a plan that is simply dark all evening with
+ * no control on screen that explains why.
+ */
+export function sunlightStrengthOf(
+  cfg: Pick<FloorplanCardConfig, "sunBearing">,
+  elevation: unknown,
+): number {
+  return sunIsPinned(cfg) ? 1 : sunlightStrength(elevation);
+}
+
+// ---- sunlight through the openings ----------------------------------------
+//
+// The sun is far enough away that its rays arrive parallel, which is what
+// makes this exact rather than an impression: a wall's shadow is precisely
+// that wall translated along the light, and the patch a window admits is
+// precisely its gap translated the same way. No ray casting, no per-pixel
+// work — two polygon families and a mask.
+
+/**
+ * How far light reaches into the plan, as a fraction of its shorter side, for
+ * a sun at {@link SUN_REACH_REF} degrees.
+ *
+ * A patch of sun on a floor is bounded by the room, not by the drawing: it is
+ * about as deep as the opening is tall divided by the tangent of the sun's
+ * angle, which for an ordinary window and an ordinary sun is a stripe a few
+ * paces long — not one that crosses the whole house (issue #185). This used
+ * to be 0.55 of the plan and flat all the way, so a single window lit every
+ * room in line with it at exactly the brightness it lit the first.
+ */
+export const SUN_REACH = 0.34;
+/**
+ * The sun angle {@link SUN_REACH} describes — a mid-morning sun. Reach is
+ * scaled from here by {@link sunReachScale}.
+ */
+export const SUN_REACH_REF = 30;
+/**
+ * How far the falloff spreads ACROSS the beam, as a multiple of the gap's
+ * width — the other half of the ellipse the light dies into.
+ *
+ * The falloff is an ellipse fitted to the beam, not a circle. That is the
+ * whole difference between a rounded tip and a flat one, and it took four
+ * attempts to find because a circle centred on the opening is nearly a
+ * straight edge by the time it has travelled far enough to matter: on the
+ * plan that reopened issue #185, a radius of 163 bowed 13px across a 129-wide
+ * window, 10% of the width. An ellipse squashed to the beam's own proportions
+ * curves on the scale of its WIDTH instead, which is what reads as round.
+ *
+ * A shade under 1 means the light is already dimming at the gap's own edges,
+ * so the patch has soft flanks as well as a soft tip.
+ */
+export const SUN_ACROSS = 0.95;
+/** How dark the plan goes where no sunlight lands. */
+export const SUN_SHADE = 0.16;
+/** How strongly the sunlit patches are tinted. */
+export const SUN_PATCH_OPACITY = 0.37;
+/**
+ * Default colours: the same warm white a lamp with no colour of its own casts
+ * (issue #6), and a plain black for the shade so it darkens whatever is under
+ * it rather than tinting it. Both skinnable, both overridable per plan.
+ */
+export const SUN_LIGHT_COLOR = "var(--fp-skin-sunlight, #ffd9a0)";
+export const SUN_SHADE_COLOR = "var(--fp-skin-sunshade, #000)";
+
+/**
+ * A usable reach fraction: {@link cssNumber}'s coercion, then bounded.
+ *
+ * The lower bound is not zero. A reach of zero is a beam with no length,
+ * which is a gradient with no extent and a polygon folded onto its own mouth
+ * — legal SVG that draws nothing, and indistinguishable on screen from the
+ * feature being broken. The upper bound is what keeps a typo like `40` from
+ * asking the browser for a polygon sixteen thousand units long.
+ */
+export function sunReachFraction(value: unknown): number {
+  return Math.max(0.02, Math.min(1.5, cssNumber(value, SUN_REACH)));
+}
+
+/**
+ * How far the light from `o` actually travels before a wall stops it, capped
+ * at `max`.
+ *
+ * The falloff has to be measured against this rather than against a fraction
+ * of the plan, or a room shallower than the reach gets a patch that is still
+ * at full brightness when the far wall cuts it — a hard bar across the floor,
+ * which is the thing issue #185 keeps being reopened about. Fading over the
+ * distance the light has to cross means the patch is always faint by the time
+ * it ends, whatever size the room is.
+ *
+ * The same idea as {@link glowReach} for a lamp, but a single ray rather than
+ * a visibility polygon: the beam is already bounded sideways by the wall
+ * shadows, so the only unknown is how far down the middle it gets.
+ */
+export function sunTravelDistance(
+  o: Opening,
+  dir: { x: number; y: number },
+  walls: readonly Wall[],
+  max: number,
+): number {
+  let nearest = max;
+  for (const w of walls) {
+    const t = rayWallHit(o.x, o.y, dir.x, dir.y, w);
+    // A wall the opening itself sits in reports a hit at ~0; the epsilon in
+    // rayWallHit already drops those, but a gap's own wall can still graze.
+    if (t !== undefined && t > 1 && t < nearest) nearest = t;
+  }
+  return nearest;
+}
+
+/**
+ * How far the light reaches for a sun at `elevation`, as a multiple of the
+ * base reach.
+ *
+ * The steeper the sun, the shorter the patch — that is the whole reason a
+ * midday sun does not lay a stripe across the house, and it is the reason
+ * issue #185 gives for the beams looking wrong. Depth goes as `1/tan(e)`, so
+ * this is that ratio against {@link SUN_REACH_REF}: a 30° sun reaches exactly
+ * the base, a 60° one a little over half as far, a 10° evening sun nearly
+ * twice as far and raking.
+ *
+ * Clamped at both ends. Near the horizon the tangent runs away to infinity
+ * and would throw a beam of unbounded length for a sun that is barely up;
+ * near the zenith it collapses to nothing, and a patch that vanishes entirely
+ * at noon reads as a bug rather than as physics.
+ *
+ * An unreadable elevation returns 1 — the base reach — for the same reason
+ * {@link sunlightStrength} returns full strength: an outage should leave the
+ * plan looking ordinary.
+ */
+export function sunReachScale(elevation: unknown): number {
+  const e = liveSunAttribute(elevation);
+  if (e === undefined) return 1;
+  const rad = (deg: number) => (deg * Math.PI) / 180;
+  const scale = Math.tan(rad(SUN_REACH_REF)) / Math.tan(rad(Math.max(1, Math.min(89, e))));
+  return Math.max(0.45, Math.min(1.9, scale));
+}
+
+/**
+ * **How much** of an opening lets sunlight in, 0..1 of its gap.
+ *
+ * A fraction rather than a yes/no, because a door open a crack is not a door
+ * standing open: read as a boolean it flooded the room exactly as if it were,
+ * since both the wall gap and the beam were then taken at full width. The
+ * three rules, in the order they override each other:
+ *
+ * - a **shutter** that is all the way down stops everything, whatever the
+ *   glass says — that is what a shutter is for, and a window behind a closed
+ *   one is as dark as a wall;
+ * - **glass** admits its whole gap however its sash is sitting, which is the
+ *   reason this cannot reuse the lamp rule ({@link wallsLightPassesThrough}'s
+ *   `openAmount`) unchanged: that one asks whether there is a *hole*, and a
+ *   closed window is not a hole;
+ * - anything **opaque** admits exactly as far as it is open.
+ *
+ * Feed it a clear fraction rather than a raw `amount` ({@link
+ * openingClearFraction}) and the sliding styles come out right too — the
+ * travel a leaf has is not the gap it clears.
+ */
+export function openingSunFraction(
+  o: Pick<Opening, "type" | "glazed" | "sunlight">,
+  amount: number,
+  /** How far the external shutter is open, or `undefined` when none is bound. */
+  shutter?: number,
+): number {
+  // Above every other rule, because it is the one that is a decision rather
+  // than a reading: an opening switched out of the sunlight is wall to it,
+  // however open, however glazed (issue #177).
+  if (o.sunlight === false) return 0;
+  if (shutter !== undefined && shutter <= 0) return 0;
+  if (openingIsGlazed(o)) return 1;
+  return Math.max(0, Math.min(1, amount));
+}
+
+/**
+ * Whether an opening lets any sunlight in at all — {@link
+ * openingSunFraction} above zero. Kept as its own name because "does this let
+ * light in" is the question most callers are actually asking.
+ */
+export function openingAdmitsSun(
+  o: Pick<Opening, "type" | "glazed" | "sunlight">,
+  amount: number,
+  shutter?: number,
+): boolean {
+  return openingSunFraction(o, amount, shutter) > 0;
+}
+
+/**
+ * Whether an opening is glass. A window is, by definition; a door is not,
+ * unless it says so — which patio and French doors do. They are drawn as
+ * doors because that is how they swing, and treating them as opaque left the
+ * sunniest side of a house dark: every one of them is a wall of glass.
+ */
+export function openingIsGlazed(o: Pick<Opening, "type" | "glazed">): boolean {
+  return o.glazed ?? o.type === "window";
+}
+
+/** The two ends of an opening's gap, in plan coordinates. */
+function openingEnds(o: Opening): [AreaPoint, AreaPoint] {
+  const rad = (o.angle * Math.PI) / 180;
+  const hx = (Math.cos(rad) * o.length) / 2;
+  const hy = (Math.sin(rad) * o.length) / 2;
+  return [
+    { x: o.x - hx, y: o.y - hy },
+    { x: o.x + hx, y: o.y + hy },
+  ];
+}
+
+/**
+ * Ray-casting point-in-polygon test. Points exactly on an edge may resolve
+ * either way (not a documented guarantee) — every caller only needs an
+ * approximate "did this land inside" answer, not exact edge semantics.
+ *
+ * Here rather than in `editor-geometry`, which is where it started and which
+ * still re-exports it: it moved when the sunlight needed it, and while the
+ * sunlight has since stopped asking (see {@link sunReachesOpening}), moving it
+ * back would only churn that module's imports for nothing.
+ */
+export function pointInPolygon(points: readonly AreaPoint[], x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const pi = points[i]!;
+    const pj = points[j]!;
+    const intersects =
+      pi.y > y !== pj.y > y && x < ((pj.x - pi.x) * (y - pi.y)) / (pj.y - pi.y) + pi.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Whether the sun reaches this opening's outside face at all — the test that
+ * decides whether it is a *source* (issues #177 / #178).
+ *
+ * The sun is outside the building, so the only openings that admit it are the
+ * ones it shines on directly: trace back along the light from the opening's
+ * centre and if that ray meets a wall, this opening is standing behind
+ * something. Interior doors are, always — there is a façade between them and
+ * the sky. So are the openings on the shaded side of the house.
+ *
+ * Deliberately against the **uncut** walls, not the ones {@link
+ * wallsLightPassesThrough} has opened up: a doorway lined up with a window is
+ * not a second sun. Light does reach it, and it does go through — the beam
+ * from the window carries on through the gap, because that wall's shadow has
+ * the same gap cut in it. What must not happen is the doorway *re-emitting* at
+ * its own full width, which is how a 20-wide sliver came out the other side of
+ * a 120-wide door as a 120-wide flood, and how a window on the dark façade
+ * came to throw a patch of sunlight out into the garden.
+ *
+ * The one wall that must not count is the opening's **own**, since the ray
+ * starts on that wall's centre line and so meets it at zero distance. That is
+ * the test — a hit right at the ray's origin, on a wall this opening lies on —
+ * and not merely "a wall within a wall's thickness", which would also wave
+ * through the wall meeting it at a corner. An opening a few units from a
+ * corner then answered "the sun reaches me" to a sun the return wall was
+ * squarely in front of, and threw its beam back out of the house: the very
+ * bug above, in the one place the shortcut applied.
+ */
+export function sunReachesOpening(
+  o: Pick<Opening, "x" | "y">,
+  walls: readonly Wall[],
+  dir: { x: number; y: number },
+): boolean {
+  for (const w of walls) {
+    // `dir` is a unit vector, so the hit distance is in plan units.
+    const hit = rayWallHit(o.x, o.y, -dir.x, -dir.y, w);
+    if (hit === undefined) continue;
+    const own = hit <= OPENING_ON_WALL_EPS && pointWallDist(o.x, o.y, w) <= OPENING_ON_WALL_EPS;
+    if (!own) return false;
+  }
+  return true;
+}
+
+/**
+ * Which way the light **travels**, as a plan-space vector.
+ *
+ * A bearing says where the sun *is*; the light goes the other way, so this is
+ * the far side of the compass from it. Getting that backwards is not a subtle
+ * error — it lights the house from precisely the wrong side, and it did: with
+ * the sun in the south-west, the beams came in through the north-east windows.
+ */
+export function sunLightDirection(
+  cfg: Pick<FloorplanCardConfig, "north" | "sunBearing">,
+  azimuth?: unknown,
+): { x: number; y: number } {
+  return planDirection(sunBearingOf(cfg, azimuth) + 180, cfg.north ?? 0);
+}
+
+/** A segment swept along the light: the shape both a beam and a shadow are. */
+function sweep(a: AreaPoint, b: AreaPoint, dir: { x: number; y: number }, reach: number): AreaPoint[] {
+  return [
+    a,
+    b,
+    { x: b.x + dir.x * reach, y: b.y + dir.y * reach },
+    { x: a.x + dir.x * reach, y: a.y + dir.y * reach },
+  ];
+}
+
+/**
+ * The patch of light an opening admits: its gap, swept along the sun.
+ *
+ * Swept in one direction only — the way the light travels — so an opening on
+ * the sunlit side of the house throws its patch into the room, and one on the
+ * shaded side throws it out of the house, where it lands on ground that is lit
+ * anyway. That asymmetry is the sun's, not an approximation of it.
+ */
+export function sunBeamPolygon(
+  o: Opening,
+  dir: { x: number; y: number },
+  reach: number,
+  /**
+   * How much of the gap is clear, 0..1 — see {@link openingSunFraction}. The
+   * patch narrows about the opening's centre, matching the gap {@link
+   * wallsLightPassesThrough} leaves in the wall for the same fraction.
+   */
+  clear = 1,
+): AreaPoint[] {
+  const [a, b] = openingEnds(o);
+  const f = Math.max(0, Math.min(1, clear));
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const at = (p: AreaPoint) => ({ x: mx + (p.x - mx) * f, y: my + (p.y - my) * f });
+  return sweep(at(a), at(b), dir, reach);
+}
+
+/**
+ * The shadow a wall casts: the wall, swept along the sun. Exact for parallel
+ * light, which is why the beams can simply be cut by these rather than traced.
+ *
+ * Feed it the walls {@link wallsLightPassesThrough} hands back rather than the
+ * raw ones, and an open doorway stops casting a shadow across the room behind
+ * it — the same treatment a lamp already gets (#143).
+ */
+export function sunShadowPolygon(
+  w: Wall,
+  dir: { x: number; y: number },
+  reach: number,
+): AreaPoint[] {
+  return sweep({ x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }, dir, reach);
+}
+
+/** `points` for an SVG polygon. */
+function polyPoints(pts: readonly AreaPoint[]): string {
+  return pts.map((p) => `${p.x},${p.y}`).join(" ");
+}
+
+/**
+ * Sunlight falling through the windows and doors (and the shade everywhere it
+ * does not reach).
+ *
+ * Two layers over one geometry:
+ * - a **shade** across the plan, punched through wherever light lands, so the
+ *   rooms the sun never enters read as the darker ones;
+ * - the **patches** themselves, tinted warm.
+ *
+ * Both are cut by the wall shadows, so a wall standing in the light shades
+ * what is behind it. The wall band is drawn thick, so the shadow polygons are
+ * widened to match — otherwise light would leak along every wall's edge.
+ *
+ * `pointer-events: none` on the group is not optional: this spans the canvas,
+ * and without it every tappable opening underneath stops answering. Same
+ * lesson as the sun-dim rect (#108).
+ */
+/** Everything the sunlight layer needs that isn't the plan's own geometry. */
+export interface SunlightOptions {
+  /** Which way the light travels — see {@link sunLightDirection}. */
+  dir: { x: number; y: number };
+  openAmount: (o: Opening) => number;
+  /** How far each opening's shutter is open, or undefined where none is bound. */
+  shutterOpen: (o: Opening) => number | undefined;
+  /**
+   * How strong the light is, 0..1 — see {@link sunlightStrength}. At 0 there
+   * is no layer at all rather than a transparent one.
+   */
+  strength?: number;
+  /**
+   * How far the light carries, as a fraction of the plan's shorter side.
+   * Defaults to {@link SUN_REACH}; the card scales it by the sun's height
+   * (see {@link sunReachScale}).
+   */
+  reach?: number;
+  light?: string;
+  /**
+   * `null` draws the light without darkening anything else — the patches
+   * alone, on a plan that stays as bright as it was. The shade is the half
+   * that changes how the *whole* plan reads, so it is the half worth being
+   * able to decline.
+   */
+  shade?: string | null;
+}
+
+export function renderSunlight(
+  walls: readonly Wall[],
+  openings: readonly Opening[],
+  width: number,
+  height: number,
+  id: string,
+  opts: SunlightOptions,
+): SVGTemplateResult | typeof nothing {
+  const { dir, openAmount, shutterOpen, strength = 1 } = opts;
+  const paint = {
+    light: opts.light ?? SUN_LIGHT_COLOR,
+    // `?? ` would swallow the explicit null that means "no shade at all".
+    shade: opts.shade === undefined ? SUN_SHADE_COLOR : opts.shade,
+  };
+  // Below the horizon there is nothing to let in, so there is nothing to draw
+  // — not a layer at zero opacity, which would still cost every polygon.
+  if (strength <= 0) return nothing;
+  // Coerced and bounded at the sink, so no caller can put a NaN into a
+  // coordinate. `sunReach` is hand-editable YAML: "wide" or a stray NaN made
+  // every far corner NaN — in the polygon *and* in the gradient that fades
+  // it — and a negative one did something quieter and worse, sweeping the
+  // beam backwards so the light left through the wall it came in by.
+  const reach = Math.min(width, height) * sunReachFraction(opts.reach);
+  // Doorways already subtracted, so an open door casts no shadow across the
+  // room behind it. Windows too — glass casts none whatever its sash is doing.
+  // How much of each gap is clear, asked once and used for both families —
+  // the wall keeps whatever the opening does not clear, and the beam is
+  // exactly what it does. Read as a yes/no this let a door open a crack pass
+  // the light of one standing wide open, since both the gap and the patch
+  // were then taken at full width.
+  const clear = (o: Opening) => openingSunFraction(o, openAmount(o), shutterOpen(o));
+  const blockers = wallsLightPassesThrough(walls, openings, clear);
+  const shadowPolys = blockers.map((w) => sunShadowPolygon(w, dir, reach));
+  // Only the openings the sun actually shines on are sources — see
+  // {@link sunReachesOpening}, which asks it of the *uncut* walls. Testing the
+  // cut ones (which is what standing in a shadow polygon amounts to) made a
+  // second sun of every opening that happened to line up with a window: the
+  // doorway behind it re-emitted at its own full width, and a window on the
+  // shaded façade threw a patch out of the house (issues #177 / #178).
+  // One slot per opening, holes included — NOT compacted, for exactly the
+  // reason renderSunDimMask spells out above (issue #119). Filtering to the
+  // lit ones renumbers every later beam the moment a door opens, which
+  // rewrites the `id` on an existing <linearGradient> and leaves the polygon
+  // that referenced it pointing at a paint server the browser has already
+  // cached under that name. Here the symptom would be this very feature
+  // failing: a beam painted flat and full-length again, and only the ones
+  // *after* the door that moved — the fade looking intermittent rather than
+  // broken. Emitting the holes in place keeps DOM positions stable too.
+  //
+  // Each beam keeps the opening it came from: the fade runs from that
+  // opening's own centre along the light, so every patch dims over its own
+  // length rather than sharing one gradient across the plan.
+  const beams = openings.map((o, i) => {
+    if (!(clear(o) > 0 && sunReachesOpening(o, walls, dir))) return undefined;
+    // How far the light gets before a wall stops it. The falloff is measured
+    // against this, so a patch is faint by the time it ends however deep or
+    // shallow the room is.
+    const along = sunTravelDistance(o, dir, walls, reach);
+    // …and how wide it is, measured across the light rather than along the
+    // wall: a gap seen obliquely admits a narrower beam than its own length.
+    const [ga, gb] = openingEnds(o);
+    const gx = gb.x - ga.x;
+    const gy = gb.y - ga.y;
+    const width = Math.abs(gx * dir.y - gy * dir.x) * clear(o);
+    return {
+      // The outline runs past the falloff, so the ellipse is what bounds the
+      // patch and never the polygon's flat far edge.
+      points: polyPoints(sunBeamPolygon(o, dir, along + o.length, clear(o))),
+      cx: o.x,
+      cy: o.y,
+      along,
+      across: Math.max(1, width * SUN_ACROSS),
+      angle: (Math.atan2(dir.y, dir.x) * 180) / Math.PI,
+      lightId: `${id}-b${i}`,
+      shadeId: `${id}-s${i}`,
+      fadeId: `${id}-f${i}`,
+    };
+  });
+  if (!beams.some((b) => b !== undefined)) return nothing;
+  const shadows = shadowPolys.map(polyPoints);
+  const pad = WALL_THICKNESS;
+  const shadeId = `${id}-shade`;
+  const shadowId = `${id}-shadow`;
+  const x = -pad;
+  const y = -pad;
+  const w = width + pad * 2;
+  const h = height + pad * 2;
+  // A whole tag per call. Emitting a half-open `<rect …` from one template and
+  // its remaining attributes from another does not concatenate: lit parses
+  // every template on its own, so the tag never closes and the rest lands as
+  // stray text — which is how both masks came to have no white ground at all,
+  // and so hid the very layers they were meant to shape.
+  const cover = (fill: string, extra: SVGTemplateResult | typeof nothing = nothing) =>
+    svg`<rect x=${x} y=${y} width=${w} height=${h} fill=${fill}>${extra}</rect>`;
+  // Widened by a wall's own width: the polygon starts at the centre line, and
+  // without this the light leaks along both edges of every wall it passes.
+  const shadowPoly = (p: string, paint: string) =>
+    svg`<polygon points=${p} fill=${paint} stroke=${paint} stroke-width=${WALL_THICKNESS} />`;
+  // The falloff, as an ellipse fitted to the beam rather than a circle.
+  //
+  // A unit circle is mapped onto the beam's own frame — rotated to point down
+  // the light, stretched to its reach along, squashed to the gap's width
+  // across. So its iso-lines curve on the scale of the beam's WIDTH, which is
+  // what makes the tip read as round; a true circle centred on the opening is
+  // nearly a straight edge by the time it gets there, which is what every
+  // earlier attempt drew and what kept reading as a hard stop.
+  //
+  // It reaches zero at the far end, so nothing bounds the patch except the
+  // light giving out — and the flanks dim too, because SUN_ACROSS is under 1.
+  const fade = (
+    b: { fadeId: string; cx: number; cy: number; along: number; across: number; angle: number },
+    gid: string,
+    color: string,
+  ) => svg`<radialGradient id=${gid} gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1"
+              gradientTransform=${`translate(${b.cx} ${b.cy}) rotate(${b.angle}) scale(${b.along} ${b.across})`}>
+          <stop offset="0" stop-color=${color} stop-opacity="1" />
+          <stop offset="0.45" stop-color=${color} stop-opacity="0.55" />
+          <stop offset="1" stop-color=${color} stop-opacity="0" />
+        </radialGradient>`;
+  // Only built when it is going to be used: the shade mask is the one that
+  // needs every beam *and* every shadow, so declining the shade halves the
+  // shapes this emits rather than hiding them behind an opacity of zero.
+  const shade =
+    paint.shade === null
+      ? nothing
+      : svg`
+      <!-- Where the shade shows: everywhere, minus the patches of light, plus
+           back wherever a wall stands in one. The order is the whole logic. -->
+      <mask id=${shadeId} maskUnits="userSpaceOnUse" x=${x} y=${y} width=${w} height=${h}>
+        ${cover("#fff")}
+        ${beams.map((b) => (b ? fade(b, b.shadeId, "#000") : nothing))}
+        ${beams.map((b) =>
+          b
+            ? svg`<polygon points=${b.points} fill=${`url(#${b.shadeId})`} />`
+            : nothing
+        )}
+        ${shadows.map((p) => shadowPoly(p, "#fff"))}
+      </mask>`;
+  return svg`
+    <defs>
+      ${shade}
+      <!-- The wall shadows again, for the warm patches themselves. -->
+      <mask id=${shadowId} maskUnits="userSpaceOnUse" x=${x} y=${y} width=${w} height=${h}>
+        ${cover("#fff")}
+        ${shadows.map((p) => shadowPoly(p, "#000"))}
+      </mask>
+    </defs>
+    <g class="fp-sunlight">
+      ${
+        paint.shade === null
+          ? nothing
+          : svg`<rect x=${x} y=${y} width=${w} height=${h}
+            style=${`fill:${cssColorOr(paint.shade, SUN_SHADE_COLOR)};`}
+            opacity=${SUN_SHADE * strength} mask=${`url(#${shadeId})`} />`
+      }
+      <g mask=${`url(#${shadowId})`} opacity=${SUN_PATCH_OPACITY * strength}>
+        ${beams.map((b) =>
+          b
+            ? fade(b, b.lightId, cssColorOr(paint.light, SUN_LIGHT_COLOR))
+            : nothing
+        )}
+        ${beams.map((b) =>
+          b
+            ? svg`<polygon class="fp-sunbeam" points=${b.points}
+                            fill=${`url(#${b.lightId})`} />`
+            : nothing
+        )}
+      </g>
+    </g>`;
 }
 
 /**

@@ -76,6 +76,10 @@
                     "description": "Fill color. Falls back to the theme primary color.",
                     "type": "string"
                 },
+                "double_tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
                 "entity": {
                     "description": "Optional entity that makes the room itself live (issue #6) — a presence\nsensor that lights the room while it is occupied, an air quality sensor\nthat reddens it when readings go bad. Drives {@link stateColor} and\n{@link activeColor}; an unbound area is still just a static polygon.",
                     "type": "string"
@@ -96,6 +100,10 @@
                         "fill"
                     ],
                     "type": "string"
+                },
+                "hold_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
                 },
                 "id": {
                     "type": "string"
@@ -129,6 +137,10 @@
                         "$ref": "#/definitions/StateColorRule"
                     },
                     "type": "array"
+                },
+                "tap_action": {
+                    "$ref": "#/definitions/ActionConfig",
+                    "description": "Lovelace actions for the room itself (issue #181) — tapping the floor of a\nroom to run a scene, toggle its lights, or open a dashboard for it.\n\nSame shape as {@link FloorItem.tap_action}, with one difference that comes\nfrom a room already doing something when you tap it: **tap defaults to\nzoom-to-room**, which is what an area has done since zooming existed.\nSetting `tap_action` replaces that zoom; leaving it unset keeps it. Hold\nand double-tap have no default and are free.\n\nSo a room can zoom *and* act: put the action on hold or double-tap. A room\nthat should act on tap and never zoom sets `tap_action`; a room that should\ndo neither sets `tap_action: { action: \"none\" }`.\n\nAn action's `entity` falls back to the area's own {@link entity}, so a room\nalready bound to a presence sensor needs no second mention of it. With no\nentity anywhere, only actions that need none (navigate, url, call-service)\ndo anything. See `areaActionForGesture`."
                 },
                 "tempEntity": {
                     "description": "Temperature-class entity (e.g. a `sensor` with `device_class: temperature`)\nthat drives this area's thermal-layer shading. Unset = the area is not\nshaded, even when the feature is on. Distinct from {@link Area.entity},\nwhich drives stateColor/activeColor for the fill.",
@@ -343,15 +355,22 @@
                     "type": "string"
                 },
                 "badgeEntity": {
-                    "description": "Which of this device's own entities the badge reads while\n`badgeContent: \"value\"` (issue #136) — the main `entity`, or\n{@link secondaryEntity}.\n\nAbsent means \"work it out\", which is what {@link badgeValue} has always\ndone: the first candidate with a number wins, so a switch that reads \"on\"\nalready falls through to its power sensor. That guess is usually right,\nbut it is only a guess, and there was no way to overrule it when the main\nentity happens to be numeric too.\n\nSet, it is the *only* entity read. No falling back to the other one:\nhaving asked for the power sensor, being shown the switch instead would\nbe worse than being shown the icon — which is what a device with no\nnumber to display falls back to anyway.",
-                    "enum": [
-                        "primary",
-                        "secondary"
+                    "anyOf": [
+                        {
+                            "enum": [
+                                "primary",
+                                "secondary"
+                            ],
+                            "type": "string"
+                        },
+                        {
+                            "type": "number"
+                        }
                     ],
-                    "type": "string"
+                    "description": "Which of this device's own entities the badge reads while\n`badgeContent: \"value\"` (issue #136) — the main `entity`, or one of its\nother {@link readings} by index.\n\nAbsent means \"work it out\", which is what {@link badgeValue} has always\ndone: the first candidate with a number wins, so a switch that reads \"on\"\nalready falls through to its power sensor. That guess is usually right,\nbut it is only a guess, and there was no way to overrule it when the main\nentity happens to be numeric too.\n\nSet, it is the *only* reading read. No falling back to another: having\nasked for the power sensor, being shown the switch instead would be worse\nthan being shown the icon — which is what a device with no number to\ndisplay falls back to anyway. An index past the end of the pool behaves\nthe same way, rather than sliding onto a neighbouring reading."
                 },
                 "display": {
-                    "description": "How the device is drawn. Default \"badge\".\n\nThe ripple modes render on any entity. The editor only *offers* them on a\npresence device (issue #127) — a ring says \"someone is there\" — so a ring\non anything else is a YAML-only choice.",
+                    "description": "How the device is drawn. Default \"badge\".\n\nThe ripple modes render on any entity. The editor only *offers* them on a\ndevice that detects something where it sits (issues #127, #202) — a\nmotion, occupancy, presence or vibration sensor, or a `device_tracker` /\n`person`, per {@link isRippleEntity} — so a ring on anything else is a\nYAML-only choice.",
                     "enum": [
                         "badge",
                         "iconRipple",
@@ -406,6 +425,15 @@
                 "kind": {
                     "$ref": "#/definitions/ItemKind"
                 },
+                "labelPosition": {
+                    "description": "Where the label sits relative to the badge (issue #180). Default `below`.",
+                    "enum": [
+                        "below",
+                        "left",
+                        "right"
+                    ],
+                    "type": "string"
+                },
                 "labelSize": {
                     "description": "Label line font size in pixels (issue #59). Default 12.",
                     "type": "number"
@@ -418,6 +446,13 @@
                     "description": "A power/energy sensor (watts) whose live value colours this item in the energy layer.",
                     "type": "string"
                 },
+                "readings": {
+                    "description": "Everything this device reads **beyond its own state** (issue #180) — a\ntemperature sensor that also reports humidity and pressure, a plug that\nreports power, link quality and battery.\n\nThis is *the* list. {@link secondaryEntity} is a legacy spelling of its\nfirst entry rather than a parallel mechanism, so there is one pool, one\norder (`entity`, then any legacy pair, then these) and one rule about when\nthey show. Resolve with `itemReadings`, never by reading either key\ndirectly.\n\n**Shown whether or not the *device's* {@link FloorItem.showState} is**,\nwhich is the point of them — a row's own {@link ItemReading.showState} is\nthe switch for hiding one of these. A plug\nsays on/off through its badge colour, so its owner wants Power · LQI ·\nBattery and *not* the word \"on\" (I-G-1-1's case in discussion #173).\n`showState` is about the device's *own state*; these are not it.",
+                    "items": {
+                        "$ref": "#/definitions/ItemReading"
+                    },
+                    "type": "array"
+                },
                 "rippleColor": {
                     "description": "Ripple ring color (CSS/hex). Falls back to `activeColor`, then the primary color.",
                     "type": "string"
@@ -427,11 +462,11 @@
                     "type": "number"
                 },
                 "secondaryAttribute": {
-                    "description": "Attribute for the second reading. Applies to `secondaryEntity` when set,\nelse to `entity` — so one climate device can show\n`current_temperature · current_humidity` without a second entity.",
+                    "description": "Attribute for {@link secondaryEntity}, and legacy in the same way. Applies\nto `secondaryEntity` when set, else to `entity` — so one climate device\ncould show `current_temperature · current_humidity` without a second\nentity. A {@link ItemReading} with an attribute and no entity means\nexactly that, which is how it translates into the pool.",
                     "type": "string"
                 },
                 "secondaryEntity": {
-                    "description": "Optional second entity (e.g. a humidity sensor paired with a temperature\nentity). When set and the state is shown, both values are displayed in the\nsame element. The primary `entity` drives on/off state and click actions.",
+                    "description": "**Legacy spelling of the first {@link readings} row.** A second entity\nshown alongside the primary — e.g. a humidity sensor paired with a\ntemperature one.\n\nKept because plans in the wild use it, and still read: `itemReadings`\nputs it at the head of the pool, where it always sat. It has no field in\nthe editor any more, and touching a device's readings rewrites it as a\n`readings` entry. New configs should just use `readings`.\n\nOne behaviour did change with issue #180: it used to be part of the state\nline and so appeared only while `showState` was on. It is a reading now,\nand readings show on their own terms — see {@link readings}.",
                     "type": "string"
                 },
                 "showIcon": {
@@ -529,6 +564,14 @@
                 },
                 "entity": {
                     "description": "Optional entity that makes the drawing live (issue #82) — a soil sensor on\na plant, a water temperature sensor on a fish tank, a contact sensor on a\ncabinet. Drives {@link stateColor} and {@link activeColor}; furniture has\nno click action, so an unbound piece is still just a gray diagram.",
+                    "type": "string"
+                },
+                "goToFloor": {
+                    "description": "Clicking this changes floor (issue #121) — `up` for the next floor in\n`floors`, `down` for the previous one.\n\nWritten for the **stairs** symbol, which is where a plan already draws the\nthing people expect to click: the arrow on a staircase is a promise that\nit goes somewhere. It is not restricted to that symbol, because a plan can\ndefine its own staircase (see \"Drawing your own\") and a rule keyed on one\nbuilt-in id would leave those out.\n\n`floors` is read bottom-to-top, so `up` is the next entry and `down` the\nprevious. At the end of the list the direction has nowhere to go: the\npiece draws as ordinary furniture and takes no clicks, rather than\noffering a control that does nothing. It does not wrap — a staircase on\nthe top floor does not lead to the basement.",
+                    "enum": [
+                        "down",
+                        "up"
+                    ],
                     "type": "string"
                 },
                 "h": {
@@ -638,6 +681,24 @@
             ],
             "type": "string"
         },
+        "ItemReading": {
+            "description": "One **extra** reading on a device (issue #180) — the third, fourth, fifth\nline of text after `entity` and `secondaryEntity` have had their turn.\n\nBoth fields are optional, and between them they say where the number comes\nfrom:\n\n| `entity` | `attribute` | reads                                    |\n| -------- | ----------- | ---------------------------------------- |\n| set      | unset       | that entity's state                      |\n| set      | set         | that attribute of that entity            |\n| unset    | set         | that attribute of the **device's own** entity |\n| unset    | unset       | nothing — a blank row draws no text      |\n\nThe third row is what makes one climate device able to show four of its own\nattributes without naming itself four times; the fourth is what keeps a row\nthe editor has just added from printing \"—\" before anything is picked.",
+            "properties": {
+                "attribute": {
+                    "description": "Attribute to read instead of the state.",
+                    "type": "string"
+                },
+                "entity": {
+                    "description": "Entity to read. Omitted, the device's own {@link FloorItem.entity}.",
+                    "type": "string"
+                },
+                "showState": {
+                    "description": "Whether this reading's value joins the label line. Default `true`.\n\n`false` binds the entity to the device without printing it: the badge can\nstill be pointed at it with {@link FloorItem.badgeEntity}, and the card\nstill watches it for changes. That is the case this exists for — a smart\nplug that badges `1.2 kW` in its circle has no use for the same number\nrepeated in text underneath.\n\nHiding a reading does **not** renumber the others: `badgeEntity` indexes\nthe whole list, visible or not, so switching this off cannot silently\nrepoint the badge at a different entity.",
+                    "type": "boolean"
+                }
+            },
+            "type": "object"
+        },
         "Opening": {
             "description": "A door or window. Positioned by its center point and rotation so it can be\ndropped onto (and aligned with) a wall, but it is stored independently.",
             "properties": {
@@ -665,9 +726,17 @@
                     "description": "Mirror the symbol across the wall line, so the door opens into the room on\nthe other side. Absent = the default (swings toward the −y / \"near\" side).",
                     "type": "boolean"
                 },
+                "glazed": {
+                    "description": "Lets sunlight through even while shut. Defaults per type rather than to a\nfixed value: a window is glass, a door is not.\n\nBoth defaults are worth overriding, in opposite directions. `true` on a\n**door** is what a patio or French door is — drawn as a door because that\nis how it swings, but a wall of glass, and left opaque it kept the\nsunniest side of a house dark. `false` on a **window** is the opaque\nexception: a glass-brick panel, a hatch, a serving window with a solid\nflap, all of which admit light only as far as they are open.\n\nOnly the sunlight reads this — it changes nothing about how the opening\nis drawn. See {@link openingIsGlazed}.",
+                    "type": "boolean"
+                },
                 "hold_action": {
                     "$ref": "#/definitions/ActionConfig",
                     "description": "A Lovelace action (tap/hold/double_tap). Typed loosely on purpose: HA has\nrenamed fields over time (call-service→perform-action, service_data→data)\nand unknown fields must pass through the card untouched."
+                },
+                "icon": {
+                    "description": "Override that icon. Absent, it is the opening entity's own, resolved the\nway {@link shutterIcon} describes — a **pair**, so the glyph carries\nopen/closed by itself. An override is one glyph for both states; colour\nstill reports the state.",
+                    "type": "string"
                 },
                 "id": {
                     "type": "string"
@@ -690,7 +759,7 @@
                     "type": "string"
                 },
                 "sash": {
-                    "description": "Swing windows only: how many sashes. `double` (the default, today's look)\ndraws two casement leaves meeting in the middle; `single` draws one sash\nhinged at a jamb (issue #73) — `flipH` picks which jamb. Ignored for\ndoors and for sliding / rolling openings.",
+                    "description": "Swing openings only: how many hinged leaves. The two types default the\nother way round, because the ordinary cases do — a window opens with\n`double` (two casement sashes), a door with `single` (one leaf across the\nopening). Set it for a single-sash window (issue #73) or a double door\n(issue #168); either way both leaves hinge at their own jamb and trace\ntheir own arc, and `flipH` picks the jamb for a single. Ignored by sliding\nand rolling openings. See {@link defaultSash} / {@link openingSash}.",
                     "enum": [
                         "double",
                         "single"
@@ -698,8 +767,12 @@
                     "type": "string"
                 },
                 "secondaryEntity": {
-                    "description": "Two-panel sliders only: a second contact / `cover` driving the **other**\nmoving panel (issue #145), for a two-panel door with a sensor on each leaf.\n`entity` keeps the first panel — the one at the −x jamb in the opening's own\nframe, so `flipH` swaps which panel each sensor draws, exactly as it mirrors\neverything else. Unset (the default) leaves both panels on `entity`, which\nis what a single-sensor slider has always drawn. `invert` covers both.",
+                    "description": "A second contact / `cover` driving the opening's **other** leaf, for\nanything two-leaved with a sensor on each: a two-panel slider (issue\n#145), or a hinged double — a casement window's two sashes, a double door\n(issue #159). See {@link openingHasTwoLeaves} for which shapes qualify;\nanything with one leaf ignores this.\n\n`entity` keeps the first leaf — the one at the −x jamb in the opening's own\nframe, so `flipH` swaps which leaf each sensor draws, exactly as it mirrors\neverything else. Unset (the default) leaves both on `entity`, which is what\na single-sensor opening has always drawn. `invert` covers both.",
                     "type": "string"
+                },
+                "showIcon": {
+                    "description": "Draw the opening's **own** icon beside it (default false).\n\nThe symbol usually says everything: a leaf swings, a panel slides. A\nroll-up is the exception — its curtain leaves the floor plane, so wide\nopen there is nothing left but a coloured line, and a garage door across\nthe room is a state you want to read at a glance rather than infer from a\nhairline (issue #154 follow-up). Off by default because a plan of swing\ndoors does not need a badge on every one of them.\n\nSits on the opposite side of the wall from {@link showShutterIcon}'s\nbadge, so an opening that draws both never stacks them.",
+                    "type": "boolean"
                 },
                 "showShutterIcon": {
                     "description": "Draw the shutter's icon beside the opening (default true, whenever both\nentities are bound). It is what makes the second entity visible at all —\nand a control of its own, since tapping it opens the shutter — but on a\ndense plan, or one where every window has a shutter, it is a lot of\nicons. Turning it off leaves the gestures untouched.",
@@ -725,6 +798,10 @@
                     "description": "Flip the open/closed interpretation of {@link shutterEntity}, exactly as\n{@link invert} does for `entity`. Not the same switch: a reed contact on a\nhinged shutter commonly reports `on` when the panels are **shut** (the\nmagnet only meets its contact when they are folded together), while the\nwindow behind it reports the other way round. One flag could not describe\nboth.",
                     "type": "boolean"
                 },
+                "shutterSecondaryEntity": {
+                    "description": "A second contact driving the hinged shutter's **other** panel (issue\n#159) — the pair of persiane with a reed switch on each, one folded back\nand one still across the glass.\n\nIts own key rather than reusing {@link secondaryEntity}, because the\nshutter is a layer over the opening rather than part of it: a double\ncasement behind a pair of shutters has four leaves and can want four\ncontacts. Read only by a `swing` shutter — a roll curtain is one piece —\nand {@link shutterInvert} covers it, as {@link invert} covers both sashes.",
+                    "type": "string"
+                },
                 "shutterStyle": {
                     "description": "How that shutter is drawn (issue #74):\n- `roll` — a slatted curtain that rolls up out of the floor plane.\n- `swing` — louvered panels hinged at the jambs, **outside** the wall,\n  swinging outward (the shutters you fold back against the façade).\n\nDefaults from the bound entity: a `binary_sensor` can only say\nopen/closed, which is what a hinged shutter reports, so it defaults to\n`swing`; a position-carrying `cover` defaults to `roll`. Set explicitly\nto override. See {@link shutterStyleOf}.",
                     "enum": [
@@ -743,6 +820,10 @@
                         "single"
                     ],
                     "type": "string"
+                },
+                "sunlight": {
+                    "description": "Whether this opening takes part in the sunlight at all (default `true`).\n\n`false` makes it wall as far as the sun is concerned: no patch of its own,\nand it stops a beam crossing it like any other stretch of wall. Nothing\nelse changes — it is still drawn, still tappable, still lets a lamp's pool\nthrough if it is open.\n\nThe case it exists for (issue #177): a **solid front door with no sensor\nbound**. The plan draws such a door open, because that is the floor-plan\nconvention and what makes an unwired door useful, and the light believes\nthe drawing — so a corridor behind the front door filled with sunshine\nthat the door has never let in. This is how you say \"drawn open, but shut\nto the sun\".",
+                    "type": "boolean"
                 },
                 "tapTarget": {
                     "description": "With both entities bound, which one the gestures lead with — the\nwindow/door itself (the default), or the shutter. The other one moves to\nhold. Meaningless with only one bound, since there is nothing to choose\nbetween.\n\nThe default is the opening because a tap is the gesture people make by\naccident and the shutter is real hardware that takes seconds to travel\n(issue #47). Naming the shutter here is the opposite of an accident, so\nthe choice is honoured — it opens the shutter's dialog rather than driving\nthe motor. Moving it on a tap is a further step, and stays with\n{@link tap_action}.",
@@ -973,6 +1054,10 @@
             "description": "Canvas background color (CSS / hex). Falls back to the skin's paper, then the card background.",
             "type": "string"
         },
+        "compactHeader": {
+            "description": "Draw the card's own chrome *inside* the plan instead of above it (issue\n#152), for a dashboard where the top of the card is mostly empty:\n\n- the **title** becomes a small chip in the plan's top-left corner rather\n  than an `ha-card` header. That header is a fixed ~76px whatever it says\n  — 48px of line-height plus its padding — and none of it can be reached\n  from outside `ha-card`'s shadow root, so the only way to stop spending\n  it is not to use it;\n- the **floor buttons** lay out as a row rather than a column, so they\n  share that one strip with the title instead of running down the side.\n\nOff by default: the title then sits over the drawing, which is the right\ntrade only when there is room for it — and it is the author who knows.",
+            "type": "boolean"
+        },
         "defaultFloor": {
             "description": "Id of the floor shown first. Falls back to the first floor.",
             "type": "string"
@@ -1010,6 +1095,19 @@
             },
             "type": "array"
         },
+        "north": {
+            "description": "Where north is on this plan, in degrees clockwise from the top of the\ncanvas. Default 0 (north is up).\n\nWhat makes a sun angle a statement about the *house*: without it, \"the sun\nis in the south-east\" would only mean \"toward the bottom-left of the\ndrawing\", and the same house traced at a different angle would be lit from\nthe wrong side.",
+            "type": "number"
+        },
+        "offlineStyle": {
+            "description": "How a device whose entity is **offline** is drawn (issue #162) —\n`unavailable`, `unknown`, or an entity id that is not in Home Assistant at\nall (renamed, or the integration is down).\n\nPlan-wide, for the same reason `pressEffect` is: it is a drawing\nconvention, and a plan where half the dead devices announced themselves\nwould read as broken rather than as configured. Default\n{@link DEFAULT_OFFLINE_STYLE}.",
+            "enum": [
+                "dim",
+                "none",
+                "strike"
+            ],
+            "type": "string"
+        },
         "openings": {
             "items": {
                 "$ref": "#/definitions/Opening"
@@ -1017,7 +1115,7 @@
             "type": "array"
         },
         "overlayScale": {
-            "description": "How the HTML overlay (badges, labels, room names, text) is sized.\n\n- **`fixed`** (default) — screen pixels, whatever size the card renders at.\n- **`plan`** — canvas units, so the overlay scales with the drawing exactly\n  as the SVG does.\n\n`fixed` is the historic behaviour and is right when the card renders at\nroughly its canvas size. It falls apart below that: a plan drawn at 980\nwide and rendered 510 wide draws every wall at half size while a 14px room\nname stays 14px, so labels collide with the badges and each other. `plan`\nmakes the two layers shrink together. Default stays `fixed` so no existing\ncard changes appearance on upgrade.",
+            "description": "How the HTML overlay (badges, labels, room names, text) is sized.\n\n- **`plan`** — canvas units, so the overlay scales with the drawing\n  exactly as the SVG does. What {@link newPlanConfig} creates a card with.\n- **`fixed`** — screen pixels, whatever size the card renders at. What an\n  **absent** key means, and so what every plan drawn before this option\n  existed keeps rendering as.\n\nThe split is deliberate and is the whole shape of issue #192. `plan` is\nthe better way to lay a plan out: `fixed` agrees with the drawing only\nwhile the card renders at roughly its canvas size, which is not something\na plan gets to decide, since the dashboard hands it whatever width it has.\nBelow that the two layers come apart — a plan drawn 980 wide and rendered\n510 wide draws every wall at half size while a 14px room name stays 14px,\nso labels collide with the badges and each other and a carefully spaced\ncluster of badges overlaps (issue #179).\n\nNone of which makes it safe to *infer*. 1.5.0 made `plan` the answer for a\nmissing key and resized the overlay of every plan in the field, badges\nlanding at a third of their size on a card narrower than its canvas — and\nnobody could have opted out, because the editor omitted `fixed` as the\ndefault of the day, so a plan that had chosen pixels stored exactly what a\nplan that had never been asked stored. A new default belongs in new\nconfigs: see {@link newPlanConfig} and {@link normalizeOverlayScale}.\n\n`fixed` is also a real choice on its own merits, for a card rendered much\nlarger than its canvas or a wall tablet that wants a px floor under its\ntext. See the README's \"Where it helps, and where it costs\".",
             "enum": [
                 "fixed",
                 "plan"
@@ -1050,6 +1148,10 @@
             "description": "Placement snap step in virtual (canvas) units. Tri-state:\n- **unset** — placement/drag/nudge snap to the visible `grid` (the default).\n- **`0`** — free placement (no snapping anywhere).\n- **`> 0`** — snap to this custom step (absolute units).\n\nThe editor presents a custom step as a percentage of the grid (e.g. `50` %\nof a `20` grid is stored here as `10`), but the stored value is always\nabsolute. Resolve with {@link resolveSnap}.",
             "type": "number"
         },
+        "sunBearing": {
+            "description": "The sun's compass bearing for the shadows (0 = north, 90 = east). Absent,\nthe plan follows `sun.sun`'s live azimuth, so the shadows swing through\nthe day; set it to pin the light where you want it.",
+            "type": "number"
+        },
         "sunBrightnessMax": {
             "description": "Plan brightness in full daylight, 0-1. Default {@link DEFAULT_SUN_MAX}.",
             "type": "number"
@@ -1061,6 +1163,26 @@
         "sunDimming": {
             "description": "Follow the real sun (issue #113): dim the plan through dusk and brighten\nit through dawn, tracking the **Home Assistant instance's** own sunrise\nand sunset rather than the viewer's browser.\n\nDriven by `sun.sun`'s `elevation` attribute, which Home Assistant already\ncomputes continuously from the instance's latitude, longitude and clock.\nThat is the whole reason not to read timestamps and interpolate: elevation\nis the smooth signal, it comes from the server, and a phone in another\ntimezone showing the same dashboard sees the same picture.",
             "type": "boolean"
+        },
+        "sunReach": {
+            "description": "How far sunlight carries from an opening, as a fraction of the plan's\nshorter side. Default {@link SUN_REACH} (0.34).\n\nThe light fades out over this distance rather than stopping at it, and\nwhile the plan follows the real sun it is shortened as the sun climbs —\na midday sun lays a short patch, an evening one rakes across the room\n(issue #185). Raise it for a plan whose rooms read as too dark, lower it\nfor one where the patches still reach further than they should.\n\nCoerced and clamped to 0.02-1.5 before it reaches the drawing — see\n{@link sunReachFraction}. It is hand-editable YAML, and an unreadable one\nput NaN straight into a coordinate.",
+            "type": "number"
+        },
+        "sunShade": {
+            "description": "Darken everywhere the light does not reach (default true). Off leaves the\nplan as bright as it was and draws the patches alone — the shade is the\nhalf that changes how the *whole* plan reads, so it is the half worth\nbeing able to decline.",
+            "type": "boolean"
+        },
+        "sunShadeColor": {
+            "description": "Colour of the shade everywhere the light does not reach. Black by\ndefault, so it darkens what is under it rather than tinting it — a blue\nhere reads as cold north light, a warm grey as dusk.",
+            "type": "string"
+        },
+        "sunlight": {
+            "description": "Let the sun in (issue: sunlight through openings). Light arrives from\n{@link sunBearing}, enters through every window and every open door, and\nis stopped by the walls — so the rooms it never reaches are drawn a shade\ndarker, and the patches it lands on are tinted warm.\n\nNeeds {@link north} to mean anything about the actual house.",
+            "type": "boolean"
+        },
+        "sunlightColor": {
+            "description": "Colour of the light the openings let in. Defaults to the same warm white\na lamp with no colour of its own casts (issue #6). Passes through the\nstyle-injection allowlist (#64), like every other colour here.",
+            "type": "string"
         },
         "symbols": {
             "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E",

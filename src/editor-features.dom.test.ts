@@ -96,6 +96,22 @@ function rowInput(el: EditorEl, text: string): HTMLInputElement {
   return input as HTMLInputElement;
 }
 
+/**
+ * Upstream's config groups (issue #205) render their content only while open,
+ * and start collapsed — so a field inside one is simply absent from the DOM
+ * until its heading is clicked. Any fork test asserting on a grouped field has
+ * to open the group first, or it passes for the wrong reason: "not in the DOM"
+ * would read as "not offered".
+ */
+async function openGroup(el: EditorEl, title: string): Promise<void> {
+  const btn = [...el.shadowRoot!.querySelectorAll("button.cfg-group-title")].find(
+    (b) => b.textContent!.trim() === title
+  ) as HTMLButtonElement | undefined;
+  if (!btn) throw new Error(`no config group titled "${title}"`);
+  btn.click();
+  await el.updateComplete;
+}
+
 /** The Features section's collapsed one-line summary. */
 function featuresSummary(el: EditorEl): string {
   const toggle = [...el.shadowRoot!.querySelectorAll(".section-toggle")].find((b) =>
@@ -159,16 +175,19 @@ describe("the per-element bindings the layers read", () => {
 
   it("offers a device no Power sensor field while the energy layer is off", async () => {
     const el = await mount(mkConfig(), selectedItem);
+    await openGroup(el, "What it reads");
     expect(labels(el)).not.toContain("Power sensor");
   });
 
   it("offers one once the energy layer is on", async () => {
     const el = await mount(mkConfig({ energyLayer: true }), selectedItem);
+    await openGroup(el, "What it reads");
     expect(labels(el)).toContain("Power sensor");
   });
 
   it("binds the sensor the energy layer actually reads", async () => {
     const el = await mount(mkConfig({ energyLayer: true }), selectedItem);
+    await openGroup(el, "What it reads");
     const input = rowInput(el, "Power sensor");
     input.value = "sensor.plug_power";
     input.dispatchEvent(new Event("change"));
@@ -183,16 +202,19 @@ describe("the per-element bindings the layers read", () => {
       mkConfig(undefined, { items: [item({ powerEntity: "sensor.plug_power" })] }),
       selectedItem
     );
+    await openGroup(el, "What it reads");
     expect(rowInput(el, "Power sensor").value).toBe("sensor.plug_power");
   });
 
   it("offers a room no Temperature sensor field while the climate layer is off", async () => {
     const el = await mount(mkConfig(), selectedArea);
+    await openGroup(el, "What it reads");
     expect(labels(el)).not.toContain("Temperature sensor");
   });
 
   it("binds the sensor the climate layer actually reads", async () => {
     const el = await mount(mkConfig({ thermalLayer: true }), selectedArea);
+    await openGroup(el, "What it reads");
     const input = rowInput(el, "Temperature sensor");
     input.value = "sensor.hall_temperature";
     input.dispatchEvent(new Event("change"));
@@ -205,6 +227,7 @@ describe("the per-element bindings the layers read", () => {
       mkConfig(undefined, { areas: [area({ tempEntity: "sensor.hall_temperature" })] }),
       selectedArea
     );
+    await openGroup(el, "What it reads");
     expect(rowInput(el, "Temperature sensor").value).toBe("sensor.hall_temperature");
   });
 });

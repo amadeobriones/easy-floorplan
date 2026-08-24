@@ -19,6 +19,7 @@ import {
   DEFAULT_TEXT_SIZE,
   DEFAULT_RIPPLE_SIZE,
   DEFAULT_AREA_LABEL_SIZE,
+  MIN_TOUCH_TARGET,
   DEFAULT_SUN_MIN,
   DEFAULT_SUN_MAX,
   PRESS_SCALE,
@@ -26,6 +27,7 @@ import {
   PRESS_OUT_MS,
   getFloors,
   trackerPresenceDetected,
+  newPlanConfig,
 } from "./types";
 import {
   WALL_THICKNESS,
@@ -37,14 +39,20 @@ import {
   openingIsActive,
   openingActionForGesture,
   openingIsPressable,
-  openingHasTwoPanels,
-  secondPanelOf,
+  areaActionForGesture,
+  areaHasActions,
+  openingHasTwoLeaves,
+  secondLeafOf,
   shutterAmount,
   shutterStyleOf,
   shutterActive,
   shutterMarkPoint,
   shutterMarkIcon,
   shutterMarkNormal,
+  openingMarkPoint,
+  openingMarkIcon,
+  openingMarkNormal,
+  hasOpeningMark,
   SHUTTER_MARK_PIXEL_OFFSET,
   SHUTTER_MARK_SIZE,
   SHUTTER_MARK_ICON_SIZE,
@@ -53,6 +61,7 @@ import {
   renderRipple,
   renderFurniture,
   furnitureColor,
+  furnitureFloorTarget,
   renderTracker,
   renderArea,
   renderAreaBorder,
@@ -76,12 +85,23 @@ import {
   badgeValue,
   badgeValueSize,
   pressEffectOf,
+  labelPositionOf,
+  offlineStyleOf,
+  itemIsOffline,
   itemHiddenWhenInactive,
   itemLabelSize,
   areaLabelFontSize,
   wallStrokeStyle,
   normalizeOverlayScale,
   overlayLength,
+  renderSunlight,
+  sunLightDirection,
+  sunlightStrengthOf,
+  sunReachScale,
+  sunIsPinned,
+  SUN_REACH,
+  SUN_LIGHT_COLOR,
+  SUN_SHADE_COLOR,
   hassRenderInputsChanged,
   collectWatchedEntities,
   resolveItemIcon,
@@ -238,7 +258,12 @@ export class FloorplanCard extends LitElement {
   public static getStubConfig(): Partial<FloorplanCardConfig> {
     // Minimal on purpose: the editor migrates to the floors model on first
     // edit, and defaults (width/height/grid) backfill in setConfig.
-    return {};
+    //
+    // …except what a *new* plan is deliberately made with, which is
+    // {@link newPlanConfig}'s to state: written into the config rather than
+    // inferred from a missing key, so it reaches new plans and only new plans
+    // (issue #192).
+    return newPlanConfig();
   }
 
   /**
@@ -268,16 +293,31 @@ export class FloorplanCard extends LitElement {
   }
 
   /**
-   * The second panel's own state for a biparting slider with a sensor on each
-   * leaf (issue #145). `undefined` — no second sensor, or a style with only one
-   * moving panel — leaves both panels on the first entity, so nothing about a
-   * single-sensor slider changes.
+   * The second leaf's own state for an opening with a sensor on each — a
+   * two-panel slider (issue #145) or a hinged double (issue #159).
+   * `undefined` — no second sensor, or a shape with only one leaf — leaves both
+   * on the first entity, so nothing about a single-sensor opening changes.
    */
   private _openingSecond(o: Opening): { amount: number; active: boolean } | undefined {
-    if (!o.secondaryEntity || !openingHasTwoPanels(o)) return undefined;
-    const panel = secondPanelOf(o);
+    if (!o.secondaryEntity || !openingHasTwoLeaves(o)) return undefined;
+    const leaf = secondLeafOf(o);
     const state = this.hass?.states[o.secondaryEntity];
-    return { amount: resolveOpeningAmount(panel, state), active: openingIsActive(panel, state) };
+    return { amount: resolveOpeningAmount(leaf, state), active: openingIsActive(leaf, state) };
+  }
+
+  /**
+   * The same for a hinged shutter's other panel (issue #159). Read from its
+   * own key and its own resolvers — the shutter answers to `shutterInvert` and
+   * is drawn from `shutterAmount` / `shutterActive`, not the sash's — and only
+   * for a `swing` shutter, since a roll curtain has no second panel to drive.
+   */
+  private _shutterSecond(o: Opening): { amount: number; active: boolean } | undefined {
+    if (!o.shutterSecondaryEntity || shutterStyleOf(o) !== "swing") return undefined;
+    const state = this.hass?.states[o.shutterSecondaryEntity];
+    return {
+      amount: shutterAmount(state, o.shutterInvert),
+      active: shutterActive(state, o.shutterInvert),
+    };
   }
 
   private _itemIcon(item: FloorItem): string {
@@ -414,9 +454,100 @@ export class FloorplanCard extends LitElement {
     `;
   }
 
+  /**
+   * The opening's own badge (issue #154 follow-up) — the same circle as the
+   * shutter's, for the entity the opening symbol itself draws.
+   *
+   * Opt-in, because most symbols need no help: a leaf that has swung and a
+   * panel that has slid are both still on screen, in the accent, saying so. A
+   * roll-up is the one that isn't — its curtain leaves the floor plane, and
+   * wide open the gap holds a single coloured line. That line is honest and
+   * easy to miss, so this puts the entity's own open/closed glyph beside it.
+   *
+   * It sits on the far side of the wall from the shutter's badge, which is
+   * what keeps the two from stacking on an opening that draws both.
+   */
+  private _renderOpeningMark(
+    o: Opening,
+    c: FloorplanCardConfig,
+    rot: PlanRotation,
+    scale: OverlayScale
+  ): TemplateResult {
+    const id = o.entity!;
+    const st = this.hass?.states[id];
+    const open = this._openingAmount(o) > 0;
+    const active = this._openingActive(o);
+    const icon = openingMarkIcon(o, st, open, this.hass?.entities?.[id]?.icon);
+    const accent = cssColor(o.activeColor) ?? SKIN_ACCENT;
+    const at = openingMarkPoint(o);
+    const p = rotatePlanPoint(at.x, at.y, c.width, c.height, rot);
+    const d = rotatedCanvasSize(c.width, c.height, rot);
+    const n = openingMarkNormal(o, rot);
+    const step = overlayLength(SHUTTER_MARK_PIXEL_OFFSET, scale);
+    const push = `translate(calc(${n.x} * ${step}), calc(${n.y} * ${step}))`;
+    const box = overlayLength(SHUTTER_MARK_SIZE, scale);
+    const name =
+      (this.hass?.states[id]?.attributes?.friendly_name as string | undefined) ?? id;
+    return html`
+      <div
+        class="shutter-mark ${active ? "on" : "off"}"
+        data-entity=${cssEntityId(id) ?? nothing}
+        style="left:${(p.x / d.w) * 100}%; top:${(p.y / d.h) * 100}%;
+               width:${box};height:${box};
+               transform:translate(-50%,-50%) ${push};--fp-active:${accent};"
+        title="${name} · ${entityStateText(this.hass, id)}"
+        role="button"
+        tabindex="0"
+        @action=${() => {
+          if (this.hass) executeAction(this, this.hass, { entity: id }, { action: "more-info" });
+        }}
+        .actionHandler=${actionHandler({})}
+      >
+        <ha-icon
+          icon=${icon}
+          style="--mdc-icon-size:${overlayLength(SHUTTER_MARK_ICON_SIZE, scale)};"
+        ></ha-icon>
+      </div>
+    `;
+  }
+
+  /**
+   * Switch to a floor, from the switcher or from a staircase (issue #121).
+   *
+   * Shared so the two cannot drift apart on the things that are easy to
+   * forget: remembering the choice for the next preview the editor builds, and
+   * dropping a zoom that belonged to the floor being left.
+   */
+  private _goToFloor(floors: readonly Floor[], id: string): void {
+    this._activeFloorId = id;
+    lastViewedFloor.set(floorMemoryKey(floors), id);
+    this._zoomedAreaId = undefined;
+  }
+
   /** Tapping a room zooms the plan in to it; tapping the same room again zooms back out. */
   private _onAreaClick(a: Area): void {
     this._zoomedAreaId = this._zoomedAreaId === a.id ? undefined : a.id;
+  }
+
+  /**
+   * A gesture on a room (issue #181): its configured action, or — for a tap
+   * with nothing configured — the zoom the room has always done.
+   *
+   * The fallback is what keeps this backwards compatible. Every plan drawn
+   * before areas had actions has three unset gestures, so every tap still
+   * zooms and hold and double-tap still do nothing.
+   */
+  private _onAreaAction(
+    ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>,
+    a: Area,
+  ): void {
+    const press = areaActionForGesture(a, ev.detail.action);
+    if (!press) {
+      if (ev.detail.action === "tap") this._onAreaClick(a);
+      return;
+    }
+    if (!this.hass) return;
+    executeAction(this, this.hass, { entity: press.entity }, press.config);
   }
 
   private _renderBadge(item: FloorItem, scale: OverlayScale): TemplateResult {
@@ -502,6 +633,11 @@ export class FloorplanCard extends LitElement {
       matchStateRuleFor(this.hass, item.stateColor, rawValue, item.entity)?.color
     );
     const labelColor = stateColor;
+    // Offline (issue #162): the entity is unavailable, unknown, or gone from
+    // Home Assistant altogether. Guarded on `hass` — before the first states
+    // arrive every device would answer "offline" and the plan would flash
+    // grey on load.
+    const offline = !!this.hass && itemIsOffline(item, st?.state);
     // "none" is the old `showIcon: false` — no badge, label only (issue #106).
     const showIcon = badgeContentOf(item) !== "none";
     const display = item.display ?? "badge";
@@ -552,9 +688,9 @@ export class FloorplanCard extends LitElement {
     const interactive = itemIsInteractive(item);
     return html`
       <div
-        class="item fp-item ${on ? "on" : "off"} ${stateColor ? "state-colored" : ""} ${interactive
-          ? "interactive"
-          : ""}"
+        class="item fp-item ${on ? "on" : "off"} ${offline ? "offline" : ""} ${stateColor
+          ? "state-colored"
+          : ""} ${interactive ? "interactive" : ""}"
         data-id=${cssIdent(item.id) ?? nothing}
         data-entity=${cssEntityId(item.entity) ?? nothing}
         data-kind=${cssIdent(item.kind) ?? nothing}
@@ -585,7 +721,7 @@ export class FloorplanCard extends LitElement {
           : nothing}
         ${labelText
           ? html`<span
-              class="label ${visual === nothing ? "inflow" : ""}"
+              class="label ${visual === nothing ? "inflow" : ""} label-${labelPositionOf(item)}"
               style="font-size:${overlayLength(itemLabelSize(item.labelSize), scale)};${labelColor
                 ? `color:${labelColor};`
                 : ""}"
@@ -718,6 +854,11 @@ export class FloorplanCard extends LitElement {
     const hass = this.hass;
     const layers = enabledLayers(c);
     const visibleLayers = layers.filter((l) => !this._hiddenLayers.has(l.id));
+    // Chrome drawn inside the plan rather than above it (issue #152). The
+    // flag is what the floor buttons follow; the chip needs a title as well,
+    // and a compact card with no title has nothing to draw there.
+    const compact = c.compactHeader === true;
+    const compactTitle = compact && !!c.title;
     return html`
       <!-- The skin (issue #122) rides on the card rather than on .plan, so the
            floor switcher and the card's own background follow it too — a Tron
@@ -725,9 +866,16 @@ export class FloorplanCard extends LitElement {
            card draws with is declared on :host, so this only ever overrides. -->
       <!-- No skin style here: the palette comes from data-skin on the host, so
            a card-mod rule on this element still wins (issue #155). -->
-      <ha-card .header=${c.title ?? nothing}>
+      <!-- The card header is a fixed ~76px whether the title is "U8" or a
+           sentence, and every part of it lives inside ha-card's shadow root
+           where no rule of ours reaches. compactHeader therefore does not
+           shrink it — it declines it, and draws the title inside the stage
+           instead, where it costs no layout height at all (issue #152). -->
+      <ha-card .header=${compact ? nothing : (c.title ?? nothing)}>
         <div
-          class="stage press-${pressEffectOf(c)}"
+          class="stage press-${pressEffectOf(c)} offline-${offlineStyleOf(c)} ${compactTitle
+            ? "compact-title"
+            : ""}"
           style="aspect-ratio: ${dims.w} / ${dims.h};"
         >
           <!-- The plan box: exactly the canvas ratio, fitted inside whatever
@@ -787,15 +935,26 @@ export class FloorplanCard extends LitElement {
                           preserveAspectRatio=${imageFitRatio(active.imageFit)}
                           opacity=${active.imageOpacity ?? 1} />`
               : nothing}
-            ${active.areas?.map(
-              (a) =>
-                svg`<g class="area-tap-target" @click=${() => this._onAreaClick(a)}>
-                  ${renderArea(
-                    a,
-                    areaColor(this.hass, a, a.entity ? this.hass?.states[a.entity]?.state : undefined)
-                  )}
-                </g>`
-            )}
+            ${active.areas?.map((a) => {
+              // Rooms answer gestures now (issue #181). The hit target is
+              // unconditional, as it always was — every room zooms — so only
+              // the role and the tab stop are earned by having an action.
+              const acts = areaHasActions(a);
+              return svg`<g class="area-tap-target"
+                    role=${acts ? "button" : nothing}
+                    tabindex=${acts ? "0" : nothing}
+                    @action=${(ev: CustomEvent<{ action: "tap" | "hold" | "double_tap" }>) =>
+                      this._onAreaAction(ev, a)}
+                    .actionHandler=${actionHandler({
+                      // Only wait out the timers when a gesture can resolve:
+                      // otherwise every tap on an ordinary room would sit for
+                      // 500ms before zooming.
+                      hasHold: hasAction(areaActionForGesture(a, "hold")?.config),
+                      hasDoubleClick: hasAction(areaActionForGesture(a, "double_tap")?.config),
+                    })}>
+                  ${renderArea(a, areaColor(this.hass, a, a.entity ? this.hass?.states[a.entity]?.state : undefined))}
+                </g>`;
+            })}
             <!-- Dead spaces (issue #88): the regions the walls seal off that no
                  door or window reaches, hatched. Above the room fills, so a
                  region someone has also drawn an area over still reads as
@@ -828,13 +987,102 @@ export class FloorplanCard extends LitElement {
                   : nothing;
               })}
             </g>
-            ${active.furniture.map((f) =>
-              renderFurniture(
+            ${active.furniture.map((f) => {
+              const drawn = renderFurniture(
                 f,
                 furnitureColor(this.hass, f, f.entity ? this.hass?.states[f.entity]?.state : undefined),
                 symbolCatalog(c.symbols)
-              )
-            )}
+              );
+              // Stairs that go somewhere (issue #121). Only when there is a
+              // floor that way: at the top of the building an "up" staircase
+              // is still a staircase, but it takes no clicks rather than
+              // offering a control that does nothing.
+              const to = furnitureFloorTarget(f, floors, active.id);
+              if (!to) return drawn;
+              const name = floors.find((x) => x.id === to)?.name;
+              return svg`<g class="fp-furniture-link" role="button" tabindex="0"
+                    @action=${() => this._goToFloor(floors, to)}
+                    .actionHandler=${actionHandler({
+                      // A staircase has one gesture. Saying so keeps a tap from
+                      // sitting out the hold and double-tap timers before it
+                      // does anything.
+                      hasHold: false,
+                      hasDoubleClick: false,
+                    })}>
+                  <!-- An SVG tooltip is a <title> child, not a title=
+                       attribute: the attribute does nothing here. -->
+                  <title>${name ? `Go to ${name}` : "Go to the next floor"}</title>
+                  ${drawn}
+                </g>`;
+            })}
+            <!-- Sunlight through the openings. Under the walls on purpose:
+                 light lands on the floor, and the walls stay crisp lines over
+                 it rather than being tinted by the patches they let in. The
+                 sun dimming further down is the whole-sky reading and still
+                 has the last word — at night there is nothing to let in. -->
+            ${
+              c.sunlight
+                ? renderSunlight(
+                    active.walls,
+                    active.openings,
+                    c.width,
+                    c.height,
+                    `${this._wallMaskId}-sun`,
+                    {
+                      // Both halves of the sun come from the same entity while
+                      // the plan follows it: the azimuth says where the light
+                      // comes from, the elevation whether there is any at all.
+                      // A plan that pins its own angle keeps its light on —
+                      // see sunlightStrengthOf.
+                      dir: sunLightDirection(
+                        c,
+                        this.hass?.states["sun.sun"]?.attributes?.azimuth
+                      ),
+                      strength: sunlightStrengthOf(
+                        c,
+                        this.hass?.states["sun.sun"]?.attributes?.elevation
+                      ),
+                      // How far a patch carries, shortened as the sun climbs
+                      // (issue #185): a midday sun drops its light almost
+                      // straight down and lays a short patch, an evening one
+                      // rakes it across the room. A pinned bearing states a
+                      // picture rather than reading the sky, so it keeps the
+                      // plain reach — same rule as the strength above.
+                      // Coerced here so the elevation still scales a sane
+                      // base — cssNumber is what the sun brightness above
+                      // already uses on its own hand-edited numbers. The
+                      // bounds live at the sink, in sunReachFraction.
+                      reach:
+                        cssNumber(c.sunReach, SUN_REACH) *
+                        (sunIsPinned(c)
+                          ? 1
+                          : sunReachScale(this.hass?.states["sun.sun"]?.attributes?.elevation)),
+                      // The gap each style actually clears, both leaves
+                      // included — the same reading the lamps get above, and
+                      // for the same reason (#145): `entity` alone leaves a
+                      // door whose *second* panel is open reading as shut,
+                      // and a converging pair reading as twice as clear as it
+                      // draws. Glazing and shutters are applied on top of
+                      // this, inside openingSunFraction.
+                      openAmount: (o) =>
+                        openingClearFraction(
+                          o,
+                          this._openingAmount(o),
+                          this._openingSecond(o)?.amount
+                        ),
+                      // A shutter that is all the way down stops the light, as
+                      // one does. Undefined where none is bound, so an opening
+                      // without a shutter is judged on itself alone.
+                      shutterOpen: (o) =>
+                        o.shutterEntity
+                          ? shutterAmount(this.hass?.states[o.shutterEntity], o.shutterInvert)
+                          : undefined,
+                      light: c.sunlightColor ?? SUN_LIGHT_COLOR,
+                      shade: c.sunShade === false ? null : (c.sunShadeColor ?? SUN_SHADE_COLOR),
+                    }
+                  )
+                : nothing
+            }
             ${renderWallMask(active.openings, c.width, c.height, this._wallMaskId)}
             <g mask=${`url(#${this._wallMaskId})`}>
               ${active.walls.map(
@@ -892,6 +1140,9 @@ export class FloorplanCard extends LitElement {
                       // opening's and then to the skin's.
                       accent: o.shutterActiveColor ?? o.activeColor ?? SKIN_ACCENT,
                       flip: o.shutterFlipV,
+                      // Per-panel state for a two-contact hinged shutter
+                      // (issue #159).
+                      second: this._shutterSecond(o),
                     }
                   : undefined,
               });
@@ -964,6 +1215,11 @@ export class FloorplanCard extends LitElement {
               (o) => this._renderShutterMark(o, c, rot, scale)
             )}
             ${repeat(
+              active.openings.filter((o) => hasOpeningMark(o)),
+              (o, i) => `${o.id || i}-opening`,
+              (o) => this._renderOpeningMark(o, c, rot, scale)
+            )}
+            ${repeat(
               // No entity filter: devices that exist physically but have no HA
               // entity still deserve their badge (issue #39). Keyed by id so a
               // floor switch builds fresh DOM (see the openings comment).
@@ -992,7 +1248,8 @@ export class FloorplanCard extends LitElement {
               </button>`
             : nothing}
           ${layers.length > 0 ? this._renderLayerToggles(layers) : nothing}
-          ${floors.length > 1 ? this._renderFloorSwitcher(floors, active) : nothing}
+          ${compactTitle ? html`<div class="plan-title">${c.title}</div>` : nothing}
+          ${floors.length > 1 ? this._renderFloorSwitcher(floors, active, compact) : nothing}
         </div>
       </ha-card>
     `;
@@ -1024,9 +1281,9 @@ export class FloorplanCard extends LitElement {
     `;
   }
 
-  private _renderFloorSwitcher(floors: Floor[], active: Floor): TemplateResult {
+  private _renderFloorSwitcher(floors: Floor[], active: Floor, compact = false): TemplateResult {
     return html`
-      <div class="floor-switcher">
+      <div class="floor-switcher ${compact ? "row" : ""}">
         ${floors.map((f) => {
           // Per-floor accent (issue #67): applied only while active so the
           // resting buttons stay theme-neutral. cssColor gates the config
@@ -1037,13 +1294,7 @@ export class FloorplanCard extends LitElement {
               class=${f.id === active.id ? "active" : ""}
               title=${f.name}
               style=${accent ? `background:${accent};border-color:${accent};` : nothing}
-              @click=${() => {
-                this._activeFloorId = f.id;
-                // Remember it for the next element the editor preview builds.
-                lastViewedFloor.set(floorMemoryKey(floors), f.id);
-                // A room on the floor just left is meaningless on the new one.
-                this._zoomedAreaId = undefined;
-              }}
+              @click=${() => this._goToFloor(floors, f.id)}
             >
               ${f.short || f.name}
             </button>
@@ -1143,6 +1394,19 @@ export class FloorplanCard extends LitElement {
     .plan.scale-plan .item > .label {
       top: calc(100% + 0.17em);
     }
+    /* The side positions measure their gap in em too, so it tracks the label
+       with the plan exactly as the below position's does. Restating top
+       because the rule above sets it for every label. */
+    .plan.scale-plan .item > .label.label-left,
+    .plan.scale-plan .item > .label.label-right {
+      top: 50%;
+    }
+    .plan.scale-plan .item > .label.label-left {
+      right: calc(100% + 0.33em);
+    }
+    .plan.scale-plan .item > .label.label-right {
+      left: calc(100% + 0.33em);
+    }
     .floor-switcher {
       position: absolute;
       top: 8px;
@@ -1152,6 +1416,25 @@ export class FloorplanCard extends LitElement {
       gap: 4px;
       pointer-events: auto;
       z-index: 1;
+    }
+    /* Compact chrome (issue #152): the buttons run across the top strip
+       instead of down the side, so they share it with the title chip rather
+       than each claiming their own band. Wrapped, because a plan with eight
+       floors is exactly the case a row is worst at — better a second short
+       row than buttons off the edge of the card. Right-aligned so the row
+       grows back toward the title rather than through it. */
+    .floor-switcher.row {
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    /* Room for the title chip on the left, so a long floor name and a long
+       title don't meet in the middle — the chip's own max-width leaves the
+       same margin from the other side. Only when there *is* a chip: a compact
+       card with no title has the whole strip, and reserving 44% of it would
+       wrap the buttons for nothing. */
+    .stage.compact-title .floor-switcher.row {
+      left: 44%;
     }
     .floor-switcher button {
       cursor: pointer;
@@ -1216,6 +1499,31 @@ export class FloorplanCard extends LitElement {
       opacity: 0.5;
       background: var(--secondary-background-color, #eee);
     }
+    /* The title, drawn inside the plan (issue #152). Styled as a chip rather
+       than as a heading: it is sitting *on* the drawing, and 24px of bare text
+       over a wall reads as part of the plan. Same tokens as the floor buttons
+       beside it, so a skin carries both. */
+    .plan-title {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 1;
+      /* Stops short of the floor row's own edge, so a long title ellipsises
+         rather than running under the buttons. */
+      max-width: 40%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      border: 1px solid var(--fp-skin-badge-border, var(--divider-color, #ccc));
+      background: var(--fp-skin-badge-bg, var(--card-background-color, #fff));
+      color: var(--fp-skin-text, var(--primary-text-color));
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
     /* Zoom-to-room (tap an area). One wrapper around both the SVG and the
        HTML overlay so a transform here reframes both layers identically —
        transform-origin:0 0 matches the translate-percent math in
@@ -1247,8 +1555,24 @@ export class FloorplanCard extends LitElement {
       line-height: 0;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     }
+    /* The compact title has that corner. The zoom-out button is the transient
+       one — it exists only while a room is zoomed — so it is the one that
+       moves, dropping below the chip rather than landing on top of it. */
+    .stage.compact-title .zoom-out {
+      top: 38px;
+    }
     .area-tap-target {
       cursor: pointer;
+    }
+    /* A staircase that changes floor (issue #121). The pointer is the whole
+       affordance — the symbol already draws an arrow saying which way it
+       goes — and it only exists on a piece that has somewhere to lead. */
+    .fp-furniture-link {
+      cursor: pointer;
+    }
+    .fp-furniture-link:focus-visible {
+      outline: 2px solid var(--fp-skin-accent, var(--primary-color, #03a9f4));
+      outline-offset: 2px;
     }
     svg {
       position: absolute;
@@ -1257,6 +1581,22 @@ export class FloorplanCard extends LitElement {
       height: 100%;
       display: block;
     }
+    /* Sunlight through the openings. Paint only — the plan underneath stays
+       pressable, which is what pointer-events:none is here for (#108). */
+    .fp-sunlight {
+      pointer-events: none;
+    }
+    /* No fill declaration here, deliberately. CSS beats the presentation attribute — the same rule the
+       wall below relies on — and a patch of sunlight is filled with a
+       *gradient* the renderer builds per opening. A flat colour declared here
+       silently discards it: the markup keeps saying url(#…), the computed
+       style says rgb(…), and the light comes out as a hard slab no matter
+       what shape the falloff is given. That is issue #185, and it survived
+       four rewrites of the falloff because every one of them was correct and
+       none of them was ever used.
+
+       The skin still applies: --fp-skin-sunlight is read by SUN_LIGHT_COLOR
+       and lands on the gradient's own stops. */
     .wall {
       stroke: var(--fp-skin-wall, var(--primary-text-color));
       /* CSS beats the presentation attribute, so the skin sets the wall's
@@ -1388,6 +1728,15 @@ export class FloorplanCard extends LitElement {
       inset: 0;
       pointer-events: none;
     }
+    /* A device's hit area is what you can *see* of it — the badge and its
+       label — not the box its decoration happens to fill.
+
+       A presence ripple is 80–110px of mostly empty air, and the anchor grew
+       to hold it: a 30px motion icon behaved like a 110px square button, which
+       also swallowed taps meant for the plan underneath it. The ring is
+       decoration; it says "presence here", it is not a control. So the anchor
+       stops taking pointer events and the parts that are the device take them
+       back. */
     .item {
       position: absolute;
       /* Counter-scaled against the zoom-to-room transform (--fp-inv-zoom,
@@ -1399,13 +1748,44 @@ export class FloorplanCard extends LitElement {
          every badge is briefly the wrong size mid-transition. */
       transform: translate(-50%, -50%) scale(var(--fp-inv-zoom, 1));
       transition: transform 0.4s ease;
-      pointer-events: auto;
+      pointer-events: none;
       /* Not a hand: a device with nothing bound, or tap_action set to none,
          is not a button (issue #134). Only .interactive gets the pointer. */
       cursor: default;
       display: flex;
       flex-direction: column;
       align-items: center;
+    }
+    .item .badge,
+    .item .label {
+      pointer-events: auto;
+    }
+    /* .stack-icon spans the whole ripple (inset: 0), so it has to stay out of
+       the way too — the badge inside it is the target, not its wrapper. */
+    .stack-icon,
+    .ripple,
+    .press-ink {
+      pointer-events: none;
+    }
+    /* A ripple-only device draws no badge, so its centre has to answer for it,
+       or switching the badge off would leave the device unclickable. The dot
+       is 8px across; this gives it a real touch target without drawing one.
+       Deliberately a fixed size, and not scaled by overlayScale (#148): a
+       minimum touch target is about fingers, which do not shrink with the
+       plan. */
+    .item.interactive .ripple .dot {
+      pointer-events: auto;
+      position: relative;
+    }
+    .item.interactive .ripple .dot::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: ${MIN_TOUCH_TARGET}px;
+      height: ${MIN_TOUCH_TARGET}px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
     }
     .item.interactive {
       cursor: pointer;
@@ -1515,6 +1895,27 @@ export class FloorplanCard extends LitElement {
       transform: translateX(-50%);
       white-space: nowrap;
     }
+    /* Label beside the badge instead of under it (issue #180). A reading under
+       a badge grows in both directions at once and meets whatever is next to
+       it; hung off one side it grows one way, which is what a row of devices
+       along a wall needs.
+
+       Vertically centred on the badge rather than baseline-aligned with it:
+       the label is one line and the badge is a circle, so centres are what the
+       eye actually pairs up. .inflow (a label-only device) ignores all of
+       this — with no badge there is no side to sit on. */
+    .item > .label.label-left,
+    .item > .label.label-right {
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .item > .label.label-left {
+      left: auto;
+      right: calc(100% + 4px);
+    }
+    .item > .label.label-right {
+      left: calc(100% + 4px);
+    }
     /* Label-only items (showIcon: false) have no badge to hang under, so the
        absolute label would drop to y + 2px on a zero-height item. Put it back
        in flow so it becomes the item's box and centers on (x, y) as before. */
@@ -1523,6 +1924,7 @@ export class FloorplanCard extends LitElement {
       transform: none;
     }
     .badge {
+      position: relative; /* anchors the offline mark (issue #162) */
       width: 34px;
       height: 34px;
       border-radius: var(--fp-skin-badge-radius, 50%);
@@ -1566,6 +1968,48 @@ export class FloorplanCard extends LitElement {
       background: var(--fp-state);
       border-color: var(--fp-state);
       color: var(--fp-ink, var(--text-primary-color, #212121));
+    }
+
+    /* ---- Offline devices (issue #162) ------------------------------------
+       Until now a device whose entity had dropped out was drawn exactly like
+       one that is simply switched off — a dead bulb and a bulb someone turned
+       off were the same picture, and the plan gave that answer confidently.
+       Chosen plan-wide, so the stage carries offline-dim / offline-strike /
+       offline-none, exactly as it carries the press effect.
+
+       Nothing here recolours the badge, and nothing needs to: an offline
+       entity is never entityIsActive, so it has already fallen back to the
+       resting badge. What is added is the *fading*, which says "we have no
+       reading" rather than "the reading is off".
+
+       offline-none declares nothing at all, which is the point of it. */
+    .offline-dim .item.offline {
+      opacity: 0.45;
+    }
+    /* Strike sits a little brighter than a plain dim, so that the mark drawn
+       across it still reads as red rather than as pink: the whole device is
+       one composited group, so the mark fades with everything else. */
+    .offline-strike .item.offline {
+      opacity: 0.6;
+    }
+    /* The diagonal, drawn across the badge itself rather than the item, so it
+       crosses out the icon and not the label hanging underneath. A little
+       wider than the badge at each end, the way the "no" symbol overhangs. A
+       device drawn as a bare ripple, or as a label with no badge at all, has
+       nothing to cross and keeps the fade alone. */
+    .offline-strike .item.offline .badge::after {
+      content: "";
+      position: absolute;
+      left: -12%;
+      right: -12%;
+      top: 50%;
+      height: 2px;
+      margin-top: -1px;
+      border-radius: 1px;
+      /* Down to the right, the way every mdi "-off" glyph and the reporter's
+         own mock-up draw it. */
+      transform: rotate(45deg);
+      background: var(--fp-offline-mark, var(--error-color, #db4437));
     }
     ha-icon {
       --mdc-icon-size: 22px;

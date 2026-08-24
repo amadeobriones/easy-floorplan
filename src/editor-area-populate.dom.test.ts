@@ -81,6 +81,17 @@ async function mount(config: FloorplanCardConfig, hass: HomeAssistant): Promise<
   el.hass = hass;
   el._selection = [{ kind: "area", id: AREA_ID }];
   await el.updateComplete;
+  // Upstream's config groups (issue #205) start collapsed and render nothing
+  // while closed, and the add-devices button now lives inside "Home Assistant
+  // area". Every test here targets that group, so open it once on mount —
+  // otherwise the button is absent and each assertion would fail (or worse,
+  // an absence assertion would pass for the wrong reason).
+  const groupBtn = [...el.shadowRoot!.querySelectorAll("button.cfg-group-title")].find(
+    (b) => b.textContent!.trim() === "Home Assistant area"
+  ) as HTMLButtonElement | undefined;
+  if (!groupBtn) throw new Error("no 'Home Assistant area' config group in the area panel");
+  groupBtn.click();
+  await el.updateComplete;
   return el;
 }
 

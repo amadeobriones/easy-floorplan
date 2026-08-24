@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { html, nothing } from "lit";
-import type { Area, Furniture, FurnitureType, ItemKind } from "./types";
+import type { Area, Furniture, FurnitureType, ItemKind, ItemReading } from "./types";
 import { SKIN_ACCENT, SKIN_WALL, MAX_SKIN_WALL_WIDTH } from "./skins";
 import {
   DEFAULT_GLOW_RADIUS,
@@ -9,6 +9,7 @@ import {
   GLOW_MAX_OPACITY,
   GLOW_MIN_RADIUS,
   DEFAULT_PRESS_EFFECT,
+  DEFAULT_OFFLINE_STYLE,
   BADGE_MIN_LIGHTNESS,
   FURNITURE_GLOW_TRANSMISSION,
   SUN_ELEVATION_NIGHT,
@@ -20,12 +21,29 @@ import {
   openingMotion,
   openingMirror,
   sliderStyleOf,
-  openingHasTwoPanels,
-  sliderStyleHasTwoPanels,
-  secondPanelOf,
+  openingHasTwoLeaves,
+  sliderStyleHasTwoLeaves,
+  secondLeafOf,
   openingFromDeviceClass,
   openingSash,
   defaultSash,
+  planDirection,
+  sunBearingOf,
+  openingAdmitsSun,
+  sunReachesOpening,
+  openingSunFraction,
+  openingIsGlazed,
+  sunBeamPolygon,
+  sunLightDirection,
+  sunlightStrength,
+  sunlightStrengthOf,
+  sunIsPinned,
+  SUN_ELEVATION_FULL,
+  sunShadowPolygon,
+  SUN_REACH,
+  SUN_REACH_REF,
+  sunReachScale,
+  DEFAULT_SUN_BEARING,
   shutterAmount,
   shutterStyleOf,
   imageFitRatio,
@@ -42,6 +60,10 @@ import {
   openingIsPressable,
   hasShutterMark,
   shutterMarkPoint,
+  hasOpeningMark,
+  openingMarkIcon,
+  openingMarkPoint,
+  openingMarkNormal,
   shutterMarkIcon,
   shutterMarkNormal,
   SHUTTER_MARK_OFFSET,
@@ -54,13 +76,21 @@ import {
   defaultIcon,
   renderFurniture,
   furnitureColor,
+  furnitureFloorTarget,
   entityDefaultIcon,
   trackerSensorReading,
   openingInMotion,
   openingIsActive,
+  areaActionForGesture,
+  areaHasActions,
   entityStateText,
   itemStateText,
   itemBadgeLabel,
+  itemReadingText,
+  itemReadings,
+  badgeEntityIndex,
+  itemHasLabel,
+  labelPositionOf,
   editorItemLabel,
   itemHiddenWhenInactive,
   resolveStateColor,
@@ -81,12 +111,14 @@ import {
   itemRawValue,
   badgeContentOf,
   pressEffectOf,
+  offlineStyleOf,
+  itemIsOffline,
   badgeValue,
   badgeReading,
   badgeValueSize,
   resolveIconAnimation,
   domainIconAnimation,
-  isPresenceEntity,
+  isRippleEntity,
   itemIconSize,
   normalizePlanRotation,
   rotatedCanvasSize,
@@ -268,22 +300,48 @@ describe("sliderStyleOf", () => {
   });
 });
 
-describe("openingHasTwoPanels / secondPanelOf (issue #145)", () => {
+describe("openingHasTwoLeaves / secondLeafOf (issue #145)", () => {
   const slider = (extra: Partial<Opening> = {}) =>
     ({ type: "door", motion: "slide", ...extra }) as Opening;
 
   it("is true for exactly the styles that move both panels", () => {
     for (const sliderStyle of ["biparting", "biparting-bypass", "converging"] as const) {
-      expect(openingHasTwoPanels(slider({ sliderStyle }))).toBe(true);
-      expect(sliderStyleHasTwoPanels(sliderStyle)).toBe(true);
+      expect(openingHasTwoLeaves(slider({ sliderStyle }))).toBe(true);
+      expect(sliderStyleHasTwoLeaves(sliderStyle)).toBe(true);
     }
     // bypass moves one panel past a fixed one; single moves the only panel.
-    expect(openingHasTwoPanels(slider({ sliderStyle: "bypass" }))).toBe(false);
-    expect(openingHasTwoPanels(slider())).toBe(false);
-    expect(sliderStyleHasTwoPanels("bypass")).toBe(false);
-    expect(sliderStyleHasTwoPanels("single")).toBe(false);
-    // A swing door has leaves, but no sliding panel to bind a second sensor to.
-    expect(openingHasTwoPanels({ type: "door", sliderStyle: "biparting" } as Opening)).toBe(false);
+    expect(openingHasTwoLeaves(slider({ sliderStyle: "bypass" }))).toBe(false);
+    expect(openingHasTwoLeaves(slider())).toBe(false);
+    expect(sliderStyleHasTwoLeaves("bypass")).toBe(false);
+    expect(sliderStyleHasTwoLeaves("single")).toBe(false);
+    // A single-leaf swing door has no second leaf, whatever slider style is
+    // left lying on it from an earlier motion.
+    expect(openingHasTwoLeaves({ type: "door", sliderStyle: "biparting" } as Opening)).toBe(false);
+  });
+
+  it("is true for a hinged double, by each type's own default (issue #159)", () => {
+    const swing = (extra: Partial<Opening> = {}) => ({ type: "window", ...extra }) as Opening;
+    // A window opens with two casement sashes unless told otherwise…
+    expect(openingHasTwoLeaves(swing())).toBe(true);
+    expect(openingHasTwoLeaves(swing({ sash: "double" }))).toBe(true);
+    expect(openingHasTwoLeaves(swing({ sash: "single" }))).toBe(false);
+    // …a door with one leaf, unless it is a double (issue #168).
+    expect(openingHasTwoLeaves(swing({ type: "door" }))).toBe(false);
+    expect(openingHasTwoLeaves(swing({ type: "door", sash: "double" }))).toBe(true);
+  });
+
+  it("is false for a roll-up, whose curtain is one piece", () => {
+    for (const type of ["door", "window"] as const) {
+      expect(
+        openingHasTwoLeaves({ type, motion: "roll", sash: "double" } as Opening)
+      ).toBe(false);
+    }
+  });
+
+  it("swaps in the second entity for a hinged double too", () => {
+    const o = { type: "window", entity: "binary_sensor.left", secondaryEntity: "binary_sensor.right" } as Opening;
+    expect(secondLeafOf(o).entity).toBe("binary_sensor.right");
+    expect(resolveOpeningAmount(secondLeafOf(o), { state: "on" })).toBe(1);
   });
 
   it("swaps in the second entity and keeps everything else", () => {
@@ -294,7 +352,7 @@ describe("openingHasTwoPanels / secondPanelOf (issue #145)", () => {
       invert: true,
       length: 90,
     });
-    expect(secondPanelOf(o)).toEqual({ ...o, entity: "binary_sensor.right" });
+    expect(secondLeafOf(o)).toEqual({ ...o, entity: "binary_sensor.right" });
   });
 
   it("resolves the second panel independently, sharing invert", () => {
@@ -303,7 +361,7 @@ describe("openingHasTwoPanels / secondPanelOf (issue #145)", () => {
       entity: "binary_sensor.left",
       secondaryEntity: "binary_sensor.right",
     });
-    const panel = secondPanelOf(o);
+    const panel = secondLeafOf(o);
     expect(resolveOpeningAmount(panel, { state: "on" })).toBe(1);
     expect(resolveOpeningAmount(panel, { state: "off" })).toBe(0);
     expect(openingIsActive(panel, { state: "on" })).toBe(true);
@@ -313,7 +371,7 @@ describe("openingHasTwoPanels / secondPanelOf (issue #145)", () => {
       resolveOpeningAmount(panel, { state: "open", attributes: { current_position: 40 } }),
     ).toBeCloseTo(0.4);
     expect(
-      resolveOpeningAmount(secondPanelOf({ ...o, invert: true }), {
+      resolveOpeningAmount(secondLeafOf({ ...o, invert: true }), {
         state: "open",
         attributes: { current_position: 40 },
       }),
@@ -690,20 +748,60 @@ describe("entityStateText", () => {
 });
 
 describe("itemStateText", () => {
-  it("renders the primary entity alone when no secondary is paired", () => {
+  it("renders the device's own state", () => {
     expect(itemStateText(livingArea(), { entity: TEMP })).toBe("17.9 °C");
   });
 
-  it("pairs a temperature entity with its humidity entity", () => {
-    expect(itemStateText(livingArea(), { entity: TEMP, secondaryEntity: HUMIDITY })).toBe(
+  it("renders an attribute of it when one is named (issue #70)", () => {
+    const h = livingArea();
+    (h.states[TEMP]!.attributes as Record<string, unknown>).battery = 84;
+    expect(itemStateText(h, { entity: TEMP, attribute: "battery" })).toBe("84");
+  });
+});
+
+// The legacy pair is a *spelling* of the first extra reading now (issue #180),
+// not a mechanism of its own — so what matters is that a config written before
+// that change still draws the same line.
+describe("the legacy secondaryEntity pair, through the pool", () => {
+  const sensor = (extra: Record<string, unknown> = {}) =>
+    ({ entity: TEMP, kind: "sensor", ...extra }) as Parameters<typeof itemBadgeLabel>[1];
+
+  it("still pairs a temperature entity with its humidity entity", () => {
+    expect(itemBadgeLabel(livingArea(), sensor({ secondaryEntity: HUMIDITY }))).toBe(
       "17.9 °C · 49.3%",
     );
   });
 
-  it("still renders the primary when the secondary entity is missing", () => {
-    expect(itemStateText(livingArea(), { entity: TEMP, secondaryEntity: "sensor.gone" })).toBe(
+  it("still renders the primary when the second entity is missing", () => {
+    expect(itemBadgeLabel(livingArea(), sensor({ secondaryEntity: "sensor.gone" }))).toBe(
       "17.9 °C · —",
     );
+  });
+
+  it("is the first entry of the pool, ahead of any readings", () => {
+    expect(
+      itemReadings({ secondaryEntity: HUMIDITY, readings: [{ entity: TEMP }] }),
+    ).toEqual([{ entity: HUMIDITY, attribute: undefined }, { entity: TEMP }]);
+    expect(itemReadings({})).toEqual([]);
+    expect(itemReadings({ readings: [{ entity: TEMP }] })).toEqual([{ entity: TEMP }]);
+  });
+
+  it("a lone secondaryAttribute still reads the device's own entity", () => {
+    const h = livingArea();
+    (h.states[TEMP]!.attributes as Record<string, unknown>).battery = 84;
+    expect(itemBadgeLabel(h, sensor({ secondaryAttribute: "battery" }))).toBe("17.9 °C · 84");
+    expect(itemReadings({ secondaryAttribute: "battery" })).toEqual([
+      { entity: undefined, attribute: "battery" },
+    ]);
+  });
+
+  it("mixes with readings, in written order", () => {
+    expect(
+      itemBadgeLabel(
+        livingArea(),
+        sensor({ secondaryEntity: HUMIDITY, readings: [{ entity: TEMP }] }),
+      ),
+    ).toBe("17.9 °C · 49.3% · 17.9 °C");
   });
 });
 
@@ -756,6 +854,142 @@ describe("itemBadgeLabel (issues #61, #59)", () => {
     expect(
       itemBadgeLabel(named(), { entity: "", kind: "sensor", showName: true, name: "Detector" }),
     ).toBe("Detector");
+  });
+});
+
+describe("more readings per device (issue #180)", () => {
+  const named = () => {
+    const h = livingArea();
+    (h.states[TEMP]!.attributes as Record<string, unknown>).friendly_name = "Living Temp";
+    return h;
+  };
+
+  it("appends each reading to the label line", () => {
+    expect(
+      itemBadgeLabel(named(), {
+        entity: TEMP,
+        kind: "sensor",
+        readings: [{ entity: HUMIDITY }],
+      }),
+    ).toBe("17.9 °C · 49.3%");
+  });
+
+  it("takes as many as are configured, in order", () => {
+    const h = named();
+    expect(
+      itemBadgeLabel(h, {
+        entity: TEMP,
+        kind: "sensor",
+        showName: true,
+        readings: [{ entity: HUMIDITY }, { entity: TEMP }],
+      }),
+    ).toBe("Living Temp · 17.9 °C · 49.3% · 17.9 °C");
+  });
+
+  it("shows readings even with the device's own state hidden", () => {
+    // I-G-1-1's plug in discussion #173: on/off is already in the badge
+    // colour, so the label is to carry the *other* numbers and not "on".
+    expect(
+      itemBadgeLabel(named(), {
+        entity: TEMP,
+        kind: "sensor",
+        showState: false,
+        readings: [{ entity: HUMIDITY }],
+      }),
+    ).toBe("49.3%");
+    // …and with the name back on, the state is still the only thing missing.
+    expect(
+      itemBadgeLabel(named(), {
+        entity: TEMP,
+        kind: "sensor",
+        showState: false,
+        showName: true,
+        readings: [{ entity: HUMIDITY }],
+      }),
+    ).toBe("Living Temp · 49.3%");
+  });
+
+  it("reads an attribute of the device's own entity when the row names none", () => {
+    const h = named();
+    (h.states[TEMP]!.attributes as Record<string, unknown>).battery = 84;
+    expect(
+      itemBadgeLabel(h, { entity: TEMP, kind: "sensor", readings: [{ attribute: "battery" }] }),
+    ).toBe("17.9 °C · 84");
+  });
+
+  it("draws nothing for a row that names nothing — the editor's fresh row", () => {
+    // "+" adds {} and the picker is filled in afterwards; a dash appearing on
+    // the plan the moment you click it would be its own bug report.
+    expect(itemBadgeLabel(named(), { entity: TEMP, kind: "sensor", readings: [{}] })).toBe(
+      "17.9 °C",
+    );
+    expect(itemReadingText(named(), { entity: TEMP }, {})).toBe("");
+  });
+
+  it("a device with no entity of its own still shows a reading that names one", () => {
+    expect(
+      itemBadgeLabel(named(), { entity: "", kind: "light", readings: [{ entity: HUMIDITY }] }),
+    ).toBe("49.3%");
+    // …but an attribute row with nothing to read it off stays silent.
+    expect(
+      itemBadgeLabel(named(), { entity: "", kind: "light", readings: [{ attribute: "battery" }] }),
+    ).toBe("");
+  });
+
+  it("leaves a device with no readings exactly as it was", () => {
+    for (const readings of [undefined, []]) {
+      expect(itemBadgeLabel(named(), { entity: TEMP, kind: "sensor", readings })).toBe("17.9 °C");
+    }
+  });
+
+  it("still watches every reading's entity, or the line goes intermittent", () => {
+    const got = collectWatchedEntities({
+      items: [
+        {
+          id: "i",
+          kind: "sensor",
+          x: 0,
+          y: 0,
+          entity: TEMP,
+          readings: [{ entity: HUMIDITY }, { attribute: "battery" }, {}],
+        },
+      ],
+    } as unknown as FloorplanCardConfig);
+    expect([...got].sort()).toEqual([TEMP, HUMIDITY].sort());
+  });
+});
+
+describe("itemHasLabel / labelPositionOf (issue #180)", () => {
+  it("knows a device labels itself from its readings alone", () => {
+    // Both toggles off, so the historic test would have said "no label" and
+    // hidden the size and position controls for a label that is on screen.
+    expect(itemHasLabel({ kind: "light", readings: [{ entity: HUMIDITY }] })).toBe(true);
+    expect(itemHasLabel({ kind: "light", showState: false, readings: [{ attribute: "b" }] })).toBe(
+      true,
+    );
+    // A row that names nothing is not a label.
+    expect(itemHasLabel({ kind: "light", readings: [{}] })).toBe(false);
+    expect(itemHasLabel({ kind: "light" })).toBe(false);
+  });
+
+  it("keeps the historic answers for everything else", () => {
+    expect(itemHasLabel({ kind: "sensor" })).toBe(true); // sensors show state
+    expect(itemHasLabel({ kind: "sensor", showState: false })).toBe(false);
+    expect(itemHasLabel({ kind: "light", showName: true })).toBe(true);
+    expect(itemHasLabel({ kind: "light", showState: true })).toBe(true);
+  });
+
+  it("resolves the label position, defaulting to below", () => {
+    expect(labelPositionOf({})).toBe("below");
+    expect(labelPositionOf({ labelPosition: "below" })).toBe("below");
+    expect(labelPositionOf({ labelPosition: "left" })).toBe("left");
+    expect(labelPositionOf({ labelPosition: "right" })).toBe("right");
+  });
+
+  it("falls back to below on a junk value — it becomes a class name", () => {
+    expect(labelPositionOf({ labelPosition: "above" as never })).toBe("below");
+    expect(labelPositionOf({ labelPosition: "" as never })).toBe("below");
+    expect(labelPositionOf({ labelPosition: 3 as never })).toBe("below");
   });
 });
 
@@ -821,12 +1055,18 @@ describe("editorItemLabel (#135)", () => {
 });
 
 describe("overlay scaling", () => {
-  it("normalizes the mode, defaulting anything unrecognized to fixed", () => {
+  it("reads a missing mode as the pixels every older plan was laid out in", () => {
+    // Canvas units are the better answer and new plans are *created* with them
+    // (getStubConfig writes the key). Inferring them from silence is a
+    // different thing entirely: it restyles every plan already in the field on
+    // upgrade, which is what 1.5.0 did (issue #192). Silence means what it has
+    // always meant.
     expect(normalizeOverlayScale("plan")).toBe("plan");
-    expect(normalizeOverlayScale(undefined)).toBe("fixed");
     expect(normalizeOverlayScale("fixed")).toBe("fixed");
+    expect(normalizeOverlayScale(undefined)).toBe("fixed");
     expect(normalizeOverlayScale("PLAN")).toBe("fixed");
     expect(normalizeOverlayScale(1)).toBe("fixed");
+    expect(normalizeOverlayScale("")).toBe("fixed");
   });
 
   it("emits screen pixels under fixed and canvas units under plan", () => {
@@ -1204,6 +1444,31 @@ describe("collectWatchedEntities", () => {
     for (const id of ["binary_sensor.door", "binary_sensor.window", "binary_sensor.motion"]) {
       expect(got.has(id)).toBe(true);
     }
+  });
+
+  // Miss this and the second panel is not frozen but *intermittent*: it only
+  // catches up when some other watched entity happens to move.
+  it("collects an opening's second leaf and its shutter's (issues #145, #159)", () => {
+    const got = collectWatchedEntities({
+      openings: [
+        {
+          id: "o",
+          type: "window",
+          x: 0,
+          y: 0,
+          entity: "binary_sensor.left",
+          secondaryEntity: "binary_sensor.right",
+          shutterEntity: "binary_sensor.shutter_left",
+          shutterSecondaryEntity: "binary_sensor.shutter_right",
+        },
+      ],
+    } as unknown as FloorplanCardConfig);
+    expect([...got].sort()).toEqual([
+      "binary_sensor.left",
+      "binary_sensor.right",
+      "binary_sensor.shutter_left",
+      "binary_sensor.shutter_right",
+    ]);
   });
 });
 
@@ -1609,30 +1874,32 @@ describe("domainIconAnimation (issue #127)", () => {
   });
 });
 
-describe("isPresenceEntity (issue #127)", () => {
-  it("accepts the binary-sensor classes that mean someone is there", () => {
-    for (const dc of ["motion", "occupancy", "presence"]) {
-      expect(isPresenceEntity("binary_sensor.hall", dc)).toBe(true);
+describe("isRippleEntity (issue #127)", () => {
+  it("accepts the binary-sensor classes that mean something happened here", () => {
+    // vibration joins the presence classes: a door sensor that feels a knock
+    // marks a spot the same way a motion sensor does (issue #202).
+    for (const dc of ["motion", "occupancy", "presence", "vibration"]) {
+      expect(isRippleEntity("binary_sensor.hall", dc)).toBe(true);
     }
   });
 
   it("accepts trackers and people on their domain alone", () => {
-    expect(isPresenceEntity("device_tracker.phone", undefined)).toBe(true);
-    expect(isPresenceEntity("person.sam", undefined)).toBe(true);
+    expect(isRippleEntity("device_tracker.phone", undefined)).toBe(true);
+    expect(isRippleEntity("person.sam", undefined)).toBe(true);
   });
 
   it("rejects sensors that detect something else, and an unclassed one", () => {
-    expect(isPresenceEntity("binary_sensor.front_door", "door")).toBe(false);
-    expect(isPresenceEntity("binary_sensor.leak", "moisture")).toBe(false);
+    expect(isRippleEntity("binary_sensor.front_door", "door")).toBe(false);
+    expect(isRippleEntity("binary_sensor.leak", "moisture")).toBe(false);
     // No class at all could be anything — guessing from the name would ring
     // doorbells and smoke alarms.
-    expect(isPresenceEntity("binary_sensor.presence", undefined)).toBe(false);
+    expect(isRippleEntity("binary_sensor.presence", undefined)).toBe(false);
   });
 
   it("rejects other domains, whatever class they carry", () => {
-    expect(isPresenceEntity("light.a", "motion")).toBe(false);
-    expect(isPresenceEntity("sensor.motion", "motion")).toBe(false);
-    expect(isPresenceEntity(undefined, "motion")).toBe(false);
+    expect(isRippleEntity("light.a", "motion")).toBe(false);
+    expect(isRippleEntity("sensor.motion", "motion")).toBe(false);
+    expect(isRippleEntity(undefined, "motion")).toBe(false);
   });
 });
 
@@ -1798,21 +2065,23 @@ describe("itemStateText with attributes (issue #70)", () => {
 
   it("secondaryAttribute without a second entity reads the same entity", () => {
     expect(
-      itemStateText(climate(), {
+      itemBadgeLabel(climate(), {
         entity: "climate.home",
+        kind: "sensor",
         attribute: "current_temperature",
         secondaryAttribute: "current_humidity",
-      }),
+      } as Parameters<typeof itemBadgeLabel>[1]),
     ).toBe("21.5 · 45");
   });
 
   it("secondaryAttribute applies to secondaryEntity when both are set", () => {
     expect(
-      itemStateText(climate(), {
+      itemBadgeLabel(climate(), {
         entity: "climate.home",
+        kind: "sensor",
         secondaryEntity: TEMP,
         secondaryAttribute: "unit_of_measurement",
-      }),
+      } as Parameters<typeof itemBadgeLabel>[1]),
     ).toBe("heat · °C");
   });
 
@@ -2133,6 +2402,54 @@ describe("pressEffectOf (#134)", () => {
   });
 });
 
+describe("offlineStyleOf / itemIsOffline (#162)", () => {
+  const light = { entity: "light.ceiling" };
+
+  it("defaults to dimming, and takes every mode the card has a rule for", () => {
+    expect(offlineStyleOf({})).toBe(DEFAULT_OFFLINE_STYLE);
+    expect(offlineStyleOf({})).toBe("dim");
+    for (const v of ["dim", "strike", "none"] as const) {
+      expect(offlineStyleOf({ offlineStyle: v })).toBe(v);
+    }
+  });
+
+  it("falls back to the default rather than to nothing on a junk value", () => {
+    // Same trap as pressEffectOf above: the value becomes a class name.
+    expect(offlineStyleOf({ offlineStyle: "faded" as never })).toBe("dim");
+    expect(offlineStyleOf({ offlineStyle: "" as never })).toBe("dim");
+    expect(offlineStyleOf({ offlineStyle: 0 as never })).toBe("dim");
+    expect(offlineStyleOf({ offlineStyle: "none" })).toBe("none");
+  });
+
+  it("calls a dropped-out entity offline, however it dropped out", () => {
+    expect(itemIsOffline(light, "unavailable")).toBe(true);
+    expect(itemIsOffline(light, "unknown")).toBe(true);
+    // Not in hass at all — renamed, deleted, or an integration that failed to
+    // load. Today that draws an ordinary "off" badge for something gone.
+    expect(itemIsOffline(light, undefined)).toBe(true);
+  });
+
+  it("leaves a device that is merely off alone", () => {
+    for (const state of ["off", "on", "closed", "docked", "locked", "0", "idle"]) {
+      expect({ state, offline: itemIsOffline(light, state) }).toEqual({ state, offline: false });
+    }
+  });
+
+  it("an unbound device is not offline — there is nothing to be wrong", () => {
+    // The plain markers issue #39 added: no entity, so no outage either.
+    expect(itemIsOffline({}, undefined)).toBe(false);
+    expect(itemIsOffline({ entity: "" }, undefined)).toBe(false);
+    expect(itemIsOffline({ entity: "" }, "unavailable")).toBe(false);
+  });
+
+  it("agrees with the active test: an offline device is never active", () => {
+    for (const state of ["unavailable", "unknown"]) {
+      expect(entityIsActive(light.entity, state)).toBe(false);
+      expect(itemIsOffline(light, state)).toBe(true);
+    }
+  });
+});
+
 describe("badgeContentOf (#106)", () => {
   it("defaults to the icon", () => {
     expect(badgeContentOf({})).toBe("icon");
@@ -2270,10 +2587,46 @@ describe("badgeValue (#106)", () => {
     it("reports which entity the reading came from", () => {
       // The plug's switch says "on" — not a number — so the badge is showing
       // the power sensor. The form has to be able to say so.
+      // `source` is the reading's *index* in the pool since issue #180 — the
+      // legacy pair is index 0, which is where it always sat.
       expect(badgeReading(plug(), { entity: "switch.plug", secondaryEntity: "sensor.plug_power" }))
-        .toEqual({ text: "1.2kW", source: "secondary" });
+        .toEqual({ text: "1.2kW", source: 0 });
       expect(badgeReading(twoSensors(), { entity: "sensor.a", secondaryEntity: "sensor.b" }))
         .toEqual({ text: "21°", source: "primary" });
+      // …and a reading further down the pool reports its own index.
+      expect(
+        badgeReading(plug(), {
+          entity: "switch.plug",
+          readings: [{ entity: "sensor.nothing" }, { entity: "sensor.plug_power" }],
+        }),
+      ).toEqual({ text: "1.2kW", source: 1 });
+    });
+
+    it("takes the legacy 'secondary' and a modern index to the same place (#180)", () => {
+      const item = { entity: "sensor.a", secondaryEntity: "sensor.b" } as const;
+      expect(badgeReading(twoSensors(), { ...item, badgeEntity: "secondary" })).toEqual(
+        badgeReading(twoSensors(), { ...item, badgeEntity: 0 }),
+      );
+      expect(badgeEntityIndex("secondary")).toBe(0);
+      expect(badgeEntityIndex("primary")).toBe("primary");
+      expect(badgeEntityIndex(2)).toBe(2);
+      // Nothing chosen, and nonsense, both mean "work it out".
+      expect(badgeEntityIndex(undefined)).toBeUndefined();
+      expect(badgeEntityIndex(-1 as never)).toBeUndefined();
+      expect(badgeEntityIndex(1.5 as never)).toBeUndefined();
+      expect(badgeEntityIndex("third" as never)).toBeUndefined();
+    });
+
+    it("an index past the end shows the icon rather than another reading", () => {
+      // Naming a reading that no longer exists must not slide quietly onto a
+      // different sensor — the badge falls back to its glyph instead.
+      expect(
+        badgeReading(plug(), {
+          entity: "switch.plug",
+          readings: [{ entity: "sensor.plug_power" }],
+          badgeEntity: 7,
+        }),
+      ).toBeUndefined();
     });
 
     it("badgeValue is exactly badgeReading's text, across the whole chain", () => {
@@ -2441,6 +2794,370 @@ describe("openingSash (issues #73 / double doors)", () => {
       "double",
     );
     expect(openingSash({ type: "door", motion: "roll", sash: "double" } as Opening)).toBe("single");
+  });
+});
+
+describe("where the light comes from", () => {
+  const cfg = (extra = {}) =>
+    ({ type: "t", width: 1000, height: 1000, ...extra }) as FloorplanCardConfig;
+  const near = (v: number, want: number) => expect(v).toBeCloseTo(want, 6);
+
+  it("reads a bearing as a compass direction on the canvas", () => {
+    // North is up the canvas until the plan says otherwise.
+    near(planDirection(0).x, 0);
+    near(planDirection(0).y, -1);
+    near(planDirection(90).x, 1); // east, to the right
+    near(planDirection(90).y, 0);
+    near(planDirection(180).y, 1); // south, down
+  });
+
+  it("turns every bearing with the plan's own north", () => {
+    // A plan drawn with north to the right: east then points down the canvas.
+    near(planDirection(0, 90).x, 1);
+    near(planDirection(90, 90).y, 1);
+    // The whole reason north exists: the same house traced sideways must be
+    // lit from the same side of the *house*.
+    near(planDirection(135, 0).x, planDirection(45, 90).x);
+    near(planDirection(135, 0).y, planDirection(45, 90).y);
+  });
+
+  it("prefers a stated sun angle, then the live one, then a default", () => {
+    expect(sunBearingOf(cfg({ sunBearing: 200 }), 10)).toBe(200);
+    expect(sunBearingOf(cfg(), 10)).toBe(10);
+    expect(sunBearingOf(cfg(), "10.5")).toBe(10.5);
+    // A dead or absent sun.sun must not leave the plan lit from nowhere.
+    expect(sunBearingOf(cfg(), undefined)).toBe(DEFAULT_SUN_BEARING);
+    expect(sunBearingOf(cfg(), "unavailable")).toBe(DEFAULT_SUN_BEARING);
+    // 0 is a real bearing (due north), not a missing one.
+    expect(sunBearingOf(cfg({ sunBearing: 0 }), 99)).toBe(0);
+  });
+
+});
+
+describe("sunlight through the openings", () => {
+  const win = (extra: Partial<Opening> = {}) =>
+    ({ id: "o", type: "window", x: 100, y: 100, length: 40, angle: 0, ...extra }) as Opening;
+  // Light travelling straight down the canvas (sun in the north).
+  const down = { x: 0, y: 1 };
+
+  it("glass admits light whether it is open or shut; a door only when open", () => {
+    // The reason this cannot reuse the lamp rule: that one asks whether there
+    // is a hole, and a shut window is not a hole — it is still transparent.
+    expect(openingAdmitsSun({ type: "window" }, 0)).toBe(true);
+    expect(openingAdmitsSun({ type: "window" }, 1)).toBe(true);
+    expect(openingAdmitsSun({ type: "door" }, 0)).toBe(false);
+    expect(openingAdmitsSun({ type: "door" }, 0.4)).toBe(true);
+  });
+
+  it("admits a fraction of its gap, not a yes or a no", () => {
+    // A door open a crack is not a door standing open. Read as a boolean it
+    // was: both the wall gap and the beam were then taken at full width, so
+    // the crack threw the patch of a doorway wide open.
+    expect(openingSunFraction({ type: "door" }, 0.25)).toBeCloseTo(0.25);
+    expect(openingSunFraction({ type: "door" }, 1)).toBe(1);
+    expect(openingSunFraction({ type: "door" }, 0)).toBe(0);
+    // Glass admits its whole gap whatever its sash is doing — that is the one
+    // rule that ignores the amount rather than scaling by it.
+    expect(openingSunFraction({ type: "window" }, 0)).toBe(1);
+    expect(openingSunFraction({ type: "window" }, 0.3)).toBe(1);
+    expect(openingSunFraction({ type: "door", glazed: true }, 0)).toBe(1);
+    // An opaque window is scaled like any other opaque thing (a glass brick,
+    // a hatch).
+    expect(openingSunFraction({ type: "window", glazed: false }, 0.4)).toBeCloseTo(0.4);
+    // A shutter all the way down beats both.
+    expect(openingSunFraction({ type: "window" }, 1, 0)).toBe(0);
+    expect(openingSunFraction({ type: "door" }, 1, 0)).toBe(0);
+    // …and out-of-range input cannot widen a gap past its own opening.
+    expect(openingSunFraction({ type: "door" }, 4)).toBe(1);
+    expect(openingSunFraction({ type: "door" }, -2)).toBe(0);
+  });
+
+  it("counts the gap a sliding style clears, not the distance a leaf travels", () => {
+    // The composition the card performs: openingClearFraction first (both
+    // leaves, per-style travel), then the glazing and shutter rules on top.
+    // Without the first half a door whose *second* panel was open read as
+    // shut and let nothing in — the #145 bug, in the sunlight this time.
+    const conv = {
+      id: "o", type: "door", x: 0, y: 0, length: 200, angle: 0,
+      motion: "slide", sliderStyle: "converging",
+    } as Opening;
+    const sun = (a: number, b?: number) => openingSunFraction(conv, openingClearFraction(conv, a, b));
+    expect(sun(0, 0)).toBe(0);
+    expect(sun(0, 1)).toBeGreaterThan(0); // only the second leaf open: still light
+    expect(sun(1, 0)).toBeCloseTo(sun(0, 1)); // and the two leaves are worth the same
+    expect(sun(1, 1)).toBeCloseTo(0.5); // both leaves stack in the middle: half the gap
+    // A raw amount would have called that same door shut.
+    expect(openingSunFraction(conv, 0)).toBe(0);
+  });
+
+  it("a shutter that is all the way down stops the light, whatever the glass says", () => {
+    // What a shutter is for. A window behind a closed one is as dark as a wall.
+    expect(openingAdmitsSun({ type: "window" }, 0, 0)).toBe(false);
+    expect(openingAdmitsSun({ type: "door", glazed: true }, 1, 0)).toBe(false);
+    // Any daylight at all gets through — a shutter half up is not a wall.
+    expect(openingAdmitsSun({ type: "window" }, 0, 0.2)).toBe(true);
+    expect(openingAdmitsSun({ type: "window" }, 0, 1)).toBe(true);
+    // No shutter bound is not the same as one that is shut.
+    expect(openingAdmitsSun({ type: "window" }, 0, undefined)).toBe(true);
+    // …and an opaque door stays opaque behind an open shutter.
+    expect(openingAdmitsSun({ type: "door" }, 0, 1)).toBe(false);
+  });
+
+  it("a glazed door is glass too — which is what a patio door is", () => {
+    // Drawn as a door because that is how it swings, but a wall of glass all
+    // the same. Left opaque it kept the sunniest side of a house dark.
+    expect(openingIsGlazed({ type: "window" })).toBe(true);
+    expect(openingIsGlazed({ type: "door" })).toBe(false);
+    expect(openingIsGlazed({ type: "door", glazed: true })).toBe(true);
+    expect(openingAdmitsSun({ type: "door", glazed: true }, 0)).toBe(true);
+    // …and a window can be told it is not, for a glass-brick or a hatch.
+    expect(openingIsGlazed({ type: "window", glazed: false })).toBe(false);
+    expect(openingAdmitsSun({ type: "window", glazed: false }, 0)).toBe(false);
+    expect(openingAdmitsSun({ type: "window", glazed: false }, 1)).toBe(true);
+  });
+
+  it("sends the light the opposite way from where the sun stands", () => {
+    // A bearing says where the sun *is*. Reading it as the direction of travel
+    // lights the house from precisely the wrong side — with the sun in the
+    // south-west, the beams came in through the north-east windows.
+    const sw = sunLightDirection({ sunBearing: 230 });
+    expect(sw.x).toBeGreaterThan(0); // travelling east…
+    expect(sw.y).toBeLessThan(0); // …and north: toward the north-east
+    // Due south sun → light straight up the canvas.
+    const south = sunLightDirection({ sunBearing: 180 });
+    expect(south.x).toBeCloseTo(0);
+    expect(south.y).toBeCloseTo(-1);
+    // Always the far side of the compass from the sun itself.
+    for (const b of [0, 45, 137, 300]) {
+      const d = sunLightDirection({ sunBearing: b });
+      const at = planDirection(b);
+      expect(d.x).toBeCloseTo(-at.x);
+      expect(d.y).toBeCloseTo(-at.y);
+    }
+  });
+
+  it("turns the light with the plan's north, like every other bearing", () => {
+    const plain = sunLightDirection({ sunBearing: 90 });
+    const turned = sunLightDirection({ sunBearing: 0, north: 90 });
+    expect(turned.x).toBeCloseTo(plain.x);
+    expect(turned.y).toBeCloseTo(plain.y);
+  });
+
+  it("sweeps the opening's gap along the light, and only forwards", () => {
+    const p = sunBeamPolygon(win(), down, 200);
+    expect(p).toHaveLength(4);
+    // The gap itself: 40 wide, centred on the opening, along its own angle.
+    expect(p[0]).toEqual({ x: 80, y: 100 });
+    expect(p[1]).toEqual({ x: 120, y: 100 });
+    // …then 200 further along the light, never against it.
+    expect(p[2]).toEqual({ x: 120, y: 300 });
+    expect(p[3]).toEqual({ x: 80, y: 300 });
+  });
+
+  it("narrows the patch to the part of the gap that is actually clear", () => {
+    const o = win();
+    const full = sunBeamPolygon(o, down, 200);
+    const ajar = sunBeamPolygon(o, down, 200, 0.25);
+    // Same centre, a quarter of the width: the gap is 40, so 10 across.
+    expect(ajar[1].x - ajar[0].x).toBeCloseTo((full[1].x - full[0].x) * 0.25);
+    expect((ajar[0].x + ajar[1].x) / 2).toBeCloseTo((full[0].x + full[1].x) / 2);
+    // It still reaches just as far — a crack is narrower, not shorter.
+    expect(ajar[3].y - ajar[0].y).toBeCloseTo(full[3].y - full[0].y);
+    // The default is the whole gap, so every existing caller is unchanged.
+    expect(sunBeamPolygon(o, down, 200, 1)).toEqual(full);
+    expect(sunBeamPolygon(o, down, 200)).toEqual(full);
+  });
+
+  it("turns the patch with the opening it comes through", () => {
+    const p = sunBeamPolygon(win({ angle: 90 }), down, 100);
+    // A wall running north-south: the gap now spans in y, not x.
+    expect(p[0].x).toBeCloseTo(100);
+    expect(p[0].y).toBeCloseTo(80);
+    expect(p[1].y).toBeCloseTo(120);
+  });
+
+  it("casts a wall's shadow as that wall, moved along the light", () => {
+    // Exact for parallel rays — which is why the beams can be cut by these
+    // rather than traced ray by ray.
+    const w = { id: "w", x1: 0, y1: 50, x2: 100, y2: 50 };
+    const p = sunShadowPolygon(w, down, 300);
+    expect(p[0]).toEqual({ x: 0, y: 50 });
+    expect(p[1]).toEqual({ x: 100, y: 50 });
+    expect(p[2]).toEqual({ x: 100, y: 350 });
+    expect(p[3]).toEqual({ x: 0, y: 350 });
+  });
+
+  it("a beam and the shadow of the wall it pierces run the same way", () => {
+    // They are the same sweep of different segments, so a wall standing in a
+    // beam cuts it cleanly instead of leaving a sliver.
+    const dir = planDirection(135); // from the north-west, going south-east
+    const beam = sunBeamPolygon(win(), dir, 100);
+    const shadow = sunShadowPolygon({ id: "w", x1: 0, y1: 0, x2: 10, y2: 0 }, dir, 100);
+    const along = (p: { x: number; y: number }[]) => ({
+      x: p[3].x - p[0].x,
+      y: p[3].y - p[0].y,
+    });
+    expect(along(beam).x).toBeCloseTo(along(shadow).x);
+    expect(along(beam).y).toBeCloseTo(along(shadow).y);
+  });
+
+  it("has no light at all once the sun is down", () => {
+    // The azimuth says where the light comes from; only the elevation says
+    // whether there is any. Without it the plan kept its beams all night,
+    // aimed at a sun that had set hours ago.
+    expect(sunlightStrength(-0.5)).toBe(0);
+    expect(sunlightStrength(-30)).toBe(0);
+    expect(sunlightStrength(0)).toBe(0);
+  });
+
+  it("fades in over the first degrees, rather than switching on", () => {
+    expect(sunlightStrength(SUN_ELEVATION_FULL)).toBe(1);
+    expect(sunlightStrength(60)).toBe(1);
+    const low = sunlightStrength(2);
+    const mid = sunlightStrength(6);
+    expect(low).toBeGreaterThan(0);
+    expect(low).toBeLessThan(mid);
+    expect(mid).toBeLessThan(1);
+  });
+
+  it("fails bright: an unreadable sun leaves the plan lit, not stuck at night", () => {
+    // Same trap sunBrightness documents — Number(null), Number("") and
+    // Number(false) are all 0, and 0 here means "exactly at the horizon".
+    expect(sunlightStrength(undefined)).toBe(1);
+    expect(sunlightStrength(null)).toBe(1);
+    expect(sunlightStrength("")).toBe(1);
+    expect(sunlightStrength(false)).toBe(1);
+    expect(sunlightStrength("unavailable")).toBe(1);
+    // …but a real number in a string is a real reading.
+    expect(sunlightStrength("-10")).toBe(0);
+    expect(sunlightStrength("40")).toBe(1);
+  });
+
+  it("a pinned angle keeps its light on, whatever the sky is doing", () => {
+    // Stating a bearing is a decision about the picture, not a reading of the
+    // sky: it says where the light goes and, by saying so, that it stays.
+    // Fading it out at dusk would half-follow a sun the plan already declined
+    // to follow, and leave it dark all evening with nothing on screen to say why.
+    expect(sunIsPinned({ sunBearing: 225 })).toBe(true);
+    expect(sunIsPinned({})).toBe(false);
+    expect(sunlightStrengthOf({ sunBearing: 225 }, -40)).toBe(1);
+    // Due north is a real bearing, so it pins just as firmly as any other.
+    expect(sunlightStrengthOf({ sunBearing: 0 }, -40)).toBe(1);
+    // Following the real sun still follows it all the way down.
+    expect(sunlightStrengthOf({}, -40)).toBe(0);
+    expect(sunlightStrengthOf({}, 50)).toBe(1);
+  });
+
+  it("only the openings the sun actually shines on are sources (#177 / #178)", () => {
+    // The rule the two reports share. Trace back along the light: anything
+    // with a wall between it and the sky is standing behind something, and a
+    // thing standing behind something is not a second sun.
+    const north = { id: "n", x1: 0, y1: 0, x2: 400, y2: 0 };
+    const mid = { id: "m", x1: 0, y1: 150, x2: 400, y2: 150 };
+    const onNorth = win({ x: 200, y: 0 });
+    const inside = win({ x: 200, y: 150 });
+    expect(sunReachesOpening(onNorth, [north, mid], down)).toBe(true);
+    expect(sunReachesOpening(inside, [north, mid], down)).toBe(false);
+    // Its own wall never shades it — the ray starts on that wall's centreline.
+    expect(sunReachesOpening(onNorth, [north], down)).toBe(true);
+    // …but only its own. A wall meeting that one at a corner passes within a
+    // wall's thickness of an opening set close to it, and exempting it by
+    // distance alone let that opening answer "the sun reaches me" to a sun the
+    // return wall stood squarely in front of — the leeward leak again, in the
+    // one place the shortcut applied.
+    const west = { id: "we", x1: 0, y1: 0, x2: 0, y2: 300 };
+    const byCorner = win({ x: 6, y: 0, length: 12 });
+    expect(sunReachesOpening(byCorner, [north, west], { x: 0.6, y: -0.8 })).toBe(false);
+    // Turn the sun around and the same opening is lit again: the corner wall
+    // blocks it or it doesn't, on the geometry rather than on how near it is.
+    expect(sunReachesOpening(byCorner, [north, west], { x: 0.6, y: 0.8 })).toBe(true);
+    // Turn the sun around and the two swap places, which is the whole point:
+    // the far side of the house is the shaded side.
+    const up = { x: 0, y: -1 };
+    expect(sunReachesOpening(onNorth, [north, mid], up)).toBe(false);
+    expect(sunReachesOpening(inside, [north, mid], up)).toBe(true);
+  });
+
+  it("judges that on the uncut walls, so a lined-up doorway is not a second sun", () => {
+    // The distinction the fix turns on. Light *does* reach a door lined up
+    // with a window, and it does go through — the beam carries on, because
+    // that wall's shadow has the same gap cut in it. What it must not do is
+    // re-emit at its own width: a 20-wide sliver came out of a 120-wide door
+    // as a 120-wide flood (#178).
+    const north = { id: "n", x1: 0, y1: 0, x2: 400, y2: 0 };
+    const mid = { id: "m", x1: 0, y1: 150, x2: 400, y2: 150 };
+    const window = win({ x: 200, y: 0, length: 20 });
+    const door = win({ id: "d", type: "door", x: 200, y: 150, length: 120 });
+    // The gap really is there once the doorway is open…
+    const cut = wallsLightPassesThrough([north, mid], [window, door], () => 1);
+    expect(cut.some((w) => w.id.startsWith("m#"))).toBe(true);
+    // …and the door still is not a source.
+    expect(sunReachesOpening(door, [north, mid], down)).toBe(false);
+  });
+
+  it("an opening can be switched out of the sunlight entirely (#177)", () => {
+    // For the solid front door the plan draws open because nothing is bound to
+    // it. Beats every other rule, including the glass a window is by default.
+    expect(openingSunFraction({ type: "door", sunlight: false }, 1)).toBe(0);
+    expect(openingSunFraction({ type: "window", sunlight: false }, 1)).toBe(0);
+    expect(openingSunFraction({ type: "door", glazed: true, sunlight: false }, 1)).toBe(0);
+    expect(openingAdmitsSun({ type: "door", sunlight: false }, 1)).toBe(false);
+    // Absent and true both mean what they always meant, so nothing existing moves.
+    expect(openingSunFraction({ type: "door", sunlight: true }, 1)).toBe(1);
+    expect(openingSunFraction({ type: "door" }, 1)).toBe(1);
+  });
+
+  it("reaches across a fair part of the plan, but not forever", () => {
+    expect(SUN_REACH).toBeGreaterThan(0);
+    expect(SUN_REACH).toBeLessThanOrEqual(1);
+  });
+
+  it("stops well short of crossing the plan (issue #185)", () => {
+    // The complaint was a stripe that ran the length of the house at the
+    // brightness it started with. Half the plan's short side is the point at
+    // which a patch stops reading as a patch and starts reading as a corridor.
+    expect(SUN_REACH).toBeLessThan(0.5);
+  });
+
+  it("sweeps the gap straight along the light, at the gap's own width", () => {
+    // No fan. An earlier attempt widened the beam as it travelled, to imitate
+    // scattering; the wall segments either side of the gap cast shadows
+    // exactly parallel to the beam, so the extra width was clipped away every
+    // time. Softness comes from the falloff now, which nothing can clip.
+    const o = win();
+    const p = sunBeamPolygon(o, down, 200, 1);
+    const width = (i: number, j: number) => Math.abs(p[j]!.x - p[i]!.x);
+    expect(width(0, 1)).toBeCloseTo(width(3, 2));
+    expect(width(0, 1)).toBeCloseTo(o.length);
+  });
+
+  it("shortens the patch as the sun climbs, and lengthens it at dusk", () => {
+    // A patch of sun is as deep as the opening is tall over tan(elevation) —
+    // which is why a midday sun does not lay a stripe across the house.
+    expect(sunReachScale(SUN_REACH_REF)).toBeCloseTo(1);
+    expect(sunReachScale(60)).toBeLessThan(1);
+    expect(sunReachScale(15)).toBeGreaterThan(1);
+    expect(sunReachScale(60)).toBeLessThan(sunReachScale(45));
+    expect(sunReachScale(45)).toBeLessThan(sunReachScale(20));
+  });
+
+  it("clamps the reach scale at both ends", () => {
+    // Near the horizon tan runs away and would throw a beam of unbounded
+    // length; near the zenith it collapses and the patch would vanish at noon.
+    expect(sunReachScale(0.2)).toBeLessThanOrEqual(1.9);
+    expect(sunReachScale(89.9)).toBeGreaterThanOrEqual(0.45);
+    for (const e of [0.1, 1, 5, 30, 60, 89, 90]) {
+      expect(sunReachScale(e)).toBeGreaterThan(0);
+      expect(Number.isFinite(sunReachScale(e))).toBe(true);
+    }
+  });
+
+  it("falls back to the plain reach on an unreadable sun", () => {
+    // Same allowlist and the same fail-ordinary rule as sunlightStrength.
+    for (const dead of [undefined, null, "", false, "unavailable", NaN]) {
+      expect(sunReachScale(dead)).toBe(1);
+    }
+    expect(sunReachScale("45")).toBeCloseTo(sunReachScale(45));
   });
 });
 
@@ -2829,6 +3546,99 @@ describe("the shutter badge (issue #74 follow-up)", () => {
   });
 });
 
+describe("the opening's own badge (issue #154 follow-up)", () => {
+  const win = (extra: Partial<Opening> = {}) =>
+    ({ id: "o", type: "window", x: 500, y: 100, length: 90, angle: 0, ...extra }) as Opening;
+  const garage = (extra: Partial<Opening> = {}) =>
+    ({
+      id: "g",
+      type: "door",
+      motion: "roll",
+      x: 500,
+      y: 100,
+      length: 140,
+      angle: 0,
+      ...extra,
+    }) as Opening;
+
+  it("is opt-in, unlike the shutter's — most symbols say it themselves", () => {
+    expect(hasOpeningMark(garage({ entity: "cover.garage" }))).toBe(false);
+    expect(hasOpeningMark(garage({ entity: "cover.garage", showIcon: true }))).toBe(true);
+    // Nothing to badge without an entity, however loudly the config asks.
+    expect(hasOpeningMark(garage({ showIcon: true }))).toBe(false);
+  });
+
+  it("sits on the far side of the wall from the shutter's, so the two never stack", () => {
+    // The whole point of the placement: an opening drawing both badges puts
+    // one on each face, at any angle and under any flipV.
+    const both = win({ entity: "binary_sensor.win", shutterEntity: "cover.t", showIcon: true });
+    expect(openingMarkPoint(both)).toEqual({ x: 500, y: 100 - SHUTTER_MARK_OFFSET });
+    expect(shutterMarkPoint(both)).toEqual({ x: 500, y: 100 + SHUTTER_MARK_OFFSET });
+    for (const o of [
+      both,
+      win({ ...both, flipV: true }),
+      win({ ...both, angle: -90 }),
+      win({ ...both, angle: 37, flipV: true }),
+    ]) {
+      const a = openingMarkPoint(o);
+      const b = shutterMarkPoint(o);
+      // Two badge-widths apart is the test that matters: they are circles.
+      expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeCloseTo(SHUTTER_MARK_OFFSET * 2);
+    }
+  });
+
+  it("pushes its pixel offset the same way its anchor went", () => {
+    for (const o of [win(), win({ flipV: true }), win({ angle: -90 }), win({ angle: 37 })]) {
+      const at = openingMarkPoint(o);
+      const n = openingMarkNormal(o);
+      expect(Math.sign(at.x - o.x) || 0).toBe(Math.sign(Number(n.x.toFixed(6))) || 0);
+      expect(Math.sign(at.y - o.y) || 0).toBe(Math.sign(Number(n.y.toFixed(6))) || 0);
+    }
+    // …and away from the shutter's, in screen space as well as plan space.
+    const n = openingMarkNormal(win());
+    const s = shutterMarkNormal(win());
+    expect(n.x).toBeCloseTo(-s.x);
+    expect(n.y).toBeCloseTo(-s.y);
+    // Rotating the plan turns both together (issue #33).
+    expect(openingMarkNormal(win(), 90).x).toBeCloseTo(1);
+  });
+
+  it("shows the entity's own icon, state-aware, on the shutter badge's terms", () => {
+    const g = { type: "door", entity: "cover.garage" } as Pick<Opening, "type" | "entity" | "icon">;
+    const st = (state: string) => ({ state, attributes: { device_class: "garage" } });
+    expect(openingMarkIcon(g, st("open"), true)).toBe("mdi:garage-open");
+    expect(openingMarkIcon(g, st("closed"), false)).toBe("mdi:garage");
+    // Override, registry, then the icon on the state — same order as always.
+    expect(openingMarkIcon({ ...g, icon: "mdi:mine" }, st("open"), true, "mdi:reg")).toBe("mdi:mine");
+    expect(openingMarkIcon(g, st("open"), true, "mdi:reg")).toBe("mdi:reg");
+  });
+
+  it("falls back to a door or a window when the entity declares no class", () => {
+    // A bare contact has no pair of its own, and the symbol it decorates does.
+    expect(openingMarkIcon({ type: "door", entity: "binary_sensor.d" }, undefined, true)).toBe(
+      "mdi:door-open"
+    );
+    expect(openingMarkIcon({ type: "door", entity: "binary_sensor.d" }, undefined, false)).toBe(
+      "mdi:door-closed"
+    );
+    expect(openingMarkIcon({ type: "window", entity: "binary_sensor.w" }, undefined, true)).toBe(
+      "mdi:window-open"
+    );
+    expect(openingMarkIcon({ type: "window", entity: "binary_sensor.w" }, undefined, false)).toBe(
+      "mdi:window-closed"
+    );
+  });
+
+  it("refuses an icon string that isn't one, at every level", () => {
+    const nasty = { state: "open", attributes: { icon: "mdi:x;background:url(//evil)" } };
+    const o = { type: "window", entity: "cover.w", icon: "mdi:evil;}" } as Pick<
+      Opening,
+      "type" | "entity" | "icon"
+    >;
+    expect(openingMarkIcon(o, nasty, true, "mdi:y;}")).toBe("mdi:window-open");
+  });
+});
+
 describe("openingIsPressable (issue #74 follow-up)", () => {
   const o = (extra: Partial<Opening> = {}) =>
     ({ id: "o", type: "window", x: 0, y: 0, length: 90, angle: 0, ...extra }) as Opening;
@@ -2939,6 +3749,94 @@ describe("collectWatchedEntities includes a slider's second panel (issue #145)",
         watched
       )
     ).toBe(false);
+  });
+});
+
+describe("collectWatchedEntities watches the sun the sunlight actually reads", () => {
+  const plan = (extra: Record<string, unknown>) =>
+    ({
+      type: "t", width: 1000, height: 600,
+      floors: [{ id: "f", name: "F", walls: [], items: [], texts: [], furniture: [],
+        trackers: [], openings: [] }],
+      ...extra,
+    }) as unknown as FloorplanCardConfig;
+
+  it("subscribes when the sunlight follows the real sun", () => {
+    // The whole feature reads sun.sun — azimuth for the direction, elevation
+    // for whether there is any light — and sunDimming is a separate opt-in,
+    // so this is the ordinary case rather than an exotic one.
+    expect(collectWatchedEntities(plan({ sunlight: true })).has("sun.sun")).toBe(true);
+  });
+
+  it("does not subscribe for a pinned bearing, which reads neither attribute", () => {
+    // sunBearingOf short-circuits on the config and sunlightStrengthOf returns
+    // 1, so there is nothing on sun.sun left to watch.
+    expect(
+      collectWatchedEntities(plan({ sunlight: true, sunBearing: 135 })).has("sun.sun")
+    ).toBe(false);
+    // …unless the dimming is also on, which reads the elevation regardless.
+    expect(
+      collectWatchedEntities(plan({ sunlight: true, sunBearing: 135, sunDimming: true })).has("sun.sun")
+    ).toBe(true);
+  });
+
+  it("leaves a plan without sunlight exactly as it was", () => {
+    expect(collectWatchedEntities(plan({})).has("sun.sun")).toBe(false);
+    expect(collectWatchedEntities(plan({ sunDimming: true })).has("sun.sun")).toBe(true);
+  });
+
+  // The assertion that pins the bug, in the same shape as #145's above: HA
+  // carries unchanged entities across by identity, so the beams only move if
+  // sun.sun is in the watched set. Without it the plan is painted once and
+  // then frozen at whatever the sun was doing when the card loaded.
+  it("re-renders as the sun moves across the sky", () => {
+    const watched = collectWatchedEntities(plan({ sunlight: true }));
+    const lamp = { state: "on" };
+    const morning = {
+      states: {
+        "sun.sun": { state: "above_horizon", attributes: { azimuth: 100, elevation: 30 } },
+        "light.a": lamp,
+      },
+    } as unknown as RenderHass;
+    const noon = {
+      states: {
+        // Same object for the lamp — only the sun moved.
+        "sun.sun": { state: "above_horizon", attributes: { azimuth: 180, elevation: 60 } },
+        "light.a": lamp,
+      },
+    } as unknown as RenderHass;
+    expect(hassRenderInputsChanged(morning, noon, watched)).toBe(true);
+    // And the picture really would have changed, so the re-render is earned.
+    expect(sunLightDirection({ sunlight: true } as FloorplanCardConfig, 100)).not.toEqual(
+      sunLightDirection({ sunlight: true } as FloorplanCardConfig, 180)
+    );
+  });
+});
+
+describe("a dead sun.sun falls back rather than pointing north", () => {
+  const cfg = (extra = {}) =>
+    ({ type: "t", width: 1000, height: 1000, ...extra }) as FloorplanCardConfig;
+  // The elevation had this guard from the start; the azimuth did not, and its
+  // failure is the quieter one: Number(null) is 0, 0 is due north, and a plan
+  // lit from the wrong side looks entirely deliberate.
+  it("takes the default bearing for anything that is not a reading", () => {
+    for (const dead of [undefined, null, "", "   ", false, "unavailable", "unknown", NaN, {}]) {
+      expect(sunBearingOf(cfg(), dead)).toBe(DEFAULT_SUN_BEARING);
+    }
+  });
+
+  it("still takes a real reading, including the ones that look falsy", () => {
+    expect(sunBearingOf(cfg(), 0)).toBe(0); // due north, an actual bearing
+    expect(sunBearingOf(cfg(), "0")).toBe(0);
+    expect(sunBearingOf(cfg(), 212.5)).toBe(212.5);
+    expect(sunBearingOf(cfg(), "212.5")).toBe(212.5);
+  });
+
+  it("and the two attributes now fail the same way as each other", () => {
+    for (const dead of [null, "", false, "unavailable"]) {
+      expect(sunBearingOf(cfg(), dead)).toBe(DEFAULT_SUN_BEARING);
+      expect(sunlightStrength(dead)).toBe(1);
+    }
   });
 });
 
@@ -3827,6 +4725,23 @@ describe("openingClearFraction (#145 / #143)", () => {
     expect(openingClearFraction(slider("biparting"), 5, 5)).toBe(1);
     expect(openingClearFraction(slider("converging"), -3, -3)).toBe(0);
   });
+
+  it("a hinged double clears half per open sash (issue #159)", () => {
+    const casement = (extra: Partial<Opening> = {}) =>
+      ({ id: "w", type: "window", x: 0, y: 0, length: 90, angle: 0, ...extra }) as Opening;
+    // Each sash covers its own half, and clears it completely when open.
+    expect(openingClearFraction(casement(), 1, 1)).toBe(1);
+    expect(openingClearFraction(casement(), 1, 0)).toBe(0.5);
+    expect(openingClearFraction(casement(), 0, 1)).toBe(0.5);
+    expect(openingClearFraction(casement(), 0, 0)).toBe(0);
+    // A double door reads the same way (issue #168).
+    expect(openingClearFraction(casement({ type: "door", sash: "double" }), 1, 0)).toBe(0.5);
+    // One sash means one amount, exactly as before.
+    expect(openingClearFraction(casement({ sash: "single" }), 0.4, 1)).toBe(0.4);
+    expect(openingClearFraction(casement({ type: "door" }), 0.4, 1)).toBe(0.4);
+    // …as does a double with a single sensor: the mean of one amount is itself.
+    expect(openingClearFraction(casement(), 0.6)).toBeCloseTo(0.6, 10);
+  });
 });
 
 describe("wallsLightPassesThrough (#143)", () => {
@@ -4358,5 +5273,268 @@ describe("itemHiddenWhenInactive (issue #55)", () => {
     expect(itemHiddenWhenInactive({ entity: "light.a", hideWhenInactive: true }, undefined))
       .toBe(true);
     expect(itemHiddenWhenInactive({ hideWhenInactive: true }, "on")).toBe(true);
+  });
+});
+
+describe("a lock drives a door (issue #176)", () => {
+  const door = (extra: Partial<Opening> = {}) =>
+    ({ id: "d", type: "door", x: 0, y: 0, length: 90, angle: 0, entity: "lock.front", ...extra }) as Opening;
+
+  it("reads unlocked as open and locked as closed", () => {
+    expect(resolveOpeningOpen(door(), "unlocked")).toBe(true);
+    expect(resolveOpeningOpen(door(), "locked")).toBe(false);
+  });
+
+  it("takes the transient and latch states from the domain's own table", () => {
+    // Exactly entityIsActive's lock set, so a door and a badge bound to the
+    // same lock can never disagree about it.
+    for (const state of ["unlocked", "unlocking", "open", "opening"]) {
+      expect({ state, open: resolveOpeningOpen(door(), state) }).toEqual({ state, open: true });
+      expect({ state, active: entityIsActive("lock.front", state) }).toEqual({ state, active: true });
+    }
+    // `locking` is on its way to shut, so it draws shut.
+    expect(resolveOpeningOpen(door(), "locking")).toBe(false);
+  });
+
+  it("fails closed on no reliable reading, before invert can flip it", () => {
+    // `jammed` belongs here rather than with the ordinary readings: the lock
+    // tried to move and could not, so the bolt is neither thrown nor
+    // withdrawn. Inverting it would draw a jammed front door wide open, which
+    // is the one picture a jam must not paint.
+    for (const state of ["unavailable", "unknown", "jammed"]) {
+      expect({ state, open: resolveOpeningOpen(door(), state) }).toEqual({ state, open: false });
+      expect({ state, inverted: resolveOpeningOpen(door({ invert: true }), state) }).toEqual({
+        state,
+        inverted: false,
+      });
+    }
+  });
+
+  it("only a lock's jam fails closed — no other domain reports one", () => {
+    // A `sensor.jammed` reading the literal word keeps meaning whatever its
+    // own domain says, and there `jammed` is simply not an open state, so
+    // invert may flip it like any other.
+    const contact = (extra = {}) =>
+      ({ ...door({ ...extra }), entity: "binary_sensor.d" }) as Opening;
+    expect(resolveOpeningOpen(contact(), "jammed")).toBe(false);
+    expect(resolveOpeningOpen(contact({ invert: true }), "jammed")).toBe(true);
+  });
+
+  it("inverts for a lock wired the other way round", () => {
+    expect(resolveOpeningOpen(door({ invert: true }), "locked")).toBe(true);
+    expect(resolveOpeningOpen(door({ invert: true }), "unlocked")).toBe(false);
+  });
+
+  it("a jam is never active, and lets no light through", () => {
+    expect(openingIsActive(door(), { state: "jammed" })).toBe(false);
+    expect(openingIsActive(door({ invert: true }), { state: "jammed" })).toBe(false);
+    expect(resolveOpeningAmount(door({ invert: true }), { state: "jammed" })).toBe(0);
+  });
+
+  it("drives the amount, the accent and the light like any other opening", () => {
+    expect(resolveOpeningAmount(door(), { state: "unlocked" })).toBe(1);
+    expect(resolveOpeningAmount(door(), { state: "locked" })).toBe(0);
+    expect(openingIsActive(door(), { state: "unlocked" })).toBe(true);
+    expect(openingIsActive(door(), { state: "locked" })).toBe(false);
+    // A lock has no position to publish, so it stays binary.
+    expect(
+      resolveOpeningAmount(door(), { state: "unlocked", attributes: { current_position: 40 } }),
+    ).toBeCloseTo(0.4);
+  });
+
+  it("leaves every other domain reading exactly as it did", () => {
+    const contact = (state: string) =>
+      resolveOpeningOpen({ ...door(), entity: "binary_sensor.d" } as Opening, state);
+    expect(contact("on")).toBe(true);
+    expect(contact("off")).toBe(false);
+    // A contact that somehow reads "unlocked" is not a lock, and does not
+    // silently become one.
+    expect(contact("unlocked")).toBe(false);
+    const cover = (state: string) =>
+      resolveOpeningOpen({ ...door(), entity: "cover.d" } as Opening, state);
+    for (const state of ["open", "opening", "closing"]) expect(cover(state)).toBe(true);
+    expect(cover("closed")).toBe(false);
+  });
+
+  it("never toggles a lock on a tap — it opens its dialog", () => {
+    // The accidental-hardware rule the shutter defaults already follow, and
+    // unlocking a front door by brushing the plan is the worst version of it.
+    expect(openingClickAction("lock.front", 0)).toBe("more-info");
+    expect(openingClickAction("lock.front", 255)).toBe("more-info");
+    expect(
+      openingActionForGesture({ entity: "lock.front" }, "tap", () => 255)?.config.action,
+    ).toBe("more-info");
+  });
+});
+
+describe("actions on rooms (issue #181)", () => {
+  const area = (extra: Partial<Area> = {}) =>
+    ({ id: "a", points: [{ x: 0, y: 0 }], ...extra }) as Area;
+
+  it("resolves only what is configured — tap is left to the zoom otherwise", () => {
+    expect(areaActionForGesture(area(), "tap")).toBeUndefined();
+    expect(areaActionForGesture(area(), "hold")).toBeUndefined();
+    expect(areaActionForGesture(area(), "double_tap")).toBeUndefined();
+  });
+
+  it("takes the action's own entity, else the room's", () => {
+    const a = area({ entity: "light.kitchen", tap_action: { action: "toggle" } });
+    expect(areaActionForGesture(a, "tap")).toEqual({
+      entity: "light.kitchen",
+      config: { action: "toggle" },
+    });
+    // An action naming its own entity wins over the room's.
+    const b = area({
+      entity: "light.kitchen",
+      hold_action: { action: "more-info", entity: "sensor.temp" },
+    });
+    expect(areaActionForGesture(b, "hold")?.entity).toBe("sensor.temp");
+    // …and with no entity anywhere, only actions that need none do anything.
+    expect(areaActionForGesture(area({ tap_action: { action: "navigate" } }), "tap")).toEqual({
+      entity: undefined,
+      config: { action: "navigate" },
+    });
+  });
+
+  it("a room can zoom and act — the two live on different gestures", () => {
+    const a = area({ entity: "light.k", hold_action: { action: "toggle" } });
+    // Tap unset, so the card falls back to the zoom.
+    expect(areaActionForGesture(a, "tap")).toBeUndefined();
+    expect(areaActionForGesture(a, "hold")?.config).toEqual({ action: "toggle" });
+  });
+
+  it("knows whether a room does anything a plain zoom would not", () => {
+    expect(areaHasActions(area())).toBe(false);
+    // "none" is a real choice — it turns the zoom off — but it is not an action.
+    expect(areaHasActions(area({ tap_action: { action: "none" } }))).toBe(false);
+    expect(areaHasActions(area({ tap_action: { action: "toggle" } }))).toBe(true);
+    expect(areaHasActions(area({ double_tap_action: { action: "more-info" } }))).toBe(true);
+  });
+});
+
+describe("a reading can be bound without being printed", () => {
+  const named = () => {
+    const h = livingArea();
+    (h.states[TEMP]!.attributes as Record<string, unknown>).friendly_name = "Living Temp";
+    return h;
+  };
+  const item = (readings: ItemReading[], extra = {}) =>
+    ({ entity: TEMP, kind: "sensor", readings, ...extra }) as Parameters<typeof itemBadgeLabel>[1];
+
+  it("keeps a hidden reading out of the label", () => {
+    expect(itemBadgeLabel(named(), item([{ entity: HUMIDITY }]))).toBe("17.9 °C · 49.3%");
+    expect(itemBadgeLabel(named(), item([{ entity: HUMIDITY, showState: false }]))).toBe("17.9 °C");
+  });
+
+  it("treats unset and true alike — nothing changes for an existing plan", () => {
+    for (const showState of [undefined, true] as const) {
+      expect(itemBadgeLabel(named(), item([{ entity: HUMIDITY, showState }]))).toBe(
+        "17.9 °C · 49.3%",
+      );
+    }
+  });
+
+  it("hides one without hiding the rest", () => {
+    expect(
+      itemBadgeLabel(
+        named(),
+        item([{ entity: HUMIDITY, showState: false }, { entity: TEMP }]),
+      ),
+    ).toBe("17.9 °C · 17.9 °C");
+  });
+
+  it("does NOT renumber the others — the badge's index must not move", () => {
+    // The trap this exists to avoid: hide reading 0 and, if the badge indexed
+    // only the visible ones, `badgeEntity: 1` would silently start reading a
+    // different entity.
+    const plug = fakeHass([
+      { entity_id: "switch.plug", state: "on" },
+      { entity_id: "sensor.power", state: "1200", unit: "W" },
+      { entity_id: "sensor.lqi", state: "84" },
+    ]);
+    const withHidden = {
+      entity: "switch.plug",
+      readings: [{ entity: "sensor.power", showState: false }, { entity: "sensor.lqi" }],
+      badgeEntity: 0 as const,
+    };
+    // Index 0 is still the power sensor, though it prints nothing.
+    expect(badgeReading(plug, withHidden)?.source).toBe(0);
+    expect(badgeReading(plug, withHidden)?.text).toBe("1.2kW");
+    expect(itemReadings(withHidden)).toHaveLength(2);
+    // …and index 1 is still the one it always was.
+    expect(badgeReading(plug, { ...withHidden, badgeEntity: 1 })?.text).toBe("84");
+  });
+
+  it("a device labelled only by hidden readings draws no label", () => {
+    // So the editor does not offer a label's size and position for a label
+    // that is never on screen.
+    expect(itemHasLabel({ kind: "light", readings: [{ entity: HUMIDITY }] })).toBe(true);
+    expect(
+      itemHasLabel({ kind: "light", readings: [{ entity: HUMIDITY, showState: false }] }),
+    ).toBe(false);
+    // One visible among hidden ones is still a label.
+    expect(
+      itemHasLabel({
+        kind: "light",
+        readings: [{ entity: HUMIDITY, showState: false }, { entity: TEMP }],
+      }),
+    ).toBe(true);
+  });
+
+  it("still watches a hidden reading's entity — the badge reads it live", () => {
+    const got = collectWatchedEntities({
+      items: [
+        {
+          id: "i",
+          kind: "sensor",
+          x: 0,
+          y: 0,
+          entity: TEMP,
+          readings: [{ entity: HUMIDITY, showState: false }],
+        },
+      ],
+    } as unknown as FloorplanCardConfig);
+    expect([...got].sort()).toEqual([TEMP, HUMIDITY].sort());
+  });
+});
+
+describe("stairs that change floor (issue #121)", () => {
+  const floors = [{ id: "cellar" }, { id: "ground" }, { id: "loft" }];
+  const stairs = (goToFloor?: "up" | "down") => ({ goToFloor }) as Pick<Furniture, "goToFloor">;
+
+  it("reads the floor list bottom-to-top", () => {
+    expect(furnitureFloorTarget(stairs("up"), floors, "ground")).toBe("loft");
+    expect(furnitureFloorTarget(stairs("down"), floors, "ground")).toBe("cellar");
+  });
+
+  it("leads nowhere at the end of the list, so the card draws no button", () => {
+    expect(furnitureFloorTarget(stairs("up"), floors, "loft")).toBeUndefined();
+    expect(furnitureFloorTarget(stairs("down"), floors, "cellar")).toBeUndefined();
+  });
+
+  it("does not wrap — the loft is not above the cellar", () => {
+    // A stair click that teleported you from the top of the building to the
+    // bottom would be a bug report, not a feature.
+    expect(furnitureFloorTarget(stairs("up"), floors, "loft")).not.toBe("cellar");
+    expect(furnitureFloorTarget(stairs("down"), floors, "cellar")).not.toBe("loft");
+  });
+
+  it("is inert on ordinary furniture", () => {
+    expect(furnitureFloorTarget(stairs(), floors, "ground")).toBeUndefined();
+    expect(furnitureFloorTarget({ goToFloor: "sideways" } as never, floors, "ground")).toBeUndefined();
+  });
+
+  it("leads nowhere when the active floor is not in the list", () => {
+    // A stale `_activeFloorId` must not resolve to floors[0] by accident.
+    expect(furnitureFloorTarget(stairs("up"), floors, "gone")).toBeUndefined();
+    expect(furnitureFloorTarget(stairs("up"), floors, undefined)).toBeUndefined();
+    expect(furnitureFloorTarget(stairs("up"), [], "ground")).toBeUndefined();
+  });
+
+  it("works on a two-floor plan, which is the ordinary case", () => {
+    const two = [{ id: "g" }, { id: "up" }];
+    expect(furnitureFloorTarget(stairs("up"), two, "g")).toBe("up");
+    expect(furnitureFloorTarget(stairs("down"), two, "up")).toBe("g");
+    expect(furnitureFloorTarget(stairs("down"), two, "g")).toBeUndefined();
   });
 });
