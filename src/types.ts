@@ -694,6 +694,7 @@ export interface FloorText {
  * member of it actually resolves.
  */
 export type FurnitureType =
+  | "ceilingFan"
   | "table"
   | "roundTable"
   | "desk"

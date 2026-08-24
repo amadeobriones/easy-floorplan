@@ -1,0 +1,16 @@
+{
+  "id": "ceilingFan",
+  "name": "ceiling fan",
+  "category": "other",
+  "keywords": ["fan", "paddle", "propeller", "ceiling"],
+  "size": { "w": 60, "h": 60 },
+  "footprint": "ellipse",
+  "parts": [
+    { "circle": [50, 50, 46], "role": "hint", "space": "square" },
+    { "ellipse": [27, 50, 22, 8], "role": "detail" },
+    { "ellipse": [73, 50, 22, 8], "role": "detail" },
+    { "ellipse": [50, 27, 8, 22], "role": "detail" },
+    { "ellipse": [50, 73, 8, 22], "role": "detail" },
+    { "circle": [50, 50, 9], "role": "solid", "space": "square" }
+  ]
+}
