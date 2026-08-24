@@ -1,5 +1,20 @@
 # Upstream sync log
 
+## v1.5.4.ab003 — a ceiling fan symbol
+
+No upstream change; a fork addition on top of `v1.5.4.ab002`.
+
+A plan carried `type: "ceilingFan"` — bound to a real switch, so meant to work rather than decorate
+— but no such symbol had ever existed: not in `FurnitureType`, not in `furniture/`, not as a
+config-defined symbol. It drew the blank fallback and failed schema validation, and there was no
+valid type to migrate it to, so the honest fix was to add the symbol.
+
+Four blades on a hub with a hint circle for the sweep, `footprint: ellipse`. The union in
+`types.ts` mirrors `furniture/` and is asserted against a list in `symbols.test.ts` (types do not
+survive to runtime), so a new symbol means a file plus those two names — which is exactly what the
+existing test guards.
+
+
 ## v1.5.4.ab002 — climate layer: Fahrenheit readings
 
 No upstream change; a fork fix on top of `v1.5.4.ab001`.
